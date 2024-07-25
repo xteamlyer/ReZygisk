@@ -189,6 +189,8 @@ bool inject_on_main(int pid, const char *lib_path) {
 
       LOGE("dlerror info %s", err);
 
+      free(err);
+
       return false;
     }
 
