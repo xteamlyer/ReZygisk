@@ -2,10 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
-
   pull_request:
   merge_group:
+  workflow_dispatch:
 
 jobs:
   build:
@@ -39,7 +38,7 @@ jobs:
         with:
           workspaces: zygiskd/src -> ../build/intermediates/rust
           cache-targets: false
-          
+
       - name: Setup Rust
         run: |
           rustup override set nightly
@@ -104,4 +103,4 @@ jobs:
         with:
           name: ${{ steps.prepareArtifact.outputs.debugName }}-symbols
           path: "zygiskd/build/symbols/debug"
- 
+
