@@ -674,7 +674,9 @@ void ZygiskContext::app_specialize_pre() {
     }
 
     if ((info_flags & (PROCESS_IS_MANAGER | PROCESS_ROOT_IS_MAGISK)) == (PROCESS_IS_MANAGER | PROCESS_ROOT_IS_MAGISK)) {
-        LOGI("Manager process detected, not touching.\n");
+        LOGI("Manager process detected. Notifying that Zygisk has been enabled.\n");
+
+        setenv("ZYGISK_ENABLED", "1", 1);
     } else {
         run_modules_pre();
     }
