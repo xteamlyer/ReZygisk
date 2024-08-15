@@ -2,10 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
-
   pull_request:
   merge_group:
+  workflow_dispatch:
 
 jobs:
   build:
@@ -18,24 +17,22 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@main
         with:
           submodules: "recursive"
           fetch-depth: 0
 
       - name: Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@main
         with:
           distribution: "temurin"
           java-version: "17"
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-home-cache-cleanup: true
+        uses: gradle/actions/setup-gradle@main
 
       - name: Set up ccache
-        uses: hendrikmuhs/ccache-action@v1.2
+        uses: hendrikmuhs/ccache-action@main
         with:
           max-size: 2G
           key: ${{ runner.os }}
@@ -50,16 +47,16 @@ jobs:
           echo 'android.native.buildOutput=verbose' >> gradle.properties
           sed -i 's/org.gradle.unsafe.configuration-cache=true//g' gradle.properties
           ./gradlew zipRelease
-          ./gradlew zipDebug
+          # ./gradlew zipDebug
 
       - name: Prepare artifact
         if: success()
         id: prepareArtifact
         run: |
           releaseName=`ls module/build/outputs/release/ReZygisk-v*-release.zip | awk -F '(/|.zip)' '{print $5}'` && echo "releaseName=$releaseName" >> $GITHUB_OUTPUT
-          debugName=`ls module/build/outputs/release/ReZygisk-v*-debug.zip | awk -F '(/|.zip)' '{print $5}'` && echo "debugName=$debugName" >> $GITHUB_OUTPUT
+          # debugName=`ls module/build/outputs/release/ReZygisk-v*-debug.zip | awk -F '(/|.zip)' '{print $5}'` && echo "debugName=$debugName" >> $GITHUB_OUTPUT
           unzip module/build/outputs/release/ReZygisk-v*-release.zip -d zksu-release
-          unzip module/build/outputs/release/ReZygisk-v*-debug.zip -d zksu-debug
+          # unzip module/build/outputs/release/ReZygisk-v*-debug.zip -d zksu-debug
 
       - name: Upload release
         uses: actions/upload-artifact@v4
@@ -67,8 +64,8 @@ jobs:
           name: ${{ steps.prepareArtifact.outputs.releaseName }}
           path: "./zksu-release/*"
 
-      - name: Upload debug
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ steps.prepareArtifact.outputs.debugName }}
-          path: "./zksu-debug/*"
+      # - name: Upload debug
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: ${{ steps.prepareArtifact.outputs.debugName }}
+      #     path: "./zksu-debug/*"
