@@ -100,7 +100,6 @@ androidComponents.onVariants { variant ->
                 val privKey = kf.generatePrivate(privKeySpec);
                 val sig = Signature.getInstance("ed25519")
                 fun File.sha(realFile: File? = null) {
-                    val path = this.path.replace("\\", "/")
                     sig.update(this.name.toByteArray())
                     sig.update(0) // null-terminated string
                     val real = realFile ?: this

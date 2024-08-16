@@ -165,6 +165,60 @@ namespace zygiskd {
 
         info->pid = socket_utils::read_u32(fd);
 
+info->modules = (struct zygote_modules *)malloc(sizeof(struct zygote_modules));
+        if (info->modules == NULL) {
+          info->modules->modules_count = 0;
+
+          close(fd);
+
+          return;
+        }
+
+        info->modules->modules_count = socket_utils::read_usize(fd);
+
+        if (info->modules->modules_count == 0) {
+          info->modules->modules = NULL;
+
+          close(fd);
+
+          return;
+        }
+
+        info->modules->modules = (char **)malloc(sizeof(char *) * info->modules->modules_count);
+        if (info->modules->modules == NULL) {
+          free(info->modules);
+          info->modules = NULL;
+          info->modules->modules_count = 0;
+
+          close(fd);
+
+          return;
+        }
+
+        for (size_t i = 0; i < info->modules->modules_count; i++) {
+          /* INFO by ThePedroo: Ugly solution to read with std::string existance (temporary) */
+          std::string name = socket_utils::read_string(fd);
+
+          char module_path[PATH_MAX];
+          snprintf(module_path, sizeof(module_path), "/data/adb/modules/%s/module.prop", name.c_str());
+
+          FILE *module_prop = fopen(module_path, "r");
+          if (module_prop == NULL) {
+            info->modules->modules[i] = strdup(name.c_str());
+          } else {
+            char line[1024];
+            while (fgets(line, sizeof(line), module_prop) != NULL) {
+              if (strncmp(line, "name=", 5) == 0) {
+                info->modules->modules[i] = strndup(line + 5, strlen(line) - 6);
+
+                break;
+              }
+            }
+
+            fclose(module_prop);
+          }
+        }
+
         close(fd);
       } else info->running = false;
     }

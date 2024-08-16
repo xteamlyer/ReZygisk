@@ -42,6 +42,11 @@ private:
     Fd fd_ = -1;
 };
 
+struct zygote_modules {
+  char **modules;
+  size_t modules_count;
+};
+
 enum zygote_root_impl {
   ZYGOTE_ROOT_IMPL_NONE,
   ZYGOTE_ROOT_IMPL_APATCH,
@@ -50,6 +55,7 @@ enum zygote_root_impl {
 };
 
 struct zygote_info {
+  struct zygote_modules *modules;
   enum zygote_root_impl root_impl;
   pid_t pid;
   bool running;

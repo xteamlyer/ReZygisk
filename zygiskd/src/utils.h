@@ -13,7 +13,7 @@
   __android_log_print(ANDROID_LOG_INFO , lp_select("zygiskd32", "zygiskd64"), __VA_ARGS__); \
   printf(__VA_ARGS__)
 
-void switch_mount_namespace(pid_t pid);
+bool switch_mount_namespace(pid_t pid);
 
 void get_property(const char *name, char *output);
 

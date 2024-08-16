@@ -22,14 +22,7 @@
 
 static void updateStatus();
 
-enum TracingState {
-  TRACING = 1,
-  STOPPING,
-  STOPPED,
-  EXITING
-};
-
-static char monitor_stop_reason[32];
+char monitor_stop_reason[32];
 
 constexpr char SOCKET_NAME[] = "init_monitor";
 
@@ -110,20 +103,11 @@ struct EventLoop {
     }
 };
 
-static TracingState tracing_state = TRACING;
+TracingState tracing_state = TRACING;
 static char prop_path[PATH_MAX];
 
-struct Status {
-  bool supported = false;
-  bool zygote_injected = false;
-  bool daemon_running = false;
-  pid_t daemon_pid = -1;
-  char *daemon_info;
-  char *daemon_error_info;
-};
-
-static Status status64;
-static Status status32;
+Status status64;
+Status status32;
 
 struct SocketHandler : public EventHandler {
   int sock_fd_;
