@@ -7,20 +7,6 @@
 #define true 1
 #define false 0
 
-// #define MIN_APATCH_VERSION (atoi(getenv("MIN_APATCH_VERSION")))
-// #define MIN_KSU_VERSION (atoi(getenv("MIN_KSU_VERSION")))
-// #define MAX_KSU_VERSION (atoi(getenv("MAX_KSU_VERSION")))
-// #define MIN_MAGISK_VERSION (atoi(getenv("MIN_MAGISK_VERSION")))
-// #define ZKSU_VERSION (getenv("ZKSU_VERSION"))
-
-#define MIN_APATCH_VERSION 0
-// val minKsudVersion by extra(11425)
-// val maxKsuVersion by extra(20000)
-#define MIN_KSU_VERSION 11425
-#define MAX_KSU_VERSION 20000
-#define MIN_MAGISK_VERSION 0
-#define ZKSU_VERSION "1.0.0"
-
 #if DEBUG == false
   #define MAX_LOG_LEVEL ANDROID_LOG_VERBOSE
 #else
@@ -64,6 +50,7 @@ enum ProcessFlags: uint32_t {
 enum RootImplState {
   Supported,
   TooOld,
+  Inexistent,
   Abnormal
 };
 

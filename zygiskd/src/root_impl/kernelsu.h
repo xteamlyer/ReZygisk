@@ -3,7 +3,7 @@
 
 #include "../constants.h"
 
-enum RootImplState ksu_get_kernel_su(void);
+enum RootImplState ksu_get_existence(void);
 
 bool ksu_uid_granted_root(uid_t uid);
 

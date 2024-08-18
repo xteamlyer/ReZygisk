@@ -14,7 +14,8 @@ fun getLatestNDKPath(): String {
     throw Exception("NDK not found at $ndkPath")
   }
 
-  val ndkVersion = ndkDir.toFile().listFiles().filter { it.isDirectory }.map { it.name }.sorted().last()
+  // get 2nd latest version
+  val ndkVersion = ndkDir.toFile().listFiles().filter { it.isDirectory }.map { it.name }.sorted().reversed().getOrNull(1)
   return ndkPath + "/" + ndkVersion
 }
 
@@ -25,6 +26,14 @@ val minMagiskVersion: Int by rootProject.extra
 val verCode: Int by rootProject.extra
 val verName: String by rootProject.extra
 val commitHash: String by rootProject.extra
+
+val CStandardFlags = arrayOf(
+  "-DMIN_APATCH_VERSION=$minAPatchVersion",
+  "-DMIN_KSU_VERSION=$minKsuVersion",
+  "-DMAX_KSU_VERSION=$maxKsuVersion",
+  "-DMIN_MAGISK_VERSION=$minMagiskVersion",
+  "-DZKSU_VERSION=\"$verName\""
+)
 
 val CFlagsRelease = arrayOf(
   "-D_GNU_SOURCE", "-std=c99", "-Wpedantic", "-Wall", "-Wextra", "-Werror",
@@ -41,6 +50,7 @@ val CFlagsDebug = arrayOf(
 )
 
 val Files = arrayOf(
+  "root_impl/apatch.c",
   "root_impl/common.c",
   "root_impl/kernelsu.c",
   "companion.c",
@@ -94,7 +104,7 @@ task("buildAndStrip") {
     x86OutputDir.mkdirs()
     x86_64OutputDir.mkdirs()
 
-    val compileArgs = if (isDebug) CFlagsDebug else CFlagsRelease
+    val compileArgs = (if (isDebug) CFlagsDebug else CFlagsRelease) + CStandardFlags
 
     exec {
       commandLine(aarch64Compiler, "-o", Paths.get(aarch64OutputDir.toString(), "zygiskd").toString(), *compileArgs, *Files)

@@ -65,6 +65,11 @@ int main(int argc, char *argv[]) {
 
           return 0;
         }
+        case APatch: {
+          LOGI("APatch root implementation found.\n");
+
+          return 0;
+        }
       }
       
 

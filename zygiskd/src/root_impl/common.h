@@ -5,8 +5,9 @@
 
 enum RootImpl {
   None,
-  Multiple, /* INFO: I know. */
-  KernelSU
+  Multiple,
+  KernelSU,
+  APatch
 };
 
 void root_impls_setup(void);

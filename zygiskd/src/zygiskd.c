@@ -266,20 +266,19 @@ static int spawn_companion(char *name, int lib_fd) {
     LOGI("Waiting for companion to start (%d)\n", pid);
 
     int status = 0;
-    // waitpid(pid, &status, 0);
+    waitpid(pid, &status, 0);
 
     LOGI("Companion exited with status %d\n", status);
 
-    // if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+    if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
       if (write_string(daemon_fd, name) == -1) return -1;
-
       if (send_fd(daemon_fd, lib_fd) == -1) return -1;
 
       LOGI("Sent module name and lib fd\n");
       
       uint8_t response_buf[1];
-      ssize_t ret = read(daemon_fd, &response_buf, sizeof(response_buf));
-      ASSURE_SIZE_READ_WR("companion", "response", ret, sizeof(response_buf));
+      read(daemon_fd, &response_buf, sizeof(response_buf));
+      // ASSURE_SIZE_READ_WR("companion", "response", ret, sizeof(response_buf));
 
       uint8_t response = response_buf[0];
 
@@ -288,13 +287,13 @@ static int spawn_companion(char *name, int lib_fd) {
       if (response == 0) return -2;
       else if (response == 1) return daemon_fd;
       else return -2;
-    // } else {
-    //   LOGE("Exited with status %d\n", status);
+    } else {
+      LOGE("Exited with status %d\n", status);
 
-    //   close(daemon_fd);
+      close(daemon_fd);
 
-    //   return -1;
-    // }
+      return -1;
+    }
   /* INFO: if pid == 0: */
   } else {
     LOGI("Companion started (%d)\n", pid);
@@ -329,34 +328,60 @@ struct __attribute__((__packed__)) MsgHead {
 void zygiskd_start(void) {
   LOGI("Welcome to ReZygisk %s!", ZKSU_VERSION);
 
+  enum RootImpl impl = get_impl();
+  if (impl == None) {
+    struct MsgHead *msg = malloc(sizeof(struct MsgHead) + sizeof("No root implementation found."));
+    msg->cmd = DAEMON_SET_ERROR_INFO;
+    msg->length = sizeof("No root implementation found.");
+    memcpy(msg->data, "No root implementation found.", msg->length);
+
+    unix_datagram_sendto(CONTROLLER_SOCKET, &msg, sizeof(struct MsgHead) + msg->length);
+
+    free(msg);
+  } else if (impl == Multiple) {
+    struct MsgHead *msg = malloc(sizeof(struct MsgHead) + sizeof("Multiple root implementations found. Not supported yet."));
+    msg->cmd = DAEMON_SET_ERROR_INFO;
+    msg->length = sizeof("Multiple root implementations found. Not supported yet.");
+    memcpy(msg->data, "Multiple root implementations found. Not supported yet.", msg->length);
+
+    unix_datagram_sendto(CONTROLLER_SOCKET, &msg, sizeof(struct MsgHead) + msg->length);
+
+    free(msg);
+  }
+
   enum Architecture arch = get_arch();
 
   struct Context context;
   load_modules(arch, &context);
 
   struct MsgHead *msg = NULL;
-  size_t msg_sz = 0;
 
-  switch (get_impl()) {
-    case None: {
-      /* INFO: Stop, compiler. */
+  switch (impl) {
+    case None: { break; }
+    case Multiple: { break; }
+    case KernelSU:
+    case APatch: {
+      size_t root_impl_len = strlen(impl == KernelSU ? "KernelSU" : "APatch");
 
-      break;
-    }
-    case Multiple: {
-      /* INFO: Stop, compiler. */
-
-      break;
-    }
-
-    case KernelSU: {
       if (context.len == 0) {
-        msg_sz = sizeof(struct MsgHead) + strlen("Root: KernelSU, Modules: None") + 1;
-        msg = malloc(msg_sz);
-
+        msg = malloc(sizeof(struct MsgHead) + strlen("Root: , Modules: None") + root_impl_len + 1);
         msg->cmd = DAEMON_SET_INFO;
-        msg->length = strlen("Root: KernelSU, Modules: None") + 1;
-        memcpy(msg->data, "Root: KernelSU, Modules: None", strlen("Root: KernelSU, Modules: None"));
+        msg->length = strlen("Root: , Modules: None") + root_impl_len + 1;
+
+        switch (impl) {
+          case None: { break; }
+          case Multiple: { break; }
+          case KernelSU: {
+            memcpy(msg->data, "Root: KernelSU, Modules: None", strlen("Root: KernelSU, Modules: None"));
+
+            break;
+          }
+          case APatch: {
+            memcpy(msg->data, "Root: APatch, Modules: None", strlen("Root: APatch, Modules: None"));
+
+            break;
+          }
+        }
       } else {
         char *module_list = malloc(1);
         size_t module_list_len = 0;
@@ -379,32 +404,34 @@ void zygiskd_start(void) {
           }
         }
 
-        msg_sz = sizeof(struct MsgHead) + strlen("Root: KernelSU, Modules: ") + module_list_len + 1;
-        msg = malloc(msg_sz);
-
+        msg = malloc(sizeof(struct MsgHead) + strlen("Root: , Modules: ") + root_impl_len + module_list_len + 1);
         msg->cmd = DAEMON_SET_INFO;
-        msg->length = strlen("Root: KernelSU, Modules: ") + module_list_len + 1;
-        memcpy(msg->data, "Root: KernelSU, Modules: ", strlen("Root: KernelSU, Modules: "));
-        memcpy(msg->data + strlen("Root: KernelSU, Modules: "), module_list, module_list_len);
+        msg->length = strlen("Root: , Modules: ") + root_impl_len + module_list_len + 1;
+
+        switch (impl) {
+          case None: { break; }
+          case Multiple: { break; }
+          case KernelSU: {
+            memcpy(msg->data, "Root: KernelSU, Modules: ", strlen("Root: KernelSU, Modules: "));
+
+            break;
+          }
+          case APatch: {
+            memcpy(msg->data, "Root: APatch, Modules: ", strlen("Root: APatch, Modules: "));
+
+            break;
+          }
+        }
+        memcpy(msg->data + strlen("Root: , Modules: ") + root_impl_len, module_list, module_list_len);
 
         free(module_list);
       }
 
       break;
     }
-    default: {
-      msg_sz = sizeof(struct MsgHead) + strlen("Invalid root implementation") + 1;
-      msg = malloc(msg_sz);
-
-      msg->cmd = DAEMON_SET_ERROR_INFO;
-      msg->length = strlen("Invalid root implementation") + 1;
-      memcpy(msg->data, "Invalid root implementation", strlen("Invalid root implementation"));
-
-      break;
-    }
   }
 
-  unix_datagram_sendto(CONTROLLER_SOCKET, (void *)msg, msg_sz);
+  unix_datagram_sendto(CONTROLLER_SOCKET, (void *)msg, sizeof(struct MsgHead) + msg->length);
 
   free(msg);
 
@@ -495,8 +522,6 @@ void zygiskd_start(void) {
 
         uid_t uid = uid_buf[0];
 
-        LOGI("Checking flags for uid: %d\n", uid);
-
         uint32_t flags = 0;
         if (uid_is_manager(uid)) {
           flags |= PROCESS_IS_MANAGER;
@@ -520,15 +545,18 @@ void zygiskd_start(void) {
           }
           case KernelSU: {
             flags |= PROCESS_ROOT_IS_KSU;
+
+            break;
+          }
+          case APatch: {
+            flags |= PROCESS_ROOT_IS_APATCH;
+
+            break;
           }
         }
 
-        // LOGI("Flags for uid %d: %d\n", uid, flags);
-
-        LOGI("Sending flags\n");
-
         ret = write(client_fd, &flags, sizeof(flags));
-        // ASSURE_SIZE_WRITE_BREAK("GetProcessFlags", "flags", ret, sizeof(flags));
+        ASSURE_SIZE_WRITE_BREAK("GetProcessFlags", "flags", ret, sizeof(flags));
 
         LOGI("Sent flags\n");
 
@@ -548,6 +576,13 @@ void zygiskd_start(void) {
           }
           case KernelSU: {
             flags |= PROCESS_ROOT_IS_KSU;
+
+            break;
+          }
+          case APatch: {
+            flags |= PROCESS_ROOT_IS_APATCH;
+
+            break;
           }
         }
 
@@ -631,15 +666,12 @@ void zygiskd_start(void) {
             module->companion = companion_fd;
 
             if (send_fd(client_fd, companion_fd) == -1) break;
-          } else if (companion_fd == -2) {
-            LOGI("Could not spawn companion for `%s` as it has no entry\n", module->name);
-
-            /* TODO: Avoid duplicated code -- Merge this and the one below. */
-            uint8_t response = 0;
-            ret = write(client_fd, &response, sizeof(response));
-            ASSURE_SIZE_WRITE_BREAK("RequestCompanionSocket", "response", ret, sizeof(response));
           } else {
-            LOGE("Failed to spawn companion for `%s`\n", module->name);
+            if (companion_fd == -2) {
+              LOGI("Could not spawn companion for `%s` as it has no entry\n", module->name);
+            } else {
+              LOGI("Could not spawn companion for `%s` due to failures.\n", module->name);
+            }
 
             uint8_t response = 0;
             ret = write(client_fd, &response, sizeof(response));

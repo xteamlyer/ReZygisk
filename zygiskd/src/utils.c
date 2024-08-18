@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <sys/un.h>
 #include <errno.h>
 
@@ -279,4 +280,38 @@ ssize_t read_string(int fd, char *str, size_t len) {
   }
 
   return read_bytes;
+}
+
+bool exec_command(char *buf, size_t len, const char *file, char *const argv[]) {
+  int link[2];
+  pid_t pid;
+
+  if (pipe(link) == -1) {
+    LOGE("pipe: %s\n", strerror(errno));
+
+    return false;
+  }
+
+  if ((pid = fork()) == -1) {
+    LOGE("fork: %s\n", strerror(errno));
+
+    return false;
+  }
+
+  if (pid == 0) {
+    dup2(link[1], STDOUT_FILENO);
+    close(link[0]);
+    close(link[1]);
+    
+    execv(file, argv);
+  } else {
+    close(link[1]);
+
+    int nbytes = read(link[0], buf, len);
+    buf[nbytes] = '\0';
+
+    wait(NULL);
+  }
+
+  return true;
 }

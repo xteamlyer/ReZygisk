@@ -17,9 +17,9 @@
 #include "dl.h"
 #include "utils.h"
 
-typedef void (*ZygiskCompanionEntryFn)(int);
+typedef void (*zygisk_companion_entry_func)(int);
 
-ZygiskCompanionEntryFn load_module(int fd) {
+zygisk_companion_entry_func load_module(int fd) {
   char path[PATH_MAX];
   snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
 
@@ -27,7 +27,7 @@ ZygiskCompanionEntryFn load_module(int fd) {
   void *entry = dlsym(handle, "zygisk_companion_entry");
   if (entry == NULL) return NULL;
 
-  return (ZygiskCompanionEntryFn)entry;
+  return (zygisk_companion_entry_func)entry;
 }
 
 void *ExecuteNew(void *arg) {
@@ -84,7 +84,7 @@ void entry(int fd) {
 
   LOGI("Library fd: %d\n", library_fd);
 
-  ZygiskCompanionEntryFn entry = load_module(library_fd);
+  zygisk_companion_entry_func entry = load_module(library_fd);
 
   LOGI("Library loaded\n");
 
