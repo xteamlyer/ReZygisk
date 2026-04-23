@@ -386,7 +386,7 @@ void zygiskd_start(char *restrict argv[]) {
           if (uid_granted_root(uid)) {
             flags |= PROCESS_GRANTED_ROOT;
           }
-          if (uid_should_umount(uid, (const char *const)process)) {
+          if (uid_should_umount(uid)) {
             flags |= PROCESS_ON_DENYLIST;
           }
         }
@@ -394,11 +394,6 @@ void zygiskd_start(char *restrict argv[]) {
         switch (impl.impl) {
           case KernelSU: {
             flags |= PROCESS_ROOT_IS_KSU;
-
-            break;
-          }
-          case APatch: {
-            flags |= PROCESS_ROOT_IS_APATCH;
 
             break;
           }
@@ -415,11 +410,6 @@ void zygiskd_start(char *restrict argv[]) {
         switch (impl.impl) {
           case KernelSU: {
             flags |= PROCESS_ROOT_IS_KSU;
-
-            break;
-          }
-          case APatch: {
-            flags |= PROCESS_ROOT_IS_APATCH;
 
             break;
           }
@@ -579,9 +569,9 @@ void zygiskd_start(char *restrict argv[]) {
         ASSURE_SIZE_WRITE("UpdateMountNamespace", "our_pid", ret, sizeof(our_pid), break);
 
         if ((enum MountNamespaceState)mns_state == Clean)
-          save_mns_fd(pid, Mounted, impl);
+          save_mns_fd(pid, Mounted);
 
-        int ns_fd = save_mns_fd(pid, (enum MountNamespaceState)mns_state, impl);
+        int ns_fd = save_mns_fd(pid, (enum MountNamespaceState)mns_state);
         if (ns_fd == -1) {
           LOGE("Failed to save mount namespace fd for pid %d: %s", pid, strerror(errno));
 
