@@ -25,19 +25,12 @@
 #include "zn_loader.h"
 #include "zn_targets.h"
 
+/* INFO: The command byte and the control buffer live in the shared protocol
+         header: the daemon side runs the same loop off the same contract. */
+#include "zn_companion_protocol.h"
+
 #define ZN_MODULES_DIR "/data/adb/modules"
 #define ZN_MAX_MODULES 32
-
-/* INFO: Command byte a module sends through the companion control socket to
-         request a new connection. Mirrors K_CMD_CONNECT on the daemon side. */
-#define ZN_COMPANION_CMD_CONNECT 1
-
-/* INFO: The kernel may copy a cmsghdr into the control buffer, so it has to be
-         aligned as one instead of being a plain byte array. */
-union zn_cmsg_buffer {
-  struct cmsghdr header;
-  char control[CMSG_SPACE(sizeof(int))];
-};
 
 struct zn_entry {
   bool is_name;

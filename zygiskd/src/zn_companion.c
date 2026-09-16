@@ -19,15 +19,10 @@
 #include "zygisk_next_api.h"
 #include "utils.h"
 
-/* INFO: Command byte the module sends when it calls connectCompanion. */
-#define ZN_COMPANION_CMD_CONNECT ((uint8_t)1)
-
-/* INFO: The kernel may copy a cmsghdr into the control buffer, so it has to be
-         aligned as one instead of being a plain byte array. */
-union zn_cmsg_buffer {
-  struct cmsghdr header;
-  char control[CMSG_SPACE(sizeof(int))];
-};
+/* INFO: The command byte and the control buffer come from the shared protocol
+         header, so the loader that serves this socket and the daemon that
+         hosts it cannot define them differently. */
+#include "zn_companion_protocol.h"
 
 static struct ZygiskNextCompanionModule *load_companion_module(int library_fd) {
   char path[PATH_MAX];
