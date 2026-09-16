@@ -6,7 +6,14 @@ half of the wire protocol, and merging their socket helpers into one shared
 file is deliberately off the table: read_string alone has two intentional
 semantics (malloc'd string on the loader, bounded buffer fill on the daemon).
 What keeps them honest is this check — it parses both sides' headers and
-asserts that the action enum and the socket helper surface stay identical.
+asserts that the action enum, the process flag macros and the socket helper
+surface stay identical.
+
+The flags matter as much as the actions and are the easiest to drift: they are
+plain macros duplicated in both trees (zygiskd/src/constants.h and
+loader/src/injector/module.h), so adding a bit to one side alone still
+compiles and only shows up at runtime as a flag the other half never sets or
+never reads.
 
 Run in CI's host-test job; exits non-zero on the first divergence.
 """
@@ -17,6 +24,8 @@ import sys
 PATHS = {
     "daemon actions": "zygiskd/src/constants.h",
     "loader actions": "loader/src/include/daemon.h",
+    "daemon flags": "zygiskd/src/constants.h",
+    "loader flags": "loader/src/injector/module.h",
     "daemon helpers": "zygiskd/src/utils.h",
     "loader helpers": "loader/src/include/socket_utils.h",
 }
@@ -44,6 +53,25 @@ def enum_members(text, enum_name):
         members.append(item.split("=")[0].strip())
 
     return members
+
+
+def flag_values(text):
+    """Collects the PROCESS_* flag macros as name -> bit expression.
+
+    Both sides define them as (1u << n), so comparing the bit catches a
+    renumbering as well as a rename. The pattern is anchored on that shape on
+    purpose: PROCESS_NAME_MAX_LEN shares the prefix but is a buffer length
+    that only the daemon declares, and PRIVATE_MASK composes flags without
+    being one.
+
+
+    PRIVATE_MASK is left out: it composes flags but is not one, and only the
+    loader needs it."""
+    return {
+        name: bit.strip()
+        for name, bit in re.findall(r"^#define[ \t]+(PROCESS_\w+)[ \t]+\(1u[ \t]*<<[ \t]*([0-9]+)\)",
+                                    text, re.M)
+    }
 
 
 def helper_names(text):
@@ -81,6 +109,21 @@ def main():
             marker = "  " if daemon == loader else "! "
             print(f"{marker}{index:2}  daemon={daemon:24} loader={loader}")
 
+    daemon_flags = flag_values(read(PATHS["daemon flags"]))
+    loader_flags = flag_values(read(PATHS["loader flags"]))
+
+    if daemon_flags != loader_flags:
+        failed = True
+
+        print("FLAG MISMATCH between the daemon and the loader:")
+
+        for name in sorted(set(daemon_flags) | set(loader_flags)):
+            daemon = daemon_flags.get(name, "(missing)")
+            loader = loader_flags.get(name, "(missing)")
+
+            if daemon != loader:
+                print(f"! {name:26} daemon={daemon:14} loader={loader}")
+
     daemon_helpers = helper_names(read(PATHS["daemon helpers"]))
     loader_helpers = helper_names(read(PATHS["loader helpers"]))
 
@@ -93,6 +136,7 @@ def main():
 
     if not failed:
         print(f"protocol check ok: {len(daemon_actions)} actions, "
+              f"{len(daemon_flags)} flags, "
               f"{len(daemon_helpers)} shared helpers")
 
     return 1 if failed else 0
