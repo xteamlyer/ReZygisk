@@ -41,6 +41,15 @@ else
 	REBOOT_CMD := su -c reboot
 endif
 
+# INFO: Each root solution ships its own module installer, so which one a
+#       `make install` drives follows the flavour this tree is configured for
+#       rather than being spelled out in the target's name.
+ifeq ($(ROOT_IMPL),apatch)
+	INSTALL_CMD := /data/adb/ap/bin/apd module install
+else
+	INSTALL_CMD := /data/adb/ksud module install
+endif
+
 LOADER_DONE = $(OBJ_DIR)/loader/.done
 ZYGISKD_DONE = $(OBJ_DIR)/zygiskd/.done
 MODULE_DONE = $(BUILD_DIR)/module-$(BUILD_TYPE).done
@@ -55,8 +64,7 @@ MODULE_INPUTS = scripts/sign.py \
         $(shell find module/src -type f | sort) \
         $(wildcard module/private_key module/public_key)
 
-.PHONY: debug release all apatch build clean        \
-        installKsu installKsuAndReboot
+.PHONY: debug release all apatch build clean install installAndReboot
 
 debug:
 	$(MAKE) BUILD_TYPE=debug BUILD_DIR=$(BUILD_DIR) build
@@ -138,10 +146,10 @@ $(ZIP_FILE): $(MODULE_DONE)
 	@echo "Creating ZIP file..."
 	@cd $(MODULE_OUT) && zip -r9 $@ . -x '*.DS_Store' > /dev/null
 
-installKsu: build
-	$(ADB_CMD)su -c '/data/adb/ksud module install $(INSTALL_PATH)'
+install: build
+	$(ADB_CMD)su -c '$(INSTALL_CMD) $(INSTALL_PATH)'
 
-installKsuAndReboot: installKsu
+installAndReboot: install
 	$(REBOOT_CMD)
 
 clean:
