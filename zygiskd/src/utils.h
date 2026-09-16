@@ -11,10 +11,15 @@
 #include "constants.h"
 #include "root_impl/common.h"
 
-/* INFO: LP_SELECT comes from the loader's shared header, which this build
-         reaches through -I../loader/src/include. Carrying a second definition
-         here would let the two copies drift apart unnoticed. */
-#include "misc.h"
+/* INFO: Kept here rather than pulled from the loader's shared header: this is
+         a two-line switch on a compiler-provided macro, and reusing it would
+         couple every file that includes utils.h to the loader's include tree,
+         including the host tests, which build the daemon sources on their own. */
+#ifdef __LP64__
+  #define LP_SELECT(a, b) b
+#else
+  #define LP_SELECT(a, b) a
+#endif
 
 #ifndef LOG_TAG
   #define LOG_TAG "zygiskd" LP_SELECT("32", "64")
