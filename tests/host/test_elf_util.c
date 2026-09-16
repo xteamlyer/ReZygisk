@@ -20,19 +20,9 @@
 
 #include <link.h>
 
+#include "check.h"
+
 #include "elf_util.h"
-
-static int g_failures = 0;
-
-#define CHECK(condition, ...)                                              \
-  do {                                                                     \
-    if (!(condition)) {                                                    \
-      g_failures++;                                                        \
-      printf("FAIL %s:%d: ", __FILE__, __LINE__);                          \
-      printf(__VA_ARGS__);                                                 \
-      printf("\n");                                                        \
-    }                                                                      \
-  } while (0)
 
 /* INFO: The synthetic ELF carries no program headers, so the bias stays zero
          and every symbol address is the load base plus the address stored in

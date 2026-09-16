@@ -16,19 +16,9 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "check.h"
+
 #include "../../loader/src/injector/unmount.c"
-
-static int g_failures = 0;
-
-#define CHECK(condition, ...)                                              \
-  do {                                                                     \
-    if (!(condition)) {                                                    \
-      g_failures++;                                                        \
-      printf("FAIL %s:%d: ", __FILE__, __LINE__);                          \
-      printf(__VA_ARGS__);                                                 \
-      printf("\n");                                                        \
-    }                                                                      \
-  } while (0)
 
 /* INFO: A KernelSU-shaped mountinfo: the modules live on a loop device and
          every module overlay carries the loop name as its source, while the

@@ -33,3 +33,51 @@ jobs:
         with:
           path: "build/out/VexZygisk-v*-debug.zip"
           archive: false
+
+  host-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # INFO: Catches a protocol that drifted apart between the loader and the
+      #       daemon, which still compiles cleanly on both sides and only
+      #       misbehaves at runtime.
+      - name: Check the loader/daemon protocol
+        run: python3 tests/host/check_protocol.py
+
+      # INFO: Each test pulls in the .c it exercises rather than linking
+      #       against it, so the static helpers are reachable; the include
+      #       paths are the ones those .c files expect. The ELF test also
+      #       needs the XZ decompressor and the switches its own build uses.
+      - name: Build the host tests
+        run: |
+          set -eu
+          mkdir -p build/host-test
+
+          cc -std=c18 -D_GNU_SOURCE -Wall -Wextra -Wno-unused \
+            -Itests/host -Iloader/src/include \
+            tests/host/test_unmount.c -o build/host-test/test_unmount
+
+          cc -std=c18 -D_GNU_SOURCE -Wall -Wextra -Wno-unused \
+            -Itests/host -Izygiskd/src -Izygiskd/src/root_impl \
+            tests/host/test_apatch.c -o build/host-test/test_apatch
+
+          cc -std=c18 -D_GNU_SOURCE -Wall -Wextra -Wno-unused \
+            -Itests/host -Iloader/src/include -Iloader/src/external/lzma \
+            -DXZ_DEC_DYNALLOC=1 -DXZ_DEC_ANY_CHECK=1 -DXZ_INTERNAL_CRC32=1 \
+            tests/host/test_elf_util.c loader/src/common/elf_util.c \
+            loader/src/external/lzma/xz_dec_lzma2.c \
+            loader/src/external/lzma/xz_dec_stream.c \
+            loader/src/external/lzma/xz_dec_bcj.c \
+            -o build/host-test/test_elf_util
+
+      - name: Run the host tests
+        run: |
+          set -eu
+          ./build/host-test/test_unmount
+          ./build/host-test/test_apatch
+
+          python3 tests/host/make_debugdata.py build/host-test/synthetic
+          ./build/host-test/test_elf_util \
+            build/host-test/synthetic ./build/host-test/test_elf_util

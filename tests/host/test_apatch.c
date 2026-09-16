@@ -10,19 +10,9 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "check.h"
+
 #include "../../zygiskd/src/root_impl/apatch.c"
-
-static int g_failures = 0;
-
-#define CHECK(condition, ...)                                              \
-  do {                                                                     \
-    if (!(condition)) {                                                    \
-      g_failures++;                                                        \
-      printf("FAIL %s:%d: ", __FILE__, __LINE__);                          \
-      printf(__VA_ARGS__);                                                 \
-      printf("\n");                                                        \
-    }                                                                      \
-  } while (0)
 
 static void check_csv_quoting(void) {
   printf("-- csv field parsing\n");
