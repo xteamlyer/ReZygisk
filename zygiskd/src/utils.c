@@ -24,6 +24,11 @@
 
 #include "root_impl/common.h"
 
+/* INFO: The names that make a mount a root trace: the very table the loader's
+         revert uses, so a clean namespace and a reverted process always drop
+         the same set. */
+#include "root_mounts.h"
+
 #include "utils.h"
 
 bool switch_mount_namespace(pid_t pid) {
@@ -769,27 +774,6 @@ bool parse_mountinfo(const char *restrict pid, struct mountinfos *restrict mount
     return false;
 }
 
-/* INFO: The overlay mounts of each root solution carry its own source name:
-         KernelSU reports "KSU", APatch reports "APatch" or "kpatch". The
-         flavour is fixed at build time, so only the matching names are
-         compiled in — the same table the loader keeps in injector/unmount.c. */
-#ifdef ROOT_IMPL_APATCH
-  static const char *const kRootSources[] = { "APatch", "kpatch" };
-  #define ROOT_SOURCE_COUNT 2
-#else
-  static const char *const kRootSources[] = { "KSU" };
-  #define ROOT_SOURCE_COUNT 1
-#endif
-
-/* INFO: The same three shapes the loader's revert looks for, so a clean
-         namespace and a reverted zygote drop the same set of mounts: KernelSU
-         puts its modules on a loop device whose name becomes the source of
-         every module mount, and both root solutions bind their trees in below
-         /adb/modules. */
-#define MOUNT_SOURCE_LOOP "/dev/block/loop"
-#define KSU_MODULES_DIR "/data/adb/modules"
-#define KSU_MODULES_ROOT "/adb/modules"
-
 /* INFO: True when `path` equals `prefix` or sits directly underneath it (the
          next byte is '/'). A bare prefix test would also match a sibling such
          as /data/adb/modules_extra, which must never be unmounted. */
@@ -813,7 +797,7 @@ static const char *find_module_loop_source(const struct mountinfos *all) {
   for (size_t i = 0; i < all->length; i++) {
     const struct mountinfo *info = &all->mounts[i];
 
-    if (strcmp(info->target, KSU_MODULES_DIR) == 0 &&
+    if (strcmp(info->target, ROOT_MODULES_DIR) == 0 &&
         strncmp(info->source, MOUNT_SOURCE_LOOP, strlen(MOUNT_SOURCE_LOOP)) == 0) {
       LOGD("Detected the KernelSU module loop source: %s", info->source);
 
@@ -858,8 +842,8 @@ bool umount_root(void) {
     for (size_t s = 0; s < ROOT_SOURCE_COUNT && !should_unmount; s++) {
       if (strcmp(mount.source, kRootSources[s]) == 0) should_unmount = true;
     }
-    if (mount_path_at_or_under(mount.target, KSU_MODULES_DIR)) should_unmount = true;
-    if (mount_path_at_or_under(mount.root, KSU_MODULES_ROOT)) should_unmount = true;
+    if (mount_path_at_or_under(mount.target, ROOT_MODULES_DIR)) should_unmount = true;
+    if (mount_path_at_or_under(mount.root, ROOT_MODULES_ROOT)) should_unmount = true;
     if (loop_source != NULL && strcmp(mount.source, loop_source) == 0) should_unmount = true;
 
     if (!should_unmount) continue;

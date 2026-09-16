@@ -9,24 +9,10 @@
 
 #include "logging.h"
 
+#include "root_mounts.h"
 #include "unmount.h"
 
-#define MOUNT_SOURCE_LOOP "/dev/block/loop"
-#define KSU_MODULES_DIR "/data/adb/modules"
-#define KSU_MODULES_ROOT "/adb/modules"
 #define PRODUCT_MOUNT "/product"
-
-/* INFO: The overlay mounts of each root solution carry its own source name:
-         KernelSU reports "KSU" and APatch reports "APatch" or "kpatch". The
-         flavour is fixed at build time, so only the matching names are
-         compiled in. */
-#ifdef ROOT_IMPL_APATCH
-  static const char *const kRootSources[] = { "APatch", "kpatch" };
-  #define ROOT_SOURCE_COUNT 2
-#else
-  static const char *const kRootSources[] = { "KSU" };
-  #define ROOT_SOURCE_COUNT 1
-#endif
 
 /* INFO: The fields of one /proc/<pid>/mountinfo line. Only what the trace
          selection and the unmount actually need is kept. */
@@ -177,7 +163,7 @@ static const char *find_module_loop_source(const struct mount_list *all) {
   for (size_t i = 0; i < all->len; i++) {
     const struct mount_info *info = &all->items[i];
 
-    if (strcmp(info->target, KSU_MODULES_DIR) == 0 &&
+    if (strcmp(info->target, ROOT_MODULES_DIR) == 0 &&
         strncmp(info->source, MOUNT_SOURCE_LOOP, strlen(MOUNT_SOURCE_LOOP)) == 0) {
       LOGV("Detected the KernelSU module loop source: %s", info->source);
 
@@ -205,8 +191,8 @@ static bool mount_path_at_or_under(const char *path, const char *prefix) {
 }
 
 static bool carries_root_trace(const struct mount_info *info, const char *loop_source) {
-  if (mount_path_at_or_under(info->root, KSU_MODULES_ROOT)) return true;
-  if (mount_path_at_or_under(info->target, KSU_MODULES_DIR)) return true;
+  if (mount_path_at_or_under(info->root, ROOT_MODULES_ROOT)) return true;
+  if (mount_path_at_or_under(info->target, ROOT_MODULES_DIR)) return true;
 
   for (size_t i = 0; i < ROOT_SOURCE_COUNT; i++) {
     if (strcmp(info->source, kRootSources[i]) == 0) return true;
