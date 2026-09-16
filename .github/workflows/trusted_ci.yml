@@ -15,70 +15,24 @@ jobs:
         #       nor the history of the build job are needed here. Keeping this
         #       job separate lets a broken test fail fast and loudly without
         #       costing the archives, and vice versa.
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
-      - name: Protocol consistency
-        # INFO: The loader and the daemon implement their own halves of the
-        #       wire protocol; this fails fast if one side edits the action
-        #       enum or the helper surface without the other.
-        run: python3 tests/host/check_protocol.py
-
       - name: Host unit tests
-        # INFO: The loader cannot run on this host, but its ELF reader can, and
-        #       so can the mini-debug decompressor. A broken parse or a wrong
-        #       symbol then fails the build instead of showing up only on a
-        #       device as a module that silently does not load.
-        run: |
-          cc -std=c18 -D_GNU_SOURCE -Wall -Wextra -Werror \
-             -Itests/host -Iloader/src/include -Iloader/src/common \
-             -Iloader/src/external/lzma \
-             -c loader/src/common/elf_util.c -o /tmp/elf_util.o
-          cc -std=c18 -D_GNU_SOURCE -w \
-             -DXZ_DEC_DYNALLOC=1 -DXZ_DEC_ANY_CHECK=1 -DXZ_INTERNAL_CRC32=1 \
-             -DNOINLINE=noinline_for_stack \
-             -Iloader/src/external/lzma \
-             -c loader/src/external/lzma/xz_dec_lzma2.c -o /tmp/xz_lzma2.o
-          cc -std=c18 -D_GNU_SOURCE -w \
-             -DXZ_DEC_DYNALLOC=1 -DXZ_DEC_ANY_CHECK=1 -DXZ_INTERNAL_CRC32=1 \
-             -DNOINLINE=noinline_for_stack \
-             -Iloader/src/external/lzma \
-             -c loader/src/external/lzma/xz_dec_stream.c -o /tmp/xz_stream.o
-          cc -std=c18 -D_GNU_SOURCE -w \
-             -DXZ_DEC_DYNALLOC=1 -DXZ_DEC_ANY_CHECK=1 -DXZ_INTERNAL_CRC32=1 \
-             -DNOINLINE=noinline_for_stack \
-             -Iloader/src/external/lzma \
-             -c loader/src/external/lzma/xz_dec_bcj.c -o /tmp/xz_bcj.o
-          cc -std=c18 -D_GNU_SOURCE -Wall -Wextra -Werror \
-             -Itests/host -Iloader/src/include -Iloader/src/common \
-             -Iloader/src/external/lzma \
-             tests/host/test_elf_util.c /tmp/elf_util.o /tmp/xz_lzma2.o \
-             /tmp/xz_stream.o /tmp/xz_bcj.o \
-             -o /tmp/test_elf_util
-          python3 tests/host/make_debugdata.py /tmp/debugdata
-          /tmp/test_elf_util /tmp/debugdata /tmp/test_elf_util
-
-          cc -std=c18 -D_GNU_SOURCE -Wall -Wextra -Werror \
-             -Itests/host -Iloader/src/include \
-             tests/host/test_unmount.c -o /tmp/test_unmount
-          /tmp/test_unmount
-
-          cc -std=c18 -D_GNU_SOURCE -Wall -Wextra -Werror -DROOT_IMPL_APATCH \
-             -Itests/host -Iloader/src/include \
-             tests/host/test_unmount.c -o /tmp/test_unmount_apatch
-          /tmp/test_unmount_apatch
-
-          cc -std=c18 -D_GNU_SOURCE -Wall -Wextra -Werror \
-             -Itests/host -Izygiskd/src -Izygiskd/src/root_impl \
-             tests/host/test_apatch.c -o /tmp/test_apatch
-          /tmp/test_apatch
+        # INFO: Shared with the Untrusted CI through tests/host/run.sh, so a
+        #       pull request is judged by the very same commands that run here
+        #       after the merge. The suite exercises in-tree sources only (the
+        #       ELF reader, the mountinfo and APatch parsers), so neither the
+        #       submodules nor the history the build job needs are checked out,
+        #       which lets a broken test fail fast without costing the archives.
+        run: bash tests/host/run.sh
 
   build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
         with:
           submodules: "recursive"
           fetch-depth: 0
