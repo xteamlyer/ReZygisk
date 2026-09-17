@@ -207,6 +207,59 @@ bool rezygiskd_listener_init() {
   return true;
 }
 
+/* INFO: Upper bound for one length-prefixed string the daemon sends. Every one
+         of them is a name or a message — a module id, a target, the root
+         solution, an error text — so this ceiling is generous by orders of
+         magnitude while still keeping a corrupted length from being trusted. */
+#define MONITOR_STRING_MAX (64u * 1024u)
+
+/* INFO: Reads one length-prefixed string off the daemon socket, or NULL.
+
+         The length is checked before it is used: a uint32_t of 0xffffffff
+         wraps to zero in `length + 1`, so the allocation would hand back a
+         minimal block that read_loop then fills with four gigabytes of
+         datagram. The daemon is trusted, but a length that wrapped is a
+         corrupted protocol either way, and this is the single place to stop
+         it instead of once per field.
+
+         On NULL the caller abandons the datagram: the stream is already out of
+         step with the daemon, so dispatching on what follows would only act on
+         garbage. */
+static char *read_socket_string(const char *what) {
+  uint32_t length = 0;
+
+  if (read_uint32_t(monitor_sock_fd, &length) != sizeof(length)) {
+    LOGE("read VexZygiskd%s %s len", MONITOR_ABI, what);
+
+    return NULL;
+  }
+
+  if (length > MONITOR_STRING_MAX) {
+    LOGE("VexZygiskd%s %s length %u is out of range", MONITOR_ABI, what, length);
+
+    return NULL;
+  }
+
+  char *value = malloc((size_t)length + 1);
+  if (value == NULL) {
+    PLOGE("malloc VexZygiskd%s %s", MONITOR_ABI, what);
+
+    return NULL;
+  }
+
+  if (read_loop(monitor_sock_fd, value, length) != (ssize_t)length) {
+    LOGE("read VexZygiskd%s %s", MONITOR_ABI, what);
+
+    free(value);
+
+    return NULL;
+  }
+
+  value[length] = '\0';
+
+  return value;
+}
+
 void rezygiskd_listener_callback() {
   while (1) {
     uint8_t cmd = 0;
@@ -280,37 +333,14 @@ void rezygiskd_listener_callback() {
       case CMD_DAEMON_SET_INFO: {
         LOGD("Received VexZygiskd%s info", MONITOR_ABI);
 
-        uint32_t root_impl_len;
-        if (read_uint32_t(monitor_sock_fd, &root_impl_len) != sizeof(root_impl_len)) {
-          LOGE("read VexZygiskd%s root impl len", MONITOR_ABI);
+        /* INFO: Read into a local first: a failed read then leaves the previous
+                  value in place instead of dropping it. */
+        char *root_impl = read_socket_string("root impl");
+        if (root_impl == NULL) break;
 
-          break;
-        }
+        free(environment_information.root_impl);
+        environment_information.root_impl = root_impl;
 
-        if (environment_information.root_impl) {
-          LOGD("freeing old VexZygiskd%s root impl", MONITOR_ABI);
-
-          free(environment_information.root_impl);
-          environment_information.root_impl = NULL;
-        }
-
-        environment_information.root_impl = malloc(root_impl_len + 1);
-        if (environment_information.root_impl == NULL) {
-          PLOGE("malloc VexZygiskd%s root impl", MONITOR_ABI);
-
-          break;
-        }
-
-        if (read_loop(monitor_sock_fd, environment_information.root_impl, root_impl_len) != (ssize_t)root_impl_len) {
-          LOGE("read VexZygiskd%s root impl", MONITOR_ABI);
-
-          free(environment_information.root_impl);
-          environment_information.root_impl = NULL;
-
-          break;
-        }
-
-        environment_information.root_impl[root_impl_len] = '\0';
         LOGD("VexZygiskd%s root impl: %s", MONITOR_ABI, environment_information.root_impl);
 
         /* INFO: Read into a local first: the old lists are freed through the
@@ -350,27 +380,8 @@ void rezygiskd_listener_callback() {
         }
 
         for (size_t i = 0; i < environment_information.modules_len; i++) {
-          uint32_t module_name_len;
-          if (read_uint32_t(monitor_sock_fd, &module_name_len) != sizeof(module_name_len)) {
-            LOGE("read VexZygiskd%s module name len", MONITOR_ABI);
-
-            goto set_info_modules_cleanup;
-          }
-
-          environment_information.modules[i] = malloc(module_name_len + 1);
-          if (environment_information.modules[i] == NULL) {
-            PLOGE("malloc VexZygiskd%s module name", MONITOR_ABI);
-
-            goto set_info_modules_cleanup;
-          }
-
-          if (read_loop(monitor_sock_fd, environment_information.modules[i], module_name_len) != (ssize_t)module_name_len) {
-            LOGE("read VexZygiskd%s module name", MONITOR_ABI);
-
-            goto set_info_modules_cleanup;
-          }
-
-          environment_information.modules[i][module_name_len] = '\0';
+          environment_information.modules[i] = read_socket_string("module name");
+          if (environment_information.modules[i] == NULL) goto set_info_modules_cleanup;
 
           uint8_t module_type;
           if (read_uint8_t(monitor_sock_fd, &module_type) != sizeof(module_type)) {
@@ -410,27 +421,8 @@ void rezygiskd_listener_callback() {
               }
 
               for (uint32_t t = 0; t < targets_len; t++) {
-                uint32_t target_len;
-                if (read_uint32_t(monitor_sock_fd, &target_len) != sizeof(target_len)) {
-                  LOGE("read VexZygiskd%s module target len", MONITOR_ABI);
-
-                  goto set_info_modules_cleanup;
-                }
-
-                environment_information.modules_targets[i][t] = malloc(target_len + 1);
-                if (environment_information.modules_targets[i][t] == NULL) {
-                  PLOGE("malloc VexZygiskd%s module target", MONITOR_ABI);
-
-                  goto set_info_modules_cleanup;
-                }
-
-                if (read_loop(monitor_sock_fd, environment_information.modules_targets[i][t], target_len) != (ssize_t)target_len) {
-                  LOGE("read VexZygiskd%s module target", MONITOR_ABI);
-
-                  goto set_info_modules_cleanup;
-                }
-
-                environment_information.modules_targets[i][t][target_len] = '\0';
+                environment_information.modules_targets[i][t] = read_socket_string("module target");
+                if (environment_information.modules_targets[i][t] == NULL) goto set_info_modules_cleanup;
               }
             }
           }
@@ -457,37 +449,14 @@ void rezygiskd_listener_callback() {
       case CMD_DAEMON_SET_ERROR_INFO: {
         LOGD("Received VexZygiskd%s error info", MONITOR_ABI);
 
-        uint32_t error_info_len;
-        if (read_uint32_t(monitor_sock_fd, &error_info_len) != sizeof(error_info_len)) {
-          LOGE("read VexZygiskd%s error info len", MONITOR_ABI);
+        /* INFO: Same ordering as the info case above: the old text survives a
+                  failed read. */
+        char *error_info = read_socket_string("error info");
+        if (error_info == NULL) break;
 
-          break;
-        }
+        free(status.daemon_error_info);
+        status.daemon_error_info = error_info;
 
-        if (status.daemon_error_info) {
-          LOGD("freeing old VexZygiskd%s error info", MONITOR_ABI);
-
-          free(status.daemon_error_info);
-          status.daemon_error_info = NULL;
-        }
-
-        status.daemon_error_info = malloc(error_info_len + 1);
-        if (status.daemon_error_info == NULL) {
-          PLOGE("malloc VexZygiskd%s error info", MONITOR_ABI);
-
-          break;
-        }
-
-        if (read_loop(monitor_sock_fd, status.daemon_error_info, error_info_len) != (ssize_t)error_info_len) {
-          LOGE("read VexZygiskd%s error info", MONITOR_ABI);
-
-          free(status.daemon_error_info);
-          status.daemon_error_info = NULL;
-
-          break;
-        }
-
-        status.daemon_error_info[error_info_len] = '\0';
         LOGD("VexZygiskd%s error info: %s", MONITOR_ABI, status.daemon_error_info);
 
         update_status(NULL);
