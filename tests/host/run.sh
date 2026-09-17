@@ -20,6 +20,10 @@ cd "$(dirname "$0")/../.."
 #       first and cheapest, before anything is built.
 python3 tests/host/check_protocol.py
 
+# INFO: jni_hooks.h is generated and then committed, so a generator edit that
+#       was never regenerated would go unnoticed until a device misbehaves.
+python3 tests/host/check_generated.py
+
 # INFO: -Werror on everything written in this tree, -w on the vendored XZ
 #       decompressor: it is upstream code that is not maintained here, and
 #       its warnings are not actionable.
