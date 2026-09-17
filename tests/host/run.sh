@@ -24,6 +24,14 @@ python3 tests/host/check_protocol.py
 #       was never regenerated would go unnoticed until a device misbehaves.
 python3 tests/host/check_generated.py
 
+# INFO: The module scripts only ever run on a device, so a syntax error in one
+#       of them would ride into the archive and surface as a module that fails
+#       to start at boot, with nothing on the build side to have caught it.
+#       Parsing needs no device and no root.
+for script in module/src/*.sh module/src/apatch/*.sh; do
+  bash -n "$script"
+done
+
 # INFO: -Werror on everything written in this tree, -w on the vendored XZ
 #       decompressor: it is upstream code that is not maintained here, and
 #       its warnings are not actionable.
