@@ -26,7 +26,15 @@ create_sys_perm $TMP_PATH
 #         happens after the module tree is mounted — is what makes the reset
 #         actually stick on every root. post-mount.d/rezygisk.sh (KernelSU
 #         flavour only) covers the same gap from the other side.
-sh /data/adb/post-fs-data.d/rezygisk.sh
+#
+#         Guarded on purpose: a missing copy — or one that fails on its own,
+#         its cp having nothing to copy — only costs the stale status text in
+#         module.prop for one boot. Letting that reach `set -e` would abort
+#         before the monitor is started and take the whole injection down with
+#         it, silently.
+if [ -f /data/adb/post-fs-data.d/rezygisk.sh ]; then
+  sh /data/adb/post-fs-data.d/rezygisk.sh || true
+fi
 
 if [ -f "$MODDIR/bin/zygisk-ptrace64" ]; then
   "$MODDIR/bin/zygisk-ptrace64" monitor &

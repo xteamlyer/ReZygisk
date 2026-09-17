@@ -18,7 +18,12 @@ set -e
 
 MODDIR=/data/adb/modules/rezygisk
 
-# INFO: Resets VexZygisk's module.prop to its default state which is saved upon installation.
-cp "$MODDIR/module.prop.bak" "$MODDIR/module.prop"
+# INFO: Resets VexZygisk's module.prop to its default state which is saved upon
+#         installation. Guarded because this script also runs straight from the
+#         root solution's post-fs-data.d stage: a missing .bak is cosmetic, but
+#         a failing cp under `set -e` would be reported as a boot-stage error.
+if [ -f "$MODDIR/module.prop.bak" ]; then
+  cp "$MODDIR/module.prop.bak" "$MODDIR/module.prop"
+fi
 
 exit 0
