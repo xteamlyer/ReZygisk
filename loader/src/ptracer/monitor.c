@@ -980,28 +980,12 @@ static void json_escape_into(char *dst, size_t cap, const char *src) {
   dst[off] = '\0';
 }
 
-static bool update_status(const char *message) {
-  build_module_text();
+/* INFO: Appends the live status to `out`, every append bounded to its
+         capacity: the daemon error text arrives over a socket and can be
+         longer than the line is allowed to hold. */
+static void append_status_text(char *out, size_t cap) {
+  #define STATUS_APPEND(text) strncat(out, (text), cap - strlen(out) - 1)
 
-  FILE *prop = fopen(ZYGISK_MODULE_PROP, "w");
-  if (prop == NULL) {
-    PLOGE("failed to open prop");
-
-    return false;
-  }
-
-  if (message) {
-    fprintf(prop, "%s[%s] %s%s", pre_section, message, module_text, post_section);
-    fclose(prop);
-
-    return true;
-  }
-
-  /* INFO: Appends bounded to the destination: the daemon error text is read
-            off the socket and may be longer than the status line can hold. */
-  #define STATUS_APPEND(text) strncat(status_text, (text), sizeof(status_text) - strlen(status_text) - 1)
-
-  char status_text[256] = "Monitor: ";
   switch (tracing_state) {
     case TRACING: {
       STATUS_APPEND("✅");
@@ -1042,91 +1026,126 @@ static bool update_status(const char *message) {
   }
 
   #undef STATUS_APPEND
+}
+
+/* INFO: Mirrors the status into the JSON a frontend reads. Written only once a
+         root solution has been identified — without one the file would
+         describe a run that never named itself — and an existing file is
+         removed in that case rather than left describing a previous run. */
+static bool write_state_json(void) {
+  if (environment_information.root_impl == NULL) {
+    if (remove(ZYGISK_STATE_JSON) == -1) {
+      PLOGE("failed to remove state.json");
+    }
+
+    return true;
+  }
+
+  FILE *json = fopen(ZYGISK_STATE_JSON, "w");
+  if (json == NULL) {
+    PLOGE("failed to open state.json");
+
+    return false;
+  }
+
+  char root_impl_json[256];
+  json_escape_into(root_impl_json, sizeof(root_impl_json), environment_information.root_impl);
+
+  fprintf(json, "{\n");
+  fprintf(json, "  \"root\": \"%s\",\n", root_impl_json);
+
+  fprintf(json, "  \"monitor\": {\n");
+  fprintf(json, "    \"state\": %d", tracing_state);
+
+  if (monitor_stop_reason) {
+    char reason_json[256];
+    json_escape_into(reason_json, sizeof(reason_json), monitor_stop_reason);
+
+    fprintf(json, ",\n    \"reason\": \"%s\"\n", reason_json);
+  } else fprintf(json, "\n");
+
+  if (status.supported) fprintf(json, "  },\n");
+  else fprintf(json, "  }\n");
+
+  if (status.supported) {
+    char reason_json[256];
+    if (status.daemon_error_info) json_escape_into(reason_json, sizeof(reason_json), status.daemon_error_info);
+
+    fprintf(json, "  \"rezygiskd\": {\n");
+    fprintf(json, "    \"%s\": {\n", MONITOR_ABI);
+    fprintf(json, "      \"state\": %d,\n", status.daemon_running);
+    if (status.daemon_error_info) fprintf(json, "      \"reason\": \"%s\",\n", reason_json);
+    fprintf(json, "      \"modules\": [");
+
+    if (environment_information.modules) for (uint32_t i = 0; i < environment_information.modules_len; i++) {
+      if (i > 0) fprintf(json, ", ");
+
+      char module_json[256];
+      json_escape_into(module_json, sizeof(module_json), environment_information.modules[i] ? environment_information.modules[i] : "");
+
+      fprintf(json, "{\"id\": \"%s\", \"next\": %s, \"companion\": %s",
+              module_json,
+              environment_information.modules_zn[i] ? "true" : "false",
+              environment_information.modules_companion[i] ? "true" : "false");
+
+      if (environment_information.modules_targets && environment_information.modules_targets[i]) {
+        fprintf(json, ", \"targets\": [");
+        for (uint32_t t = 0; t < environment_information.modules_targets_len[i]; t++) {
+          if (t > 0) fprintf(json, ", ");
+
+          char target_json[256];
+          json_escape_into(target_json, sizeof(target_json), environment_information.modules_targets[i][t] ? environment_information.modules_targets[i][t] : "");
+
+          fprintf(json, "\"%s\"", target_json);
+        }
+        fprintf(json, "]");
+      }
+
+      fprintf(json, "}");
+    }
+
+    fprintf(json, "]\n");
+    fprintf(json, "    }\n");
+    fprintf(json, "  },\n");
+
+    fprintf(json, "  \"zygote\": {\n");
+    fprintf(json, "    \"%s\": %d\n", MONITOR_ABI, status.zygote_injected);
+    fprintf(json, "  }\n");
+  }
+
+  fprintf(json, "}\n");
+
+  fclose(json);
+
+  return true;
+}
+
+static bool update_status(const char *message) {
+  build_module_text();
+
+  FILE *prop = fopen(ZYGISK_MODULE_PROP, "w");
+  if (prop == NULL) {
+    PLOGE("failed to open prop");
+
+    return false;
+  }
+
+  /* INFO: A caller-supplied message replaces the generated line and ends the
+            update there: that path carries a transient note, not a status. */
+  if (message) {
+    fprintf(prop, "%s[%s] %s%s", pre_section, message, module_text, post_section);
+    fclose(prop);
+
+    return true;
+  }
+
+  char status_text[256] = "Monitor: ";
+  append_status_text(status_text, sizeof(status_text));
 
   fprintf(prop, "%s[%s] %s%s", pre_section, status_text, module_text, post_section);
   fclose(prop);
 
-  if (environment_information.root_impl) {
-    FILE *json = fopen(ZYGISK_STATE_JSON, "w");
-    if (json == NULL) {
-      PLOGE("failed to open state.json");
-
-      return false;
-    }
-
-    char root_impl_json[256];
-    json_escape_into(root_impl_json, sizeof(root_impl_json), environment_information.root_impl);
-
-    fprintf(json, "{\n");
-    fprintf(json, "  \"root\": \"%s\",\n", root_impl_json);
-
-    fprintf(json, "  \"monitor\": {\n");
-    fprintf(json, "    \"state\": %d", tracing_state);
-
-    if (monitor_stop_reason) {
-      char reason_json[256];
-      json_escape_into(reason_json, sizeof(reason_json), monitor_stop_reason);
-
-      fprintf(json, ",\n    \"reason\": \"%s\"\n", reason_json);
-    } else fprintf(json, "\n");
-
-    if (status.supported) fprintf(json, "  },\n");
-    else fprintf(json, "  }\n");
-
-    if (status.supported) {
-      char reason_json[256];
-      if (status.daemon_error_info) json_escape_into(reason_json, sizeof(reason_json), status.daemon_error_info);
-
-      fprintf(json, "  \"rezygiskd\": {\n");
-      fprintf(json, "    \"%s\": {\n", MONITOR_ABI);
-      fprintf(json, "      \"state\": %d,\n", status.daemon_running);
-      if (status.daemon_error_info) fprintf(json, "      \"reason\": \"%s\",\n", reason_json);
-      fprintf(json, "      \"modules\": [");
-
-      if (environment_information.modules) for (uint32_t i = 0; i < environment_information.modules_len; i++) {
-        if (i > 0) fprintf(json, ", ");
-
-        char module_json[256];
-        json_escape_into(module_json, sizeof(module_json), environment_information.modules[i] ? environment_information.modules[i] : "");
-
-        fprintf(json, "{\"id\": \"%s\", \"next\": %s, \"companion\": %s",
-                module_json,
-                environment_information.modules_zn[i] ? "true" : "false",
-                environment_information.modules_companion[i] ? "true" : "false");
-
-        if (environment_information.modules_targets && environment_information.modules_targets[i]) {
-          fprintf(json, ", \"targets\": [");
-          for (uint32_t t = 0; t < environment_information.modules_targets_len[i]; t++) {
-            if (t > 0) fprintf(json, ", ");
-
-            char target_json[256];
-            json_escape_into(target_json, sizeof(target_json), environment_information.modules_targets[i][t] ? environment_information.modules_targets[i][t] : "");
-
-            fprintf(json, "\"%s\"", target_json);
-          }
-          fprintf(json, "]");
-        }
-
-        fprintf(json, "}");
-      }
-
-      fprintf(json, "]\n");
-      fprintf(json, "    }\n");
-      fprintf(json, "  },\n");
-
-      fprintf(json, "  \"zygote\": {\n");
-      fprintf(json, "    \"%s\": %d\n", MONITOR_ABI, status.zygote_injected);
-      fprintf(json, "  }\n");
-    }
-
-    fprintf(json, "}\n");
-
-    fclose(json);
-  } else {
-    if (remove(ZYGISK_STATE_JSON) == -1) {
-      PLOGE("failed to remove state.json");
-    }
-  }
+  if (!write_state_json()) return false;
 
   LOGI("status updated: %s", status_text);
 
