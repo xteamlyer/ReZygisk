@@ -14,28 +14,20 @@
 #include "../utils.h"
 #include "apatch.h"
 
-/* INFO: APatch (https://github.com/bmax121/APatch) is a KernelPatch based
-         root solution. Its daemon mirrors KernelSU's layout:
-
-           - the daemon binary lives at /data/adb/ap/bin/apd;
-           - per-package policy lives in /data/adb/ap/package_config, a CSV
-             with the header pkg,exclude,allow,uid,to_uid,sctx. "to_uid"
-             extends a grant over a uid range, which is how work profiles
-             and multi-user setups are handled;
-           - the manager app is me.bmax.apatch and may live in any user
-             profile (FolkPatch, an APatch branch, keeps the layout but
-             ships its manager as me.yuki.folk).
-
-         The kernel-side authorization runs through the KernelPatch supercall
-         interface and is not touched here. */
+/* INFO: APatch (https://github.com/bmax121/APatch) is a KernelPatch based root
+         solution. Its per-package policy lives in /data/adb/ap/package_config, a
+         CSV with the header pkg,exclude,allow,uid,to_uid,sctx; to_uid extends a
+         grant over a uid range, which is how work profiles are handled. The
+         manager is me.bmax.apatch, and FolkPatch (an APatch branch) ships its own
+         as me.yuki.folk. Kernel-side authorization goes through the KernelPatch
+         supercall interface and is not touched here. */
 #define AP_BIN_DIR "/data/adb/ap/bin/apd"
 #define AP_CONFIG_FILE "/data/adb/ap/package_config"
 #define AP_MANAGER_PKG "me.bmax.apatch"
 #define AP_FOLKPATCH_PKG "me.yuki.folk"
 
-/* INFO: Rows are bounded because this file is walked for every process flag
-         query; a grant that does not fit the table is not one this daemon can
-         serve anyway. */
+/* INFO: Bounded because the file is walked for every process flag query; a grant
+         that does not fit is not one this daemon can serve anyway. */
 #define AP_MAX_ROWS 256
 #define AP_PKG_NAME_MAX 255
 
@@ -343,9 +335,7 @@ static bool ap_uid_is_manager_cached(uid_t uid) {
 enum uid_manager_state ap_uid_is_manager(uid_t uid) {
   if (ap_uid_is_manager_cached(uid)) return UID_MANAGER_YES;
 
-  /* INFO: APatch keeps no manager marker to read the way KernelSU does, so a
-             "no" here only means the directories that would belong to the
-             manager did not match. That is still a negative answer about a
-             uid, and both backends have to report the same shape. */
+  /* INFO: APatch keeps no manager marker to read the way KernelSU does, so "no"
+             only means the manager's directories did not match. */
   return UID_MANAGER_NO;
 }

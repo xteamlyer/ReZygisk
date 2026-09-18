@@ -146,19 +146,13 @@ size_t zygisk_module_length = 0;
 static bool zn_presence_known = false;
 static bool zn_modules_present = false;
 
-/* INFO: The specialize pipeline (early fork, fd snapshot, pre hooks, ART's
-           fork+specialize, post hooks) is a single global sequence: g_ctx
-           and the cached fork pid are process-global. The classic zygote
-           guarantees that by being single-threaded; HyperOS's hyos_spawner
-           exists to spawn apps in PARALLEL, so two threads could interleave
-           pipelines and hand both parents the same cached child — that is
-           the prime bootloop suspect.
-
-           A semaphore serializes the pipeline, and a semaphore rather than a
-           mutex because the fork inside the pipeline duplicates it into the
-           child: a semaphore has no owning thread, so the child's copy (left
-           at zero, taken mid-pipeline) is released by the child's own
-           pipeline-end post and the counts stay balanced in every process. */
+/* INFO: The specialize pipeline is a process-global sequence (g_ctx, the cached
+           fork pid). The classic zygote is single-threaded, which is what makes
+           that safe; HyperOS's hyos_spawner spawns in parallel, so two threads
+           could interleave and hand both parents the same cached child. A
+           semaphore serializes it, chosen over a mutex because the fork
+           duplicates it into the child and a semaphore has no owning thread to
+           strand the child's copy. */
 static sem_t spawn_pipeline_sem;
 static pthread_once_t spawn_pipeline_once = PTHREAD_ONCE_INIT;
 
@@ -1113,18 +1107,11 @@ static void rz_run_modules_post(struct zygisk_context *ctx) {
 static void rz_app_specialize_pre(struct zygisk_context *ctx) {
   FLAG_SET(ctx, APP_SPECIALIZE);
 
-  /* INFO: Isolated services have different UIDs than the main apps. Because
-              numerous root implementations base themselves in the UID of the
-              app, we need to ensure that the UID sent to VexZygiskd to search
-              is the app's and not the isolated service, or else it will be
-              able to bypass DenyList.
-
-           All apps, and isolated processes, of *third-party* applications will
-             have their app_data_dir set. The system applications might not have
-             one, however it is unlikely they will create an isolated process,
-             and even if so, it should not impact in detections, performance or
-             any area.
-  */
+  /* INFO: The UID sent to the daemon must be the app's, not an isolated
+             service's: root implementations key off the app UID, so the isolated
+             one would bypass the denylist. Third-party apps and their isolated
+             processes always have app_data_dir; system apps may not, but they
+             rarely spawn isolated processes. */
   uid_t uid = *ctx->args.app->uid;
   if (IS_ISOLATED_SERVICE(uid) && ctx->args.app->app_data_dir) {
     /* INFO: If the app is an isolated service, we use the UID of the
@@ -1164,19 +1151,12 @@ static void rz_app_specialize_pre(struct zygisk_context *ctx) {
     zn_modules_present = (ctx->info_flags & PROCESS_ZN_PRESENT) == PROCESS_ZN_PRESENT;
     zn_presence_known = true;
   }
-  /* INFO: To ensure we are really using a clean mount namespace, we use
-              the first process it as reference for clean mount namespace,
-              before it even does something, so that it will be clean yet
-              with expected mounts.
-
-           To avoid duplication, we will bypass this update_mnt_ns if we
-             are going to execute it later, as the app will be in the
-             denylist.
-
-           Only the fallback needs this, so a device running revert-only skips
-           the probe and saves the daemon the helper process that would have to
-           hold the namespace for the whole boot.
-  */
+  /* INFO: The first process started is the reference for the clean namespace,
+             captured before it does anything so the copy is clean yet keeps the
+             expected mounts. Skipped when this process is denylisted and will run
+             the same update later, and under revert-only, which needs no clean
+             namespace and so saves the daemon the helper that would have held it
+             for the whole boot. */
   if (!revert_mode_enabled() &&
       (ctx->info_flags & PROCESS_IS_FIRST_STARTED) == PROCESS_IS_FIRST_STARTED &&
       (ctx->info_flags & PROCESS_ON_DENYLIST) == 0 &&
@@ -1194,33 +1174,21 @@ static void rz_app_specialize_pre(struct zygisk_context *ctx) {
     setenv("ZYGISK_ENABLED", "1", 1);
   }
 
-  /* INFO: Modules only have two "start off" points from Zygisk, preSpecialize and
-             postSpecialize. In preSpecialize, the process still has privileged
-             permissions, and therefore can execute mount/umount/setns functions.
-             If we update the mount namespace AFTER executing them, any mounts made
-             will be lost, and the process will not have access to them anymore.
-
-           In postSpecialize, while still could have its mounts modified with the
-             assistance of a Zygisk companion, it will already have the mount
-             namespace switched by then, so there won't be issues.
-
-           Knowing this, we update the mns before execution, so that they can still
-             make changes to mounts in DenyListed processes without being reverted.
-  */
+  /* INFO: Mounts are updated before the modules run. In preSpecialize a module
+             still has the privileges to mount/umount/setns, and updating the
+             namespace afterwards would discard what it set up; by
+             postSpecialize the namespace is already switched, so it is too late.
+             Doing it first also lets modules touch denylisted processes without
+             the change being reverted. */
   bool in_denylist = (ctx->info_flags & PROCESS_ON_DENYLIST) == PROCESS_ON_DENYLIST;
   if (in_denylist) {
     FLAG_SET(ctx, DO_REVERT_UNMOUNT);
 
-    /* INFO: Revert-only, applied to this process alone. The private copy comes
-              first: unmounting without it would take the traces out of the
-              namespace the zygote itself sits in, and every later fork would
-              inherit that - which is what used to break the modules that
-              depend on the mounts a metamodule provides.
-
-           A refused or partial revert, or the mode being turned off, hides the
-           process the namespace way instead. That works just as well, at the
-           cost of putting every denylisted app into one shared namespace
-           object. */
+    /* INFO: Revert-only, on this process alone. The private copy comes first:
+              unmounting without it would strip the traces out of the namespace the
+              zygote sits in and every later fork would inherit that. A refused
+              revert, or the mode being off, hides the process the namespace way
+              instead - works as well, at the cost of one shared namespace. */
     if (!revert_mode_enabled() || unshare(CLONE_NEWNS) == -1 || !revert_root_traces_here())
       update_mnt_ns(Clean, false);
   }

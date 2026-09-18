@@ -48,17 +48,13 @@ static void *loaded_libs[ZN_MAX_MODULES];
 static struct zn_entry loaded_entries[ZN_MAX_MODULES];
 static size_t loaded_libs_count = 0;
 
-/* INFO: The ZN modules are loaded by the system linker, exactly as Zygisk Next
-         does it. dlopen() of a path under /data/adb fails for most targets
-         because the linker's namespace "permitted path" check rejects
-         non-system paths, and loading through a plain fd (a memfd handed over
-         by the daemon) is also rejected: bionic re-checks namespace
-         accessibility for every fd that does not live on tmpfs. Copying the
-         bytes into a memfd owned by this process sidesteps both checks.
-
-         The memfd is deliberately left open: bionic does not take ownership of
-         ANDROID_DLEXT_USE_LIBRARY_FD descriptors and may keep reading from
-         them for the whole life of the loaded library. */
+/* INFO: ZN modules go through the system linker, as in Zygisk Next. dlopen() of a
+          path under /data/adb fails for most targets - the linker's namespace
+          "permitted path" check rejects non-system paths - and a plain fd is
+          rejected too, since bionic re-checks namespace accessibility for every fd
+          not on tmpfs. A memfd owned by this process sidesteps both. It is left
+          open on purpose: bionic does not take ownership of
+          ANDROID_DLEXT_USE_LIBRARY_FD descriptors and may keep reading it. */
 static void *dlopen_via_fd(const char *path, int flags) {
   int fd = open(path, O_RDONLY | O_CLOEXEC);
   if (fd < 0) {

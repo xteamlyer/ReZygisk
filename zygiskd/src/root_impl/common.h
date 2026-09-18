@@ -42,16 +42,12 @@ struct root_impl {
 
 #define LONGEST_ROOT_IMPL_NAME sizeof(ROOT_IMPL_NAME)
 
-/* INFO: Whether a uid belongs to the root manager is a question with three
-           answers, not two: yes, no, and "cannot tell". The third one exists
-           because both backends can be asked before they are able to answer -
-           KernelSU before the kernel has crowned a manager, APatch before its
-           scan has settled. Reporting "no" in that moment is not a safe
-           default: the loader reads "no" as "ordinary app", and an ordinary
-           app that should_umount gets the root mounts reverted out of its own
-           namespace. A manager treated that way loses sight of the module
-           tree and every WebUI under it turns into a blank page. "Cannot
-           tell" keeps such a process out of both branches. */
+/* INFO: Three answers, not two: yes, no, and "cannot tell". Both backends can be
+           asked before they are able to answer (KernelSU before a manager is
+           crowned, APatch before its scan settles), and reporting "no" in that
+           moment is not safe - the loader reads it as "ordinary app", and an
+           ordinary app that should_umount gets the root mounts reverted out of
+           its own namespace. */
 enum uid_manager_state {
   UID_MANAGER_NO = 0,
   UID_MANAGER_YES = 1,

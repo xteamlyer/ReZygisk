@@ -3,14 +3,11 @@
 #include "../utils.h"
 
 /* INFO: One backend is compiled in per build; the macros keep the dispatch
-         code below identical for both. The daemon is built for a specific
-         root solution, so a missing interface only means it is running
-         somewhere it cannot serve; keep serving requests that do not need
-         root instead of failing to start.
-
-         The manager query is not routed through a macro: the two backends
-         answer in their own enums, so uid_is_manager() spells the mapping
-         out and the compiler checks that every case is handled. */
+         below identical for both. A missing interface only means this daemon is
+         running somewhere it cannot serve, so keep serving requests that do not
+         need root instead of failing to start. The manager query is not routed
+         through a macro: the backends answer in their own enums, so
+         uid_is_manager() spells the mapping out and the compiler checks it. */
 #ifdef ROOT_IMPL_APATCH
   #include "apatch.h"
   #define ROOT_GET_EXISTENCE ap_get_existence
@@ -54,17 +51,15 @@ void uid_query_root(uid_t uid, bool *granted_root, bool *should_umount) {
 }
 
 enum uid_manager_state uid_is_manager(uid_t uid) {
-  /* INFO: An unsupported backend has not denied anything, it simply never
-             looked, so "unknown" is the honest answer and keeps the caller
-             from reading a denylist verdict into it. */
+  /* INFO: An unsupported backend has not denied anything, it never looked, so
+             "unknown" is the honest answer. */
   if (!impl_supported) return UID_MANAGER_UNKNOWN;
 
 #ifdef ROOT_IMPL_APATCH
   return ap_uid_is_manager(uid);
 #else
-  /* INFO: KernelSU answers in its own three states, and they do not line up
-             numerically with the shared ones: UNKNOWN is 2 there and 1 here.
-             The mapping is written out instead of relying on the values. */
+  /* INFO: Mapped explicitly, not by value: KernelSU's UNKNOWN is 2 where the
+             shared one is 1. */
   switch (ksu_uid_is_manager(uid)) {
     case KSU_MANAGER_QUERY_YES: return UID_MANAGER_YES;
     case KSU_MANAGER_QUERY_NO: return UID_MANAGER_NO;

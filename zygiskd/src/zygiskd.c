@@ -244,19 +244,12 @@ static void load_modules(struct Context *restrict context) {
     char zn_modules[PATH_MAX];
     snprintf(zn_modules, PATH_MAX, ZYGISK_MODULES_DIR "/%s/zn_modules.txt", name);
 
-    /* INFO: The two mechanisms are served side by side rather than picked
-             between, which is what NyaZygisk does and what LSPosed depends on.
-
-             LSPosed ships a zn_modules.txt because it wants a ZN-aware
-             provider underneath (mount-free injection, HyperOS Runtime,
-             dex2oat on A17+, ...), yet its library only exports the standard
-             zygisk_module_entry, never zn_module. Treating the two as
-             exclusive sends it down the ZN path, where it cannot load, and
-             drops it from the standard path, where it would have.
-
-             Entering it in both lists costs nothing: the ZN load finds no
-             zn_module and gives up quietly, while the standard load runs the
-             entry point that is there. */
+    /* INFO: Both mechanisms serve a module rather than one excluding the other,
+              which is what LSPosed needs: it ships a zn_modules.txt (it wants a
+              ZN-aware provider) but only ever exports zygisk_module_entry.
+              Treating them as exclusive sends it down a ZN path it cannot load
+              and drops it from the standard path it could. Listing it in both
+              costs nothing - the ZN load finds no zn_module and gives up. */
     if (access(zn_modules, F_OK) == 0) {
       LOGI("Found Zygisk Next module \"%s\"", name);
 
@@ -308,23 +301,16 @@ static void load_modules(struct Context *restrict context) {
     closedir(dir);
 }
 
-/* INFO: Closing the cached end is not enough to retire a companion. Its
-         control socket is handed to every client that asks for it, so any
-         process still holding a duplicate keeps the peer alive and the
-         companion would sit in its recvmsg long after the daemon let go --
-         only to be joined by a fresh one for the same library after the next
-         zygote restart.
+/* INFO: Closing the cached end is not enough to retire a companion: its control
+         socket is handed to every asker, so any process still holding a duplicate
+         keeps the peer alive and the companion would sit in recvmsg long after the
+         daemon let go, only to be joined by a fresh one after the next zygote
+         restart. shutdown() acts on the socket itself rather than on one
+         descriptor, so every holder sees the close at once and the companion
+         exits through its own "control socket closed" path.
 
-         shutdown() acts on the socket itself rather than on one descriptor,
-         so every holder sees the end of the connection at once and the
-         companion exits through its own "control socket closed" path.
-
-         Lifecycle review conclusion (kept as-is): the double fork hands the
-         companion to init, so the daemon cannot and must not waitpid it; a
-         companion wedged before its recvmsg loop — inside a module
-         constructor — cannot see the shutdown until that returns, which the
-         bounded handshake in exec_companion already isolates from the
-         daemon. No process accounting is added on top. */
+         The double fork hands the companion to init, so the daemon cannot and
+         must not waitpid it. */
 static void release_zn_companion_fd(int fd) {
   if (fd < 0) return;
 
@@ -1108,15 +1094,10 @@ static void handle_get_process_flags(struct Client *client) {
     *client->first_process = false;
   }
 
-  /* INFO: Three outcomes, and the third one must not be folded into the
-            second. "Unknown" means the backend could not name the manager
-            (KernelSU before the kernel has crowned one, or a failed query).
-            Sending that process down the else branch would query it for
-            should_umount, and a manager that answers yes to that gets the
-            root mounts reverted out of its own namespace - the module tree
-            disappears, so every module WebUI it opens afterwards serves
-            nothing and renders blank. When the manager is not known, the
-            process is classified as neither manager nor denylisted. */
+  /* INFO: "Unknown" must not fall into the else branch below: that branch asks
+            about should_umount, and a manager answering yes to it gets the module
+            tree reverted out of its own namespace, which blanks every WebUI. So
+            an unclassified process is neither manager nor denylisted. */
   enum uid_manager_state manager = uid_is_manager(uid);
 
   if (manager == UID_MANAGER_YES) {

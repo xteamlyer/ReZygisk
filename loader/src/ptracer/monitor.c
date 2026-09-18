@@ -215,16 +215,11 @@ bool rezygiskd_listener_init() {
 
 /* INFO: Reads one length-prefixed string off the daemon socket, or NULL.
 
-         The length is checked before it is used: a uint32_t of 0xffffffff
-         wraps to zero in `length + 1`, so the allocation would hand back a
-         minimal block that read_loop then fills with four gigabytes of
-         datagram. The daemon is trusted, but a length that wrapped is a
-         corrupted protocol either way, and this is the single place to stop
-         it instead of once per field.
-
-         On NULL the caller abandons the datagram: the stream is already out of
-         step with the daemon, so dispatching on what follows would only act on
-         garbage. */
+          The length is validated before use: a uint32_t of 0xffffffff wraps to
+          zero in `length + 1`, so the allocation would hand back a minimal block
+          that read_loop then fills with four gigabytes of datagram. On NULL the
+          caller abandons the datagram - the stream is already out of step with
+          the daemon, so dispatching on what follows would act on garbage. */
 static char *read_socket_string(const char *what) {
   uint32_t length = 0;
 
@@ -745,14 +740,12 @@ void sigchld_listener_callback() {
               is_tango = true;
             }
 #endif
-/* INFO: History: the first version of this branch shipped without any
-          handling for the spawner's PARALLEL spawn pattern and produced an
-          infinite second-screen bootloop on HyperOS — two concurrent spawn
-          pipelines overran the loader's process-global specialize state.
-          The loader now serializes its pipeline with a semaphore
-          (spawn_pipeline_enter/leave in hook.c), and the branch is enabled
-          again. If a bootloop ever recurs, capture dmesg during the loop
-          before touching this. */
+/* INFO: The spawner spawns in PARALLEL, which overran the loader's
+          process-global specialize state and produced an infinite second-screen
+          bootloop on HyperOS. The loader now serializes its pipeline with a
+          semaphore (spawn_pipeline_enter/leave in hook.c), which is what makes
+          this branch safe to enable. If a bootloop recurs, capture dmesg during
+          the loop before touching this. */
             else if (strcmp(program, HYOS_SPAWNER_NAME) == 0) {
               tracer = "./bin/zygisk-ptrace" MONITOR_ABI;
               is_spawner = true;

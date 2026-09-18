@@ -23,16 +23,12 @@
 int zn_lsplt_register_hook(dev_t dev, ino_t inode, const char *symbol, void *hook, void **backup);
 int zn_lsplt_commit_hook(void);
 
-/* INFO: LSPlt identifies libraries by file identity (device + inode), while
-         the ZN API hands us a base address, so the owning mapping is looked
-         up in the process maps.
-
-         A module hooks several symbols per library, and every call used to
-         re-scan /proc/self/maps in full. The base of a library that is still
-         loaded resolves to the same file identity every time, so the lookups
-         are cached. The table only needs to hold the libraries a module is
-         hooking right now; a base that gets reused for a different file after
-         a dlclose is rare and simply evicts itself once the table is full. */
+/* INFO: LSPlt identifies libraries by file identity (device + inode) while the ZN
+          API hands us a base address, so the owning mapping is looked up in the
+          process maps. Every call used to re-scan /proc/self/maps in full, but a
+          still-loaded library resolves to the same identity each time, so lookups
+          are cached. A base reused for a different file after a dlclose evicts
+          itself once the table fills. */
 #define ZN_PLT_LOCATION_CACHE 16
 
 struct zn_plt_location {
@@ -394,16 +390,13 @@ static int zn_connect_companion(void *handle) {
 static struct ZygiskNextHyosModule zn_hyos_modules[ZN_HYOS_MODULE_MAX];
 static size_t zn_hyos_module_count = 0;
 
-/* INFO: The spawner forks applications itself, so the ART hooks that announce
-         a specialization in a zygote simply are not there: nothing calls
-         forkAndSpecialize in this process tree. What every forked app does go
-         through is our own pthread_atfork and, on the system's side,
-         selinux_android_setcontext — and that call carries the uid, the seinfo
-         and the package name, which is exactly what onAppSpecialized promises.
-         pthread_setname_np adds the process name Android sets right after.
-
-         Without these the runtime table is handed out but nothing ever fires,
-         and a module waiting on onAppSpecialized just never runs. */
+/* INFO: On HyperOS the spawner forks applications itself, so the ART hooks that
+          announce a specialization in a zygote are absent. What every forked app
+          does go through is our own pthread_atfork and, system-side,
+          selinux_android_setcontext - which carries uid, seinfo and package name,
+          exactly what onAppSpecialized promises; pthread_setname_np adds the
+          process name. Without these the runtime table is handed out but nothing
+          ever fires. */
 static bool zn_hyos_in_child = false;
 static bool zn_hyos_fired = false;
 static bool zn_hyos_has_process_name = false;

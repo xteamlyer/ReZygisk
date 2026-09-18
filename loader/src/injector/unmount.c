@@ -11,6 +11,7 @@
 
 #include "root_mounts.h"
 #include "unmount.h"
+#include "zygisk_paths.h"
 
 #define PRODUCT_MOUNT "/product"
 
@@ -249,8 +250,8 @@ bool revert_mode_enabled(void) {
     /* INFO: Both locations are checked because which one a process can
               actually see depends on the label the root solution gives
               /data/adb on that device. */
-    enabled = !(stat("/data/adb/rezygisk/disable-revert", &st) == 0 ||
-                stat("/data/adb/modules/rezygisk/disable-revert", &st) == 0);
+    enabled = !(stat(ZYGISK_TMP_PATH "/disable-revert", &st) == 0 ||
+                stat(ZYGISK_MODULE_DIR "/disable-revert", &st) == 0);
   }
 
   return enabled == 1;

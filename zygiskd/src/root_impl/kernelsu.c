@@ -41,27 +41,14 @@ struct ksu_set_feature_cmd {
 
 static int ksu_fd = -1;
 
-/* INFO: -1 is as much "not known yet" as it is "no manager": it is the
-           kernel's own KSU_INVALID_APPID, which it reports both before a
-           manager has been crowned and after one has been uninstalled.
-           Anything that cannot be answered is reported as this. */
+/* KSU_INVALID_APPID. Means "no manager crowned yet" as much as "no manager". */
 #define KSU_MANAGER_APPID_UNKNOWN (-1)
 
-/* INFO: The appid is asked for on every call, with no caching. The kernel owns
-           this value and moves it in both directions - it is set when
-           track_throne() crowns the manager and cleared back to
-           KSU_INVALID_APPID when the manager turns out to be gone - so any
-           remembered copy can only ever be staler than the kernel's, and the
-           stale direction that matters is the dangerous one: a cached appid
-           that is no longer the manager would name the wrong uid as manager
-           while the real one fell through to the denylist branch.
-
-           Nothing is saved by caching anyway. This is a single ioctl, and it is
-           the same call the code already made on every request before. Reading
-           it fresh is also what makes the answer deterministic across boots:
-           the crowning is asynchronous, so a query that lands before
-           search_manager() has run sees -1 and says "unknown", and the next
-           one sees the real appid. */
+/* Never cached. The kernel owns this value and moves it in both directions (set
+   when the manager is crowned, cleared when it is uninstalled), so a stored copy
+   can only go stale - and going stale means naming a uid that is no longer the
+   manager while the real one falls through to the denylist branch. One cheap
+   ioctl, already made once per request, so caching saves nothing. */
 static int ksu_read_manager_appid(void) {
   if (ksu_fd == -1) return KSU_MANAGER_APPID_UNKNOWN;
 
@@ -105,14 +92,10 @@ void ksu_get_existence(struct root_impl_state *state) {
     /* INFO: Not a fatal error, just log and continue */
   }
 
-  /* INFO: Probe the manager query once at startup. This is the one check the
-             feature call above cannot give us - a kernel may answer command 14
-             and refuse command 10 - and without it that mismatch would only
-             surface later, as a manager that never gets recognised. The result
-             is not stored; it is logged so the state at boot is visible on a
-             device where the manager then behaves oddly. Either outcome is
-             fine here, including -1, which is expected whenever the manager has
-             not been crowned yet. */
+  /* INFO: The one check the feature call above cannot give us: a kernel may
+             answer command 14 and refuse command 10, and that mismatch now shows
+             up here instead of as a manager that is never recognised. Not
+             stored - just logged, so the state at boot is visible on-device. */
   int manager_appid = ksu_read_manager_appid();
   if (manager_appid == KSU_MANAGER_APPID_UNKNOWN) {
     LOGW("KernelSU reports no manager appid yet; manager queries will answer \"unknown\" until one is crowned.");
@@ -158,16 +141,11 @@ enum ksu_manager_query ksu_uid_is_manager(uid_t uid) {
   int appid = ksu_read_manager_appid();
 
   if (appid == KSU_MANAGER_APPID_UNKNOWN) {
-    /* INFO: The kernel reports no manager, or the query failed. Both mean the
-               daemon cannot tell who the manager is, and the answer that
-               matters is "unknown" rather than "no": the loader turns a plain
-               "no" into a denylist classification, and a manager classified
-               as denylisted gets /data/adb/modules reverted out of its own
-               namespace, which breaks every WebUI it then tries to load.
-               Returning "unknown" makes the caller keep the manager flag off
-               but also keeps it out of the denylist path, so the worst case
-               is a missing ZYGISK_ENABLED instead of a broken mount
-               namespace. */
+    /* INFO: The kernel reports no manager, or the query failed. Saying "no"
+               here would send the manager down the denylist path, where the
+               revert then umounts the module tree out of its own namespace and
+               every WebUI it opens renders blank. "Unknown" keeps it out of both
+               branches; the cost is a possibly missing ZYGISK_ENABLED. */
     return KSU_MANAGER_QUERY_UNKNOWN;
   }
 

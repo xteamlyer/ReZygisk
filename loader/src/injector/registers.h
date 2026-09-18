@@ -1,15 +1,7 @@
-/* INFO: Some libc functions, such as memcpy, have hardware-accelerated paths,
-           noticeably SIMD/NEON.
-
-         SIMD/NEON have their own set of registers, which are caller-saved. That
-           means that if a function uses them, it is expected to restore them before
-           returning. However, libc functions do not restore them, and they leave
-           data in them.
-
-         To address this, we provide a function to clear these registers. To assure
-           we will not leave the string data in the registers, which can be abused
-           to detect VexZygisk.
-*/
+/* INFO: Some libc functions (memcpy and friends) have SIMD/NEON paths whose
+           registers are caller-saved, and libc does not restore them. The string
+           data left behind can be used to detect VexZygisk, so clear_regs()
+           scrubs those registers. */
 
 #ifndef REGISTERS_H
 #define REGISTERS_H

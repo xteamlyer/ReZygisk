@@ -2,17 +2,11 @@
 #define ROOT_MOUNTS_H
 
 /* INFO: What counts as a root trace in a mount table, shared by the loader
-         (injector/unmount.c, which reverts the traces in the hidden process)
-         and the daemon (utils.c, which builds the clean namespace).
-
-         Both walk the same /proc/<pid>/mountinfo and both have to remove the
-         same set, so the names they match on are one definition: a source
-         added on one side alone would leave the two disagreeing about what
-         root even looks like, and a process could come away half hidden.
-
-         The walk itself stays in each binary — the two parse into different
-         shapes, because only the loader needs the mount id to unmount nested
-         mounts in the right order. */
+          (injector/unmount.c, which reverts them in the hidden process) and the
+          daemon (utils.c, which builds the clean namespace). Both walk the same
+          /proc/<pid>/mountinfo and must remove the same set; a name added on one
+          side alone would leave them disagreeing and a process half hidden. The
+          walk itself stays per-binary, since only the loader needs the mount id. */
 
 #define MOUNT_SOURCE_LOOP "/dev/block/loop"
 #define ROOT_MODULES_DIR "/data/adb/modules"

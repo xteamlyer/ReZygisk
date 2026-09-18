@@ -41,20 +41,14 @@ static struct ZygiskNextCompanionModule *load_companion_module(int library_fd) {
   return module;
 }
 
-/* INFO: Entry point of "zygiskd zn-companion <fd>", a process forked from the
-         daemon so the companion keeps the daemon's SELinux domain instead of
-         the restricted one of the target that loaded the module. One process
-         serves one library for the daemon's whole lifetime; every connecting
-         process gets a duplicate of the control socket.
-
-         Protocol, mirroring the Zygisk Next contract:
-         1. the library path and its fd arrive on the control socket
-         2. one byte goes back: 1 when the companion is ready, 0 otherwise
-         3. onCompanionLoaded runs once
-         4. every connectCompanion call sends a command byte plus an fd
-            through SCM_RIGHTS; each is handed to onModuleConnected on its
-            own thread, so one blocking module connection cannot starve the
-            others. */
+/* INFO: Entry point of "zygiskd zn-companion <fd>". Forked from the daemon so the
+         companion inherits the daemon's SELinux domain rather than the restricted
+         one of the target that loaded the module. One process serves one library
+         for the daemon's lifetime; every connector gets a duplicate of the control
+         socket. Protocol: path and fd in, one readiness byte back, then
+         onCompanionLoaded once, then a command byte plus an fd per
+         connectCompanion - each handed to onModuleConnected on its own thread, so
+         one blocking connection cannot starve the others. */
 struct zn_client_thread_args {
   int fd;
   void (*on_module_connected)(int);
