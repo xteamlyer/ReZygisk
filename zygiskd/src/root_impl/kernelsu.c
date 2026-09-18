@@ -41,39 +41,34 @@ struct ksu_set_feature_cmd {
 
 static int ksu_fd = -1;
 
-/* INFO: The manager appid is read from the kernel and remembered, because the
-           query has no way to say "could not tell": a failed or unsupported
-           ioctl used to collapse into "this uid is not the manager", which is
-           the wrong answer for the one uid that must never be mistaken.
-
-           The cache deliberately holds only a positive answer. An appid of -1
-           is KSU_INVALID_APPID, and the kernel uses it both as the initial
-           value and while no manager has been crowned yet - the crowning
-           happens asynchronously in track_throne(), so a daemon that starts
-           early can legitimately see -1 first and a real appid moments later.
-           Caching that -1 would leave the daemon blind to the manager for the
-           rest of the boot, so a negative result is re-queried instead. The
-           ioctl is cheap and a negative result is the rare case. */
+/* INFO: -1 is as much "not known yet" as it is "no manager": it is the
+           kernel's own KSU_INVALID_APPID, which it reports both before a
+           manager has been crowned and after one has been uninstalled.
+           Anything that cannot be answered is reported as this. */
 #define KSU_MANAGER_APPID_UNKNOWN (-1)
 
-static int ksu_manager_appid = KSU_MANAGER_APPID_UNKNOWN;
+/* INFO: The appid is asked for on every call, with no caching. The kernel owns
+           this value and moves it in both directions - it is set when
+           track_throne() crowns the manager and cleared back to
+           KSU_INVALID_APPID when the manager turns out to be gone - so any
+           remembered copy can only ever be staler than the kernel's, and the
+           stale direction that matters is the dangerous one: a cached appid
+           that is no longer the manager would name the wrong uid as manager
+           while the real one fell through to the denylist branch.
 
+           Nothing is saved by caching anyway. This is a single ioctl, and it is
+           the same call the code already made on every request before. Reading
+           it fresh is also what makes the answer deterministic across boots:
+           the crowning is asynchronous, so a query that lands before
+           search_manager() has run sees -1 and says "unknown", and the next
+           one sees the real appid. */
 static int ksu_read_manager_appid(void) {
   if (ksu_fd == -1) return KSU_MANAGER_APPID_UNKNOWN;
-
-  /* INFO: A known appid never changes within a boot: the kernel sets it when
-             it crowns the manager and the daemon is restarted when that
-             happens (KernelSU restarts the manager app after a late load).
-             So a positive value is safe to keep, and only the absence of one
-             costs another call. */
-  if (ksu_manager_appid != KSU_MANAGER_APPID_UNKNOWN) return ksu_manager_appid;
 
   struct ksu_get_manager_uid_cmd cmd = { 0 };
   if (ioctl(ksu_fd, KSU_IOCTL_GET_MANAGER_UID, &cmd) == -1) return KSU_MANAGER_APPID_UNKNOWN;
 
-  ksu_manager_appid = (int)cmd.uid;
-
-  return ksu_manager_appid;
+  return (int)cmd.uid;
 }
 
 void ksu_get_existence(struct root_impl_state *state) {
@@ -110,16 +105,17 @@ void ksu_get_existence(struct root_impl_state *state) {
     /* INFO: Not a fatal error, just log and continue */
   }
 
-  /* INFO: Ask for the manager appid while the daemon is starting up rather
-             than letting the first fork of the manager be the first caller. A
-             kernel that answers the feature call but not this one would
-             otherwise stay undetected until something asked, and the first
-             asker is the very process that cannot afford a wrong answer.
-             Failing here is not fatal: the query keeps reporting "unknown"
-             and is retried, so a manager crowned later is still recognised. */
+  /* INFO: Probe the manager query once at startup. This is the one check the
+             feature call above cannot give us - a kernel may answer command 14
+             and refuse command 10 - and without it that mismatch would only
+             surface later, as a manager that never gets recognised. The result
+             is not stored; it is logged so the state at boot is visible on a
+             device where the manager then behaves oddly. Either outcome is
+             fine here, including -1, which is expected whenever the manager has
+             not been crowned yet. */
   int manager_appid = ksu_read_manager_appid();
   if (manager_appid == KSU_MANAGER_APPID_UNKNOWN) {
-    LOGW("KernelSU did not report a manager appid yet; will retry on demand.");
+    LOGW("KernelSU reports no manager appid yet; manager queries will answer \"unknown\" until one is crowned.");
   } else {
     LOGI("KernelSU manager appid: %d", manager_appid);
   }
