@@ -52,7 +52,7 @@ def sign_machikado(module_dir: str, sig_name: str, abi: str, is_64bit: bool, pri
   # INFO: The files where virtual = real. A name that this module does not
   #       ship (service.sh) is skipped rather than read, which would abort
   #       the whole build; the verifier walks the files that are there.
-  for fname in ["module.prop", "rezygisk.sh", "sepolicy.rule", "post-fs-data.sh", "service.sh", "uninstall.sh"]:
+  for fname in ["module.prop", "rezygisk.sh", "late-load.sh", "sepolicy.rule", "post-fs-data.sh", "service.sh", "uninstall.sh"]:
     vpath = root / fname
     if not vpath.is_file():
       continue

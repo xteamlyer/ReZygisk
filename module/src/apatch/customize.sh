@@ -76,6 +76,12 @@ extract "$ZIPFILE" 'rezygisk.sh' "/data/adb/post-fs-data.d/"
 #         resetting module.prop to a stale pristine state.
 rm -f /data/adb/post-mount.d/rezygisk.sh
 
+# INFO: The KernelSU flavour also installs late-load.sh into late-load.d, the
+#         stage its own late-loaded root runs. APatch has no such stage, so a
+#         switch from the KernelSU flavour has to clear that copy here —
+#         leaving it would start a monitor APatch never drives.
+rm -f /data/adb/late-load.d/late-load.sh
+
 # INFO: APatch resolves module sepolicy.rule on the next boot through its own
 #         boot stage, so there is no install-time policy check as KernelSU
 #         does; the rule simply ships with the module.

@@ -7,9 +7,11 @@ rm -rf "$TMP_PATH"
 
 rm -f /data/adb/post-fs-data.d/rezygisk.sh
 rm -f /data/adb/post-mount.d/rezygisk.sh
+rm -f /data/adb/late-load.d/late-load.sh
 
 # INFO: Only removes if dir is empty
 rmdir /data/adb/post-fs-data.d
 rmdir /data/adb/post-mount.d
+rmdir /data/adb/late-load.d
 
 exit 0

@@ -100,7 +100,7 @@ $(MODULE_DONE): $(LOADER_DONE) $(ZYGISKD_DONE) $(MODULE_INPUTS)
 	@mkdir -p $(MODULE_OUT)
 
 	@echo "Copying module files..."
-	@cp module/src/verify.sh module/src/rezygisk.sh $(MODULE_OUT)/
+	@cp module/src/verify.sh module/src/rezygisk.sh module/src/late-load.sh $(MODULE_OUT)/
 	@cp $(SEPOLICY_SRC) $(MODULE_OUT)/sepolicy.rule
 
 	@echo "Customizing module.prop..."

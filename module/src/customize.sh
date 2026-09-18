@@ -88,6 +88,25 @@ extract "$ZIPFILE" 'post-fs-data.sh' "$MODPATH"
 extract "$ZIPFILE" 'uninstall.sh'    "$MODPATH"
 extract "$ZIPFILE" 'rezygisk.sh' "/data/adb/post-fs-data.d/"
 
+# INFO: Installed to late-load.d as well, not just post-fs-data.d. A late-loaded
+#         KernelSU (the temporary-root / jailbreak flow) is injected after
+#         post-fs-data has already passed, so post-fs-data.d is never reached
+#         in that session and nothing would start the monitor: every Zygisk
+#         module would stay dead while the manager keeps listing it. KernelSU
+#         runs this stage from late_load.rs right after the injection, and
+#         skips the directory entirely on a normal boot, where post-fs-data.d
+#         already did the work.
+#
+#         Unlike rezygisk.sh this copy is not duplicated elsewhere: only the
+#         KernelSU flavour has a late-load stage, so the APatch flavour ships
+#         no counterpart.
+#
+#         chmod is explicit: KernelSU runs a stage script only when it carries
+#         the executable bit (module.rs, is_executable), and the module tree is
+#         not guaranteed to inherit one from the zip entry.
+extract "$ZIPFILE" 'late-load.sh' "/data/adb/late-load.d/"
+chmod 0755 "/data/adb/late-load.d/late-load.sh"
+
 # INFO: KernelSU 2.x.x and below runs post-fs-data.d before mounting
 #         the modules. This disallows us to clean our own module.prop.
 #         To work around this, we utilize post-mount.d which runs after
