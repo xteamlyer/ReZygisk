@@ -1108,9 +1108,20 @@ static void handle_get_process_flags(struct Client *client) {
     *client->first_process = false;
   }
 
-  if (uid_is_manager(uid)) {
+  /* INFO: Three outcomes, and the third one must not be folded into the
+            second. "Unknown" means the backend could not name the manager
+            (KernelSU before the kernel has crowned one, or a failed query).
+            Sending that process down the else branch would query it for
+            should_umount, and a manager that answers yes to that gets the
+            root mounts reverted out of its own namespace - the module tree
+            disappears, so every module WebUI it opens afterwards serves
+            nothing and renders blank. When the manager is not known, the
+            process is classified as neither manager nor denylisted. */
+  enum uid_manager_state manager = uid_is_manager(uid);
+
+  if (manager == UID_MANAGER_YES) {
     flags |= PROCESS_IS_MANAGER;
-  } else {
+  } else if (manager == UID_MANAGER_NO) {
     /* INFO: One backend query per request: on the APatch flavour the two
               flags used to cost a config stat each, twice per fork. */
     bool granted_root = false;
@@ -1124,6 +1135,8 @@ static void handle_get_process_flags(struct Client *client) {
     if (should_umount) {
       flags |= PROCESS_ON_DENYLIST;
     }
+  } else {
+    LOGW("Could not tell whether uid %u is the manager; leaving it unclassified.", uid);
   }
 
   /* INFO: The Zygisk Next set only changes on a module load or reload, so

@@ -340,6 +340,12 @@ static bool ap_uid_is_manager_cached(uid_t uid) {
   return result;
 }
 
-bool ap_uid_is_manager(uid_t uid) {
-  return ap_uid_is_manager_cached(uid);
+enum uid_manager_state ap_uid_is_manager(uid_t uid) {
+  if (ap_uid_is_manager_cached(uid)) return UID_MANAGER_YES;
+
+  /* INFO: APatch keeps no manager marker to read the way KernelSU does, so a
+             "no" here only means the directories that would belong to the
+             manager did not match. That is still a negative answer about a
+             uid, and both backends have to report the same shape. */
+  return UID_MANAGER_NO;
 }
