@@ -38,11 +38,16 @@ Revert-only is the default mount mode, and it is applied to the process being
 hidden rather than to the zygote.
 
 A denylisted process is given a private copy of the mount tree and the root
-traces are stripped from that copy. The zygote and every process that is not on
-the denylist keep their mounts, so a metamodule's themes and overlays stay
-visible to the apps that rely on them, and each app ends up holding a namespace
-object of its own — the same shape a normal app has, rather than one shared
-with every other hidden app.
+traces are detached from that copy. Detaching rather than unmounting matters:
+a metamodule overlay carries the root solution's source name and can cover
+system paths — `framework` and provider resources among them — so an unmount
+that reaches the filesystem leaves WebView resolving through a path its own
+mountinfo still reports as overlaid, and it fails to initialize. The detach
+removes the same mounts from the process's view without tearing anything down.
+The zygote and every process that is not on the denylist keep their mounts, so
+a metamodule's themes and overlays stay visible to the apps that rely on them,
+and each app ends up holding a namespace object of its own — the same shape a
+normal app has, rather than one shared with every other hidden app.
 
 Reverting out of the zygote instead is what used to break those modules: the
 mounts would go away for **every** process forked afterwards, hidden or not.
