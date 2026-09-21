@@ -868,16 +868,15 @@ bool umount_root(void) {
   for (size_t i = num_targets; i > 0; i--) {
     const char *target = targets_to_unmount[i - 1];
 
-    /* INFO: A plain umount detaches the mount from the filesystem lookup as
-              well, while MNT_DETACH only takes it out of this namespace's
-              mount tree: the filesystem instance survives for whoever still
-              holds a reference, so a process can keep mapping files out of an
-              overlay that its own mountinfo no longer lists. That gap between
-              the mount list and what the paths resolve to is exactly what an
-              inconsistency check looks for, so the hard umount is tried first
-              and the lazy one stays as the fallback for mounts that are
-              genuinely still in use. */
-    if (umount2(target, 0) == -1 && umount2(target, MNT_DETACH) == -1) {
+    /* INFO: MNT_DETACH, for the same reason the loader reverts through it:
+               detaching hides the mount from this namespace without tearing
+               the filesystem instance down, so an overlay that a root solution
+               named after itself can cover system paths and still leave the
+               framework and provider resources that WebView resolves through
+               them intact. A plain umount2(target, 0) does tear it down and
+               leaves those lookups pointing at a path the process's own
+               mountinfo still reports as overlaid. */
+    if (umount2(target, MNT_DETACH) == -1) {
       LOGE("[%s] Failed to unmount %s: %s", source_name, target, strerror(errno));
 
       continue;

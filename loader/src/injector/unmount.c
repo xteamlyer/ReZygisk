@@ -305,24 +305,28 @@ bool revert_root_traces_here(void) {
   for (size_t i = 0; i < traces.len; i++) {
     const char *target = traces.items[i].target;
 
-    /* INFO: A plain umount detaches the mount from the filesystem lookup as
-              well, while MNT_DETACH only takes it out of this namespace's
-              mount tree: the filesystem instance survives for whoever still
-              holds a reference, so the apps forked afterwards can keep mapping
-              files out of an overlay that their own mountinfo no longer lists.
-              That gap between the mount list and what the paths resolve to is
-              exactly what an inconsistency check looks for, so the hard umount
-              goes first and the lazy one stays as the fallback for mounts that
-              are genuinely still in use. */
-    if (umount2(target, 0) == -1 && umount2(target, MNT_DETACH) == -1) {
-      LOGW("Failed reverting %s: %s", target, strerror(errno));
-
-      complete = false;
+    /* INFO: MNT_DETACH, deliberately. A detached mount disappears from this
+              namespace's mount tree while the filesystem instance stays alive
+              for whoever already holds a reference, which is exactly what
+              hiding a trace is meant to mean: the paths stop resolving to the
+              overlay, yet nothing built on top of it is torn down. A plain
+              umount2(target, 0) reaches further than that. Root solution
+              overlays carry the source name of the solution and, on a
+              metamodule setup, cover system paths as well - framework and
+              provider resources among them - so unmounting one for real
+              leaves WebView looking at a path its own mountinfo still claims
+              is overlaid and it fails to initialize, which surfaces as blank
+              module WebUIs. The lazy detach hides the same set without
+              breaking them. */
+    if (umount2(target, MNT_DETACH) == 0) {
+      LOGV("Reverted %s (mount id %u)", target, traces.items[i].id);
 
       continue;
     }
 
-    LOGV("Reverted %s (mount id %u)", target, traces.items[i].id);
+    LOGW("Failed reverting %s: %s", target, strerror(errno));
+
+    complete = false;
   }
 
   mount_list_free(&traces);
