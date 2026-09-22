@@ -151,7 +151,7 @@ enum ksu_manager_query ksu_uid_is_manager(uid_t uid) {
 
   /* INFO: For Private Space, UID will be 10xxxxx, being xxxxx the original UID. To check if
              the UID is the manager UID in Private Space, we "normalize" it with the modulo operator. */
-  if ((int)(uid % 100000) == appid) return KSU_MANAGER_QUERY_YES;
+  if ((int)APP_ID(uid) == appid) return KSU_MANAGER_QUERY_YES;
 
   return KSU_MANAGER_QUERY_NO;
 }

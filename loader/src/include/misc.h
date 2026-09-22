@@ -10,8 +10,13 @@
   #define LP_SELECT(lp32, lp64) lp32
 #endif
 
+/* INFO: Every uid is userId * 100000 + appId, and it is the appId that root
+         implementations key off. A later user - Private Space included - shifts
+         the uid by whole 100000s, so the raw value has to be reduced first. */
+#define APP_ID(uid) ((uid) % 100000)
+
 #define IS_ISOLATED_SERVICE(uid)      \
-  ((uid) >= 90000 && (uid) < 1000000)
+  (APP_ID(uid) >= 90000)
 
 struct kernel_version {
   uint8_t major;

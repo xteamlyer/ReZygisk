@@ -21,6 +21,8 @@
   #define LP_SELECT(a, b) a
 #endif
 
+#define APP_ID(uid) ((uid) % 100000)
+
 #ifndef LOG_TAG
   #define LOG_TAG "zygiskd" LP_SELECT("32", "64")
 #endif
