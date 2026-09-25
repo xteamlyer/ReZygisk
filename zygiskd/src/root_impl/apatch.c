@@ -263,16 +263,27 @@ void ap_uid_query_root(uid_t uid, bool *granted_root, bool *should_umount) {
 /* INFO: The manager may be installed for any user profile, so both /data/user
          and /data/user_de are scanned (the device owner's profile lives at
          /data/user/0). FolkPatch keeps the layout but ships its manager under
-         me.yuki.folk. */
-static bool ap_dir_belongs_to_manager(const char *base, uid_t uid) {
+         me.yuki.folk.
+
+         Unlike KernelSU there is no manager marker to read, so this walks
+         directories - and a walk that never ran must not be read as "not the
+         manager": that answer sends the process down the denylist path, where
+         the module tree is reverted out of its own namespace and every WebUI it
+         opens renders blank. */
+static enum uid_manager_state ap_scan_base_for_manager(const char *base, uid_t uid) {
   DIR *dir = opendir(base);
-  if (dir == NULL) return false;
+  if (dir == NULL) return UID_MANAGER_UNKNOWN;
+
+  static const char *const manager_pkgs[] = { AP_MANAGER_PKG, AP_FOLKPATCH_PKG };
 
   struct dirent *entry;
   bool found = false;
 
   while (!found && (entry = readdir(dir)) != NULL) {
-    if (entry->d_type != DT_DIR) continue;
+    /* INFO: DT_UNKNOWN says the filesystem did not classify the entry, not that
+             it is not a directory; the stat below is what decides, so those
+             entries cannot be dropped here. */
+    if (entry->d_type != DT_UNKNOWN && entry->d_type != DT_DIR) continue;
     if (entry->d_name[0] == '.') continue;
 
     /* INFO: Every path here is far below PATH_MAX, but gcc cannot see that
@@ -281,28 +292,40 @@ static bool ap_dir_belongs_to_manager(const char *base, uid_t uid) {
     char user_dir[PATH_MAX];
     if (snprintf(user_dir, sizeof(user_dir), "%s/%s", base, entry->d_name) >= PATH_MAX) continue;
 
-    char manager_dir[PATH_MAX];
-    if (snprintf(manager_dir, sizeof(manager_dir), "%s/%s", user_dir, AP_MANAGER_PKG) >= PATH_MAX) continue;
+    for (size_t i = 0; i < sizeof(manager_pkgs) / sizeof(manager_pkgs[0]); i++) {
+      char manager_dir[PATH_MAX];
+      if (snprintf(manager_dir, sizeof(manager_dir), "%s/%s", user_dir, manager_pkgs[i]) >= PATH_MAX) continue;
 
-    struct stat st;
-    if (stat(manager_dir, &st) == 0 && st.st_uid == uid) {
-      found = true;
+      struct stat st;
+      if (stat(manager_dir, &st) == 0 && st.st_uid == uid) {
+        found = true;
 
-      break;
-    }
-
-    if (snprintf(manager_dir, sizeof(manager_dir), "%s/%s", user_dir, AP_FOLKPATCH_PKG) >= PATH_MAX) continue;
-
-    if (stat(manager_dir, &st) == 0 && st.st_uid == uid) {
-      found = true;
-
-      break;
+        break;
+      }
     }
   }
 
   closedir(dir);
 
-  return found;
+  return found ? UID_MANAGER_YES : UID_MANAGER_NO;
+}
+
+/* INFO: Only a base that was read and came back empty is evidence; one that
+         could not be opened leaves the pair's answer open. */
+static enum uid_manager_state ap_find_manager(uid_t uid) {
+  static const char *const bases[] = { "/data/user_de", "/data/user" };
+
+  enum uid_manager_state result = UID_MANAGER_NO;
+
+  for (size_t i = 0; i < sizeof(bases) / sizeof(bases[0]); i++) {
+    enum uid_manager_state base_result = ap_scan_base_for_manager(bases[i], uid);
+
+    if (base_result == UID_MANAGER_YES) return UID_MANAGER_YES;
+
+    if (base_result == UID_MANAGER_UNKNOWN) result = UID_MANAGER_UNKNOWN;
+  }
+
+  return result;
 }
 
 /* INFO: The manager scan stats its way through /data/user and /data/user_de,
@@ -312,9 +335,9 @@ static bool ap_dir_belongs_to_manager(const char *base, uid_t uid) {
          for one scan instead of one per process. */
 #define AP_MANAGER_CACHE_SECS 5
 
-static bool ap_uid_is_manager_cached(uid_t uid) {
+enum uid_manager_state ap_uid_is_manager(uid_t uid) {
   static uid_t cached_uid = 0;
-  static bool cached_result = false;
+  static enum uid_manager_state cached_result = UID_MANAGER_NO;
   static bool cached_valid = false;
   static struct timespec cached_at = { 0 };
 
@@ -326,8 +349,12 @@ static bool ap_uid_is_manager_cached(uid_t uid) {
 
   if (fresh && cached_uid == uid) return cached_result;
 
-  bool result = ap_dir_belongs_to_manager("/data/user_de", uid) ||
-                ap_dir_belongs_to_manager("/data/user", uid);
+  enum uid_manager_state result = ap_find_manager(uid);
+
+  /* INFO: Not cached: this answer means /data was unreadable at this moment -
+             the boot before the first unlock, most of the time - and the next
+             fork should ask again rather than inherit it for the whole window. */
+  if (result == UID_MANAGER_UNKNOWN) return result;
 
   cached_uid = uid;
   cached_result = result;
@@ -335,12 +362,4 @@ static bool ap_uid_is_manager_cached(uid_t uid) {
   cached_at = now;
 
   return result;
-}
-
-enum uid_manager_state ap_uid_is_manager(uid_t uid) {
-  if (ap_uid_is_manager_cached(uid)) return UID_MANAGER_YES;
-
-  /* INFO: APatch keeps no manager marker to read the way KernelSU does, so "no"
-             only means the manager's directories did not match. */
-  return UID_MANAGER_NO;
 }
