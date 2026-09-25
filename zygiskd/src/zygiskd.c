@@ -259,8 +259,6 @@ static void load_modules(struct Context *restrict context) {
     char so_path[PATH_MAX];
     snprintf(so_path, PATH_MAX, ZYGISK_MODULES_DIR "/%s/zygisk/" ARCH_STR ".so", name);
 
-    if (access(so_path, R_OK) == -1) continue;
-
     int lib_fd = open(so_path, O_RDONLY | O_CLOEXEC);
     if (lib_fd == -1) {
       LOGE("Failed loading module \"%s\"", name);
