@@ -16,11 +16,13 @@
 
 /* INFO: APatch (https://github.com/bmax121/APatch) is a KernelPatch based root
          solution. Its per-package policy lives in /data/adb/ap/package_config, a
-         CSV with the header pkg,exclude,allow,uid,to_uid,sctx; to_uid extends a
-         grant over a uid range, which is how work profiles are handled. The
-         manager is me.bmax.apatch, and FolkPatch (an APatch branch) ships its own
-         as me.yuki.folk. Kernel-side authorization goes through the KernelPatch
-         supercall interface and is not touched here. */
+         CSV with the header pkg,exclude,allow,uid,to_uid,sctx. The kernel keys
+         both lists by the uid alone, and a work profile is a row of its own that
+         carries that profile's user offset, so a row is matched by its uid
+         exactly; to_uid is the uid a granted process switches to, never a bound
+         of a range. The manager is me.bmax.apatch, and FolkPatch (an APatch
+         branch) ships its own as me.yuki.folk. Kernel-side authorization goes
+         through the KernelPatch supercall interface and is not touched here. */
 #define AP_BIN_DIR "/data/adb/ap/bin/apd"
 #define AP_CONFIG_FILE "/data/adb/ap/package_config"
 #define AP_MANAGER_PKG "me.bmax.apatch"
@@ -36,7 +38,6 @@ struct ap_package_entry {
   bool exclude;
   bool allow;
   uid_t uid;
-  uid_t to_uid;
 };
 
 /* INFO: One CSV line may quote its fields ("a""b" is a literal quote inside a
@@ -137,6 +138,10 @@ static size_t ap_read_package_config(struct ap_package_entry *out, size_t max_ro
     long long to_uid = strtoll(fields[4], &endptr, 10);
     if (*endptr != '\0' || to_uid < 0 || to_uid > (long long)UINT_MAX) continue;
 
+    /* INFO: Validated, then dropped: the kernel discards a row whose to_uid it
+              cannot read, so a row it refused must not be answered as a grant. */
+    (void) to_uid;
+
     if (fields[0][0] == '\0' || rows >= max_rows) continue;
 
     struct ap_package_entry *entry = &out[rows];
@@ -146,7 +151,6 @@ static size_t ap_read_package_config(struct ap_package_entry *out, size_t max_ro
     entry->exclude = ap_parse_bool_field(fields[1]);
     entry->allow = ap_parse_bool_field(fields[2]);
     entry->uid = (uid_t)uid;
-    entry->to_uid = (uid_t)to_uid;
 
     rows++;
   }
@@ -212,11 +216,12 @@ static struct ap_package_entry *ap_get_config_rows(size_t *rows) {
   return ap_config_cache.entries;
 }
 
-/* INFO: Whether a uid falls inside this row's (possibly ranged) grant. */
-static bool ap_uid_in_range(const struct ap_package_entry *entry, uid_t uid) {
-  if (entry->to_uid <= entry->uid) return uid == entry->uid;
-
-  return uid >= entry->uid && uid <= entry->to_uid;
+/* INFO: A row is addressed by its uid and nothing else. APatch writes the full
+         uid - a work profile's row carries that profile's own user offset - and
+         the kernel's allowlist is keyed the same way, so any wider comparison here
+         would answer about a process the kernel never ruled on. */
+static bool ap_row_matches(const struct ap_package_entry *entry, uid_t uid) {
+  return uid == entry->uid;
 }
 
 void ap_get_existence(struct root_impl_state *state) {
@@ -246,7 +251,7 @@ void ap_uid_query_root(uid_t uid, bool *granted_root, bool *should_umount) {
   struct ap_package_entry *entries = ap_get_config_rows(&rows);
 
   for (size_t i = 0; i < rows; i++) {
-    if (!ap_uid_in_range(&entries[i], uid)) continue;
+    if (!ap_row_matches(&entries[i], uid)) continue;
 
     if (entries[i].allow) *granted_root = true;
     if (entries[i].exclude) *should_umount = true;
