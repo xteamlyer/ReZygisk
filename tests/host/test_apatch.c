@@ -47,30 +47,29 @@ static void check_csv_quoting(void) {
 }
 
 static void check_row_matching(void) {
-  printf("-- uid range matching\n");
+  printf("-- uid matching\n");
 
   struct ap_package_entry entry = {
     .exclude = false,
     .allow = true,
     .uid = 10100,
-    .to_uid = 10199,
   };
 
-  CHECK(ap_uid_in_range(&entry, 10100), "range lower bound must match");
-  CHECK(ap_uid_in_range(&entry, 10199), "range upper bound must match");
-  CHECK(!ap_uid_in_range(&entry, 10099), "below range must not match");
-  CHECK(!ap_uid_in_range(&entry, 10200), "above range must not match");
+  CHECK(ap_row_matches(&entry, 10100), "the row's own uid must match");
+  CHECK(!ap_row_matches(&entry, 10099), "a neighbour below must not match");
+  CHECK(!ap_row_matches(&entry, 10101), "a neighbour above must not match");
+  CHECK(!ap_row_matches(&entry, 10199), "a uid inside the old range must not match");
 
-  /* INFO: to_uid == uid narrows the grant to a single uid. */
-  struct ap_package_entry single = {
-    .exclude = false,
-    .allow = true,
-    .uid = 1000,
-    .to_uid = 1000,
+  /* INFO: A work profile's row carries the user offset in the uid itself, which
+           is what keeps two profiles of one app apart. */
+  struct ap_package_entry profile = {
+    .exclude = true,
+    .allow = false,
+    .uid = 1010123,
   };
 
-  CHECK(ap_uid_in_range(&single, 1000), "single uid must match");
-  CHECK(!ap_uid_in_range(&single, 1001), "neighbour must not match");
+  CHECK(ap_row_matches(&profile, 1010123), "the profile's own uid must match");
+  CHECK(!ap_row_matches(&profile, 10123), "the device owner's uid must not match");
 
   /* INFO: The parsed boolean columns decide which list a row belongs to. */
   CHECK(ap_parse_bool_field("1"), "a one must be true");
