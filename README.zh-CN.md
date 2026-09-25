@@ -38,7 +38,7 @@ Zygisk Next 的开发者们在 Android 社区中广为人知且值得信任，�
 
 仅回滚（revert-only）是默认的挂载模式，且它作用于被隐藏的进程本身，而不是 zygote。
 
-被列入黑名单的进程会获得一份私有的挂载树副本，root 痕迹从这份副本中**摘除（detach）**而非卸载。之所以是摘除而不是卸载，是因为 metamodule 的 overlay 以 Root 方案的名称作为 source，并可能覆盖系统路径——其中包含 `framework` 与 provider 资源——一旦真正卸载到文件系统层面，WebView 就会去解析一条它自己 mountinfo 中仍标记为 overlay 的路径，从而初始化失败。摘除只是把这些挂载从该进程的视图中移除，不会拆掉任何东西。zygote 以及所有不在黑名单中的进程保留原有挂载，因此 metamodule 的主题与 overlay 对依赖它们的应用依然可见；同时每个应用最终各自持有一个独立的命名空间对象——与普通应用形态一致，而不是与所有其他被隐藏的应用共用同一个。
+被列入黑名单的进程会获得一份私有的挂载树副本，root 痕迹从这份副本中**摘除（detach）**。之所以是摘除而不是卸载，是因为 metamodule 的 overlay 以 Root 方案的名称作为 source，并可能覆盖系统路径——其中包含 `framework` 与 provider 资源——一旦真正卸载到文件系统层面，WebView 就会去解析一条它自己 mountinfo 中仍标记为 overlay 的路径，从而初始化失败。摘除只是把这些挂载从该进程的视图中移除，不会拆掉任何东西。zygote 以及所有不在黑名单中的进程保留原有挂载，因此 metamodule 的主题与 overlay 对依赖它们的应用依然可见；同时每个应用最终各自持有一个独立的命名空间对象——与普通应用形态一致，而不是与所有其他被隐藏的应用共用同一个。
 
 反过来从 zygote 中回滚，正是过去会破坏这些模块的做法：此后 fork 出的**每一个**进程（无论是否被隐藏）都会失去这些挂载。
 
@@ -54,7 +54,7 @@ touch /data/adb/rezygisk/disable-revert   # or /data/adb/modules/rezygisk/disabl
 
 ## 对 Zygisk Next 的支持
 
-VexZygisk 讲 Zygisk Next API，因此针对它编写的模块——其中包括较新的 LSPosed 构建——都能通过它加载。
+VexZygisk 实现了 Zygisk Next API，因此针对它编写的模块——其中包括较新的 LSPosed 构建——都能通过它加载。
 
 - 模块通过 `zn_modules.txt` 列出，支持按目标解析与可选的 companion。companion 由守护进程 fork 而来，因此它保留的是守护进程的特权 SELinux 域，而不是加载该模块的进程所属的受限域。
 - 模块库以 memfd 形式交付，而不是模块文件本身的描述符，因此非特权目标无需改动模块文件自身的模式与 SELinux 标签即可加载它们。
@@ -70,7 +70,7 @@ VexZygisk 讲 Zygisk Next API，因此针对它编写的模块——其中包括
 
 | 依赖        | 说明                                              |
 |-------------------|----------------------------------------------------------|
-| `PLTI`            | 供注入器自身使用的轻量 Android PLT Hook |
+| `PLTI`            | 供注入器自身使用的简单 Android PLT Hook |
 | `LSPlt`           | Android PLT Hook 库，支撑 ZN 的 `pltHook` API |
 | `Dobby`           | 进程内 inline hook 引擎，支撑 ZN 的 `inlineHook` API |
 | `CSOLoader`       | 自定义 ELF 加载器，用于映射标准 Zygisk 模块          |
@@ -136,7 +136,7 @@ make ROOT_IMPL=apatch release  # explicit form
 
 * [ReZygisk](https://github.com/PerformanC/ReZygisk)：本仓库所 fork 并用 C 重写的上游项目
 * [NyaZygisk](https://github.com/HSSkyBoy/NyaZygisk)：HyperOS Runtime 支持（hyos_spawner 拦截、运行时表，以及投递 `onAppSpecialized` 的 fork 与 SELinux hook），以及从该项目移植的 Zygisk Next 修复——把符号查找限制在库自身的符号表内、`pltHook` 的备份语义、monitor 的 spawner 处理与升级时的 `module.prop` 保护
-* [ZygiskNext](https://github.com/Dr-TSNG/ZygiskNext)：Zygisk Next 模块架构的最初设计，以及 VexZygisk 所讲的 API
+* [ZygiskNext](https://github.com/Dr-TSNG/ZygiskNext)：Zygisk Next 模块架构的最初设计，以及 VexZygisk 实现的那套 API
 * [ZygiskNextNext](https://github.com/VeryBaaad/ZygiskNextNext)：独立 Zygisk Next API 的参考实现
 * [Magisk](https://github.com/topjohnwu/Magisk)：现代 Android Root 与 Zygisk 本身的基石
 * [OnyxZygisk](https://github.com/OnyxZygisk/OnyxZygisk)：仅回滚的挂载模型——痕迹选择逻辑，以及被隐藏进程在自身挂载树副本上执行的就地回滚
