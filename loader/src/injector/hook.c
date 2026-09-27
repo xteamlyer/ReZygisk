@@ -986,8 +986,19 @@ static void rz_sanitize_fds(struct zygisk_context *ctx) {
   closedir(dir);
 }
 
-static void rz_fork_post(struct zygisk_context *ctx __attribute__((unused))) {
+static void rz_fork_post(struct zygisk_context *ctx) {
   sigmask(SIG_UNBLOCK, SIGCHLD);
+
+  /* INFO: The parent never runs post-specialize, where the child releases the
+            nice_name characters that were grabbed before the fork. Without a
+            release here the zygote leaks one allocation per spawned process;
+            the child's copy is freed on its own in post-specialize. */
+  if (ctx->pid > 0 && FLAG_GET(ctx, APP_FORK_AND_SPECIALIZE) && ctx->process != NULL) {
+    (*ctx->env)->ReleaseStringUTFChars(ctx->env, *ctx->args.app->nice_name, ctx->process);
+
+    ctx->process = NULL;
+  }
+
   g_ctx = NULL;
 }
 
@@ -999,9 +1010,23 @@ static bool load_modules_only(void) {
     return false;
   }
 
+  /* INFO: The daemon hands over its full slot range, empty paths standing for
+            tombstoned slots (a module removed while zygotes already hold
+            indexes into the list). Slots are kept aligned with the daemon's
+            array - api.impl encodes the slot index, which is what
+            RequestCompanionSocket and GetModuleDir are addressed with - so
+            dead slots stay in place and are simply never called. */
   zygisk_module_length = 0;
 
-  zygisk_modules = (struct rezygisk_module *)malloc(ms.modules_count * sizeof(struct rezygisk_module));
+  if (ms.modules_count == 0) {
+    zygisk_modules = NULL;
+
+    free_modules(&ms);
+
+    return true;
+  }
+
+  zygisk_modules = (struct rezygisk_module *)calloc(ms.modules_count, sizeof(struct rezygisk_module));
   if (!zygisk_modules) {
     LOGE("Failed to allocate memory for modules");
 
@@ -1010,53 +1035,52 @@ static bool load_modules_only(void) {
     return false;
   }
 
+  /* INFO: The length is only allowed to grow past zero once the array exists:
+            hook_unloader carries on when this load fails, and a non-zero
+            length with a NULL array would crash the first fork in the module
+            loop. */
+  zygisk_module_length = ms.modules_count;
+
   /* INFO: Failure symmetry, reviewed: csoloader keeps no reference count,
             so a load that fails inside csoloader_load has mapped nothing and
             needs no release, while a library that loads but then misses its
             entry point is explicitly csoloader_unload'ed below — the same
             discipline the Zygisk Next path applies with dlclose. */
-  /* INFO: The daemon compacts its list on every RemoveModule, so each removal
-            shifts the modules that follow one slot to the left. The index
-            reported to it is therefore offset by the removals already made;
-            sending the raw list index would delete the wrong module whenever
-            more than one library fails to load. */
-  size_t daemon_removed = 0;
-
   for (size_t i = 0; i < ms.modules_count; i++) {
     const char *lib_path = ms.modules[i];
 
-    if (!csoloader_load(&zygisk_modules[zygisk_module_length].lib, lib_path)) {
+    if (lib_path == NULL || lib_path[0] == '\0') continue;
+
+    if (!csoloader_load(&zygisk_modules[i].lib, lib_path)) {
       LOGE("Failed to load module [%s]", lib_path);
 
       /* INFO: In case a module failed to load, update the list of available modules
            in VexZygiskd to avoid a mismatch between the loaded modules in VexZygisk
-           Zygote library and the available modules in VexZygiskd. */
-      rezygiskd_remove_module(i - daemon_removed);
-      daemon_removed++;
+           Zygote library and the available modules in VexZygiskd. The daemon
+           tombstones in place, so the slot index needs no offset. */
+      rezygiskd_remove_module(i);
 
       continue;
     }
 
-    void *entry = csoloader_get_symbol(&zygisk_modules[zygisk_module_length].lib, "zygisk_module_entry");
+    void *entry = csoloader_get_symbol(&zygisk_modules[i].lib, "zygisk_module_entry");
     if (!entry) {
       LOGE("Failed to find entry point in module [%s]", lib_path);
 
-      csoloader_unload(&zygisk_modules[zygisk_module_length].lib);
+      csoloader_unload(&zygisk_modules[i].lib);
 
-      rezygiskd_remove_module(i - daemon_removed);
-      daemon_removed++;
+      rezygiskd_remove_module(i);
 
       continue;
     }
 
-    zygisk_modules[zygisk_module_length].api.register_module = rezygisk_module_register;
-    zygisk_modules[zygisk_module_length].api.impl = ENCODE_ID((void *)zygisk_module_length);
-    zygisk_modules[zygisk_module_length].zygisk_module_entry = (void (*)(void *, void *))entry;
+    zygisk_modules[i].api.register_module = rezygisk_module_register;
+    zygisk_modules[i].api.impl = ENCODE_ID((void *)i);
+    zygisk_modules[i].zygisk_module_entry = (void (*)(void *, void *))entry;
 
     LOGD("Loaded module [%s]. Entry: %p", lib_path, entry);
 
-    zygisk_modules[zygisk_module_length].unload = false;
-    zygisk_module_length++;
+    zygisk_modules[i].unload = false;
   }
 
   free_modules(&ms);
@@ -1066,10 +1090,15 @@ static bool load_modules_only(void) {
 
 static void rz_run_modules_pre(struct zygisk_context *ctx) {
   for (size_t i = 0; i < zygisk_module_length; i++) {
-    rz_module_call_on_load(&zygisk_modules[i], ctx->env);
+    struct rezygisk_module *m = &zygisk_modules[i];
 
-    if (FLAG_GET(ctx, APP_SPECIALIZE)) rz_module_call_pre_app_specialize(&zygisk_modules[i], ctx->args.app);
-    else if (FLAG_GET(ctx, SERVER_FORK_AND_SPECIALIZE)) rz_module_call_pre_server_specialize(&zygisk_modules[i], ctx->args.server);
+    /* INFO: A tombstoned slot is zeroed and carries no entry point. */
+    if (m->zygisk_module_entry == NULL) continue;
+
+    rz_module_call_on_load(m, ctx->env);
+
+    if (FLAG_GET(ctx, APP_SPECIALIZE)) rz_module_call_pre_app_specialize(m, ctx->args.app);
+    else if (FLAG_GET(ctx, SERVER_FORK_AND_SPECIALIZE)) rz_module_call_pre_server_specialize(m, ctx->args.server);
   }
 }
 
@@ -1079,6 +1108,8 @@ static void rz_run_modules_post(struct zygisk_context *ctx) {
   size_t modules_unloaded = 0;
   for (size_t i = 0; i < zygisk_module_length; i++) {
     struct rezygisk_module *m = &zygisk_modules[i];
+
+    if (m->zygisk_module_entry == NULL) continue;
 
     if (FLAG_GET(ctx, APP_SPECIALIZE)) rz_module_call_post_app_specialize(m, ctx->args.app);
     else if (FLAG_GET(ctx, SERVER_FORK_AND_SPECIALIZE)) rz_module_call_post_server_specialize(m, ctx->args.server);
@@ -1153,12 +1184,12 @@ static void rz_app_specialize_pre(struct zygisk_context *ctx) {
   }
   /* INFO: The first process started is the reference for the clean namespace,
              captured before it does anything so the copy is clean yet keeps the
-             expected mounts. Skipped when this process is denylisted and will run
-             the same update later, and under revert-only, which needs no clean
-             namespace and so saves the daemon the helper that would have held it
-             for the whole boot. */
-  if (!revert_mode_enabled() &&
-      (ctx->info_flags & PROCESS_IS_FIRST_STARTED) == PROCESS_IS_FIRST_STARTED &&
+             expected mounts. Built in every mode, not only when the revert is
+             off: the clean namespace is also what the webview zygote and every
+             refused in-place revert fall back to, and building it lazily would
+             let whichever process stumbles first donate its own mount tree as
+             the reference for the rest of the boot. */
+  if ((ctx->info_flags & PROCESS_IS_FIRST_STARTED) == PROCESS_IS_FIRST_STARTED &&
       (ctx->info_flags & PROCESS_ON_DENYLIST) == 0 &&
       (ctx->info_flags & PROCESS_IS_MANAGER) == 0
   ) {
@@ -1185,18 +1216,32 @@ static void rz_app_specialize_pre(struct zygisk_context *ctx) {
             its own mount namespace. Left alone it keeps the root mount view
             while a regular isolated process gets the clean one, and two
             isolated processes then present different mount content. */
-  bool in_denylist = (ctx->info_flags & PROCESS_ON_DENYLIST) == PROCESS_ON_DENYLIST ||
-                     (ctx->process != NULL && strcmp(ctx->process, "webview_zygote") == 0);
+  bool is_webview_zygote = ctx->process != NULL && strcmp(ctx->process, "webview_zygote") == 0;
+  bool in_denylist = (ctx->info_flags & PROCESS_ON_DENYLIST) == PROCESS_ON_DENYLIST || is_webview_zygote;
   if (in_denylist) {
     FLAG_SET(ctx, DO_REVERT_UNMOUNT);
 
-    /* INFO: Revert-only, on this process alone. The private copy comes first:
-              unmounting without it would strip the traces out of the namespace the
-              zygote sits in and every later fork would inherit that. A refused
-              revert, or the mode being off, hides the process the namespace way
-              instead - works as well, at the cost of one shared namespace. */
-    if (!revert_mode_enabled() || unshare(CLONE_NEWNS) == -1 || !revert_root_traces_here())
+    /* INFO: The WebView zygote never gets the in-place revert. Its namespace is
+              the one every WebView renderer inherits for the whole uptime of the
+              process, and running umount2 inside it detaches mounts its own
+              mountinfo still names - an overlay that covers provider or framework
+              resources then leaves WebView resolving paths that no longer exist,
+              which surfaces as broken WebView initialization and blank module
+              WebUIs. It is switched into the daemon's cached clean namespace
+              instead, the same isolation every other implementation applies,
+              with no unmount running inside a live zygote child. */
+    if (is_webview_zygote) {
+      if (!update_mnt_ns(Clean, false)) {
+        LOGE("Failed to switch webview_zygote to the clean mount namespace");
+      }
+    } else if (!revert_mode_enabled() || unshare(CLONE_NEWNS) == -1 || !revert_root_traces_here()) {
+      /* INFO: Revert-only, on this process alone. The private copy comes first:
+                unmounting without it would strip the traces out of the namespace the
+                zygote sits in and every later fork would inherit that. A refused
+                revert, or the mode being off, hides the process the namespace way
+                instead - works as well, at the cost of one shared namespace. */
       update_mnt_ns(Clean, false);
+    }
   }
 
   /* INFO: Executed after setns to ensure a module can update the mounts of an
