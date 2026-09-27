@@ -986,7 +986,7 @@ static void rz_sanitize_fds(struct zygisk_context *ctx) {
   closedir(dir);
 }
 
-static void rz_fork_post(struct zygisk_context *ctx __attribute__((unused))) {
+static void rz_fork_post(struct zygisk_context *ctx) {
   sigmask(SIG_UNBLOCK, SIGCHLD);
 
   /* INFO: The parent never runs post-specialize, where the child releases the
@@ -1016,7 +1016,7 @@ static bool load_modules_only(void) {
             array - api.impl encodes the slot index, which is what
             RequestCompanionSocket and GetModuleDir are addressed with - so
             dead slots stay in place and are simply never called. */
-  zygisk_module_length = ms.modules_count;
+  zygisk_module_length = 0;
 
   if (ms.modules_count == 0) {
     zygisk_modules = NULL;
@@ -1034,6 +1034,12 @@ static bool load_modules_only(void) {
 
     return false;
   }
+
+  /* INFO: The length is only allowed to grow past zero once the array exists:
+            hook_unloader carries on when this load fails, and a non-zero
+            length with a NULL array would crash the first fork in the module
+            loop. */
+  zygisk_module_length = ms.modules_count;
 
   /* INFO: Failure symmetry, reviewed: csoloader keeps no reference count,
             so a load that fails inside csoloader_load has mapped nothing and
