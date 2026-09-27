@@ -998,7 +998,14 @@ static void send_daemon_info(const struct Context *restrict context) {
   stringify_root_impl_name(impl, impl_name);
 
   uint32_t root_impl_len = (uint32_t)strlen(impl_name);
-  uint32_t modules_len = (uint32_t)(context->len + context->zn_len);
+
+  /* INFO: The count has to match what is actually sent below: tombstoned
+            slots carry no name and are not announced, so the live module
+            entries are counted first. */
+  uint32_t modules_len = (uint32_t)context->zn_len;
+  for (size_t i = 0; i < context->len; i++) {
+    if (context->modules[i].name != NULL) modules_len++;
+  }
 
   unix_datagram_sendto(ZYGISK_CONTROLLER_SOCKET, &(uint8_t){ DAEMON_SET_INFO }, sizeof(uint8_t));
   unix_datagram_sendto(ZYGISK_CONTROLLER_SOCKET, &root_impl_len, sizeof(root_impl_len));
@@ -1006,6 +1013,9 @@ static void send_daemon_info(const struct Context *restrict context) {
   unix_datagram_sendto(ZYGISK_CONTROLLER_SOCKET, &modules_len, sizeof(modules_len));
 
   for (size_t i = 0; i < context->len; i++) {
+    /* INFO: Tombstoned slots carry no name and are not announced. */
+    if (context->modules[i].name == NULL) continue;
+
     send_module_info(context->modules[i].name);
   }
 
@@ -1145,11 +1155,19 @@ static void handle_get_info(struct Client *client) {
   ret = write_uint32_t(client->fd, (uint32_t)pid);
   ASSURE_SIZE_WRITE("GetInfo", "pid", ret, sizeof(pid), return);
 
-  size_t modules_count = client->context->len;
+  /* INFO: Tombstoned slots carry no name and are not listed; this answer has
+            no index contract, unlike ReadModules, so the list is compacted. */
+  size_t modules_count = 0;
+  for (size_t i = 0; i < client->context->len; i++) {
+    if (client->context->modules[i].name != NULL) modules_count++;
+  }
+
   ret = write_size_t(client->fd, modules_count);
   ASSURE_SIZE_WRITE("GetInfo", "modules_count", ret, sizeof(modules_count), return);
 
-  for (size_t i = 0; i < modules_count; i++) {
+  for (size_t i = 0; i < client->context->len; i++) {
+    if (client->context->modules[i].name == NULL) continue;
+
     ret = write_string(client->fd, client->context->modules[i].name);
     if (ret == -1) {
       LOGE("Failed writing module name.");
@@ -1160,11 +1178,25 @@ static void handle_get_info(struct Client *client) {
 }
 
 static void handle_read_modules(struct Client *client) {
+  /* INFO: The full slot range is sent, empty strings standing in for
+            tombstoned slots, so the indexes a zygote derives from this list
+            stay those of the daemon's array - which is what
+            RequestCompanionSocket and GetModuleDir are addressed with. */
   size_t clen = client->context->len;
   ssize_t ret = write_size_t(client->fd, clen);
   ASSURE_SIZE_WRITE("ReadModules", "len", ret, sizeof(clen), return);
 
   for (size_t i = 0; i < clen; i++) {
+    if (client->context->modules[i].name == NULL) {
+      if (write_string(client->fd, "") == -1) {
+        LOGE("Failed writing tombstoned module path.");
+
+        return;
+      }
+
+      continue;
+    }
+
     char lib_path[PATH_MAX];
     snprintf(lib_path, PATH_MAX, ZYGISK_MODULES_DIR "/%s/zygisk/" ARCH_STR ".so", client->context->modules[i].name);
 
@@ -1330,7 +1362,7 @@ static void handle_request_companion_socket(struct Client *client) {
   ssize_t ret = read_size_t(client->fd, &index);
   ASSURE_SIZE_READ("RequestCompanionSocket", "index", ret, sizeof(index), return);
 
-  if (index >= client->context->len) {
+  if (index >= client->context->len || client->context->modules[index].name == NULL) {
     LOGE("Invalid module index: %zu", index);
 
     ret = write_uint8_t(client->fd, 0);
@@ -1391,7 +1423,7 @@ static void handle_get_module_dir(struct Client *client) {
   ssize_t ret = read_size_t(client->fd, &index);
   ASSURE_SIZE_READ("GetModuleDir", "index", ret, sizeof(index), return);
 
-  if (index >= client->context->len) {
+  if (index >= client->context->len || client->context->modules[index].name == NULL) {
     LOGE("Invalid module index: %zu", index);
 
     ret = write_uint8_t(client->fd, 0);
@@ -1473,6 +1505,12 @@ static void handle_remove_module(struct Client *client) {
     return;
   }
 
+  /* INFO: The slot is tombstoned instead of removed: zygotes that already read
+            the module list hold indices into it, and compacting the array
+            shifts every module after the slot to the left, so a companion or
+            module-dir request from a still-running zygote would land on the
+            wrong module. A tombstone keeps the positions stable; ReadModules
+            hands out an empty path for it and new zygotes skip the slot. */
   struct Module *module = &client->context->modules[index];
   if (module->companion >= 0) {
     close(module->companion);
@@ -1486,10 +1524,6 @@ static void handle_remove_module(struct Client *client) {
     close(module->lib_fd);
     module->lib_fd = -1;
   }
-
-  memmove(&client->context->modules[index], &client->context->modules[index + 1],
-          (client->context->len - index - 1) * sizeof(struct Module));
-  client->context->len--;
 
   ret = write_uint8_t(client->fd, 1);
   ASSURE_SIZE_WRITE("RemoveModule", "response", ret, sizeof(uint8_t), return);
