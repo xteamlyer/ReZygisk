@@ -9,7 +9,7 @@
 
 #include <unistd.h>
 
-#define LOG_TAG "zygisk-elfutil" LP_SELECT("32", "64")
+#define LOG_TAG "zygisk-elfutil"
 
 #include "logging.h"
 

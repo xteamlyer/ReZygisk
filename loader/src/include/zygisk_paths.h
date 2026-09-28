@@ -10,12 +10,6 @@
          ZYGISK_TMP_PATH and ZYGISK_MODULE_ID are upgrade compatibility red
          lines: neither may change, or existing installs break. */
 
-#ifdef __LP64__
-  #define ZP_SELECT(lp32, lp64) lp64
-#else
-  #define ZP_SELECT(lp32, lp64) lp32
-#endif
-
 #define ZYGISK_TMP_PATH "/data/adb/rezygisk"
 #define ZYGISK_MODULE_ID "rezygisk"
 #define ZYGISK_MODULES_DIR "/data/adb/modules"
@@ -23,9 +17,9 @@
 
 /* INFO: The daemon binary, the controller datagram socket the monitor
          listens on, and the stream socket the loader connects to. */
-#define ZYGISKD_BIN ZYGISK_MODULE_DIR "/bin/zygiskd" ZP_SELECT("32", "64")
+#define ZYGISKD_BIN ZYGISK_MODULE_DIR "/bin/zygiskd64"
 #define ZYGISK_CONTROLLER_SOCKET ZYGISK_TMP_PATH "/init_monitor"
-#define ZYGISK_CP_SOCKET ZYGISK_TMP_PATH "/" ZP_SELECT("cp32", "cp64") ".sock"
+#define ZYGISK_CP_SOCKET ZYGISK_TMP_PATH "/cp64.sock"
 
 /* INFO: Files the monitor owns inside the scratch directory, and the module
          property file it keeps a pristine copy of. */

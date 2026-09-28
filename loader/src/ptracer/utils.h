@@ -12,23 +12,18 @@
 
 /* Redefining logging macros with different tag */
 #ifndef LOG_TAG
-  #define LOG_TAG "zygisk-ptrace" LP_SELECT("32", "64")
+  #define LOG_TAG "zygisk-ptrace"
 #endif
 
 #include "logging.h"
 
-#if defined(__aarch64__)
-  #define REG_SP sp
-  #define REG_IP pc
-  #define REG_RET regs[0]
-  #define REG_SYSNR regs[8]
-#elif defined(__arm__)
-  #define REG_SP uregs[13]
-  #define REG_IP uregs[15]
-  #define REG_RET uregs[0]
-  #define REG_SYSNR uregs[7]
-  #define user_regs_struct user_regs
-#endif
+/* INFO: aarch64 only: the tracer is built for arm64-v8a and traces the
+         bitness it runs as, so there is no second register file to pick
+         between. */
+#define REG_SP sp
+#define REG_IP pc
+#define REG_RET regs[0]
+#define REG_SYSNR regs[8]
 
 ssize_t write_proc(int pid, uintptr_t remote_addr, const void *buf, size_t len);
 

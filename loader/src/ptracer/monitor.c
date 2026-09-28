@@ -17,20 +17,11 @@
 
 #include "monitor.h"
 
-#ifdef __LP64__
-  #define MONITOR_ABI "64"
-  #define APP_PROCESS_NAME "/system/bin/app_process64"
-  #define OTHER_ZYGOTE_NAME "/system/bin/app_process32"
-  #define CMD_ZYGOTE_INJECTED ZYGOTE64_INJECTED
-  #define CMD_DAEMON_SET_INFO DAEMON64_SET_INFO
-  #define CMD_DAEMON_SET_ERROR_INFO DAEMON64_SET_ERROR_INFO
-#else
-  #define MONITOR_ABI "32"
-  #define APP_PROCESS_NAME "/system/bin/app_process32"
-  #define CMD_ZYGOTE_INJECTED ZYGOTE32_INJECTED
-  #define CMD_DAEMON_SET_INFO DAEMON32_SET_INFO
-  #define CMD_DAEMON_SET_ERROR_INFO DAEMON32_SET_ERROR_INFO
-#endif
+#define MONITOR_ABI "64"
+#define APP_PROCESS_NAME "/system/bin/app_process64"
+#define CMD_ZYGOTE_INJECTED ZYGOTE64_INJECTED
+#define CMD_DAEMON_SET_INFO DAEMON64_SET_INFO
+#define CMD_DAEMON_SET_ERROR_INFO DAEMON64_SET_ERROR_INFO
 
 /* INFO: HyperOS's app spawner, the third process (besides the two zygotes)
          that forks application processes. Both ABI monitors match it, each
@@ -572,25 +563,10 @@ bool sigchld_listener_init() {
 
 /* INFO: Which executable this monitor owns and how the tracer has to be told
          about it. False for anything left to another monitor. */
-static bool match_target(const char *program, const char **tracer, bool *is_tango, bool *is_spawner) {
+static bool match_target(const char *program, const char **tracer, bool *is_spawner) {
   if (strcmp(program, APP_PROCESS_NAME) == 0) {
     *tracer = "./bin/zygisk-ptrace" MONITOR_ABI;
-  }
-#ifdef __LP64__
-  else if (strcmp(program, OTHER_ZYGOTE_NAME) == 0) {
-    /* INFO: The 64-bit monitor owns only the primary Zygote; the secondary one
-              is left for a 32-bit monitor, if any. */
-    LOGD("Skipping the secondary Zygote, a 32-bit monitor owns it");
-
-    return false;
-  }
-#else
-  else if (strcmp(program, "/system_ext/bin/tango_translator") == 0) {
-    *tracer = "./bin/zygisk-ptrace" MONITOR_ABI;
-    *is_tango = true;
-  }
-#endif
-  else if (strcmp(program, HYOS_SPAWNER_NAME) == 0) {
+  } else if (strcmp(program, HYOS_SPAWNER_NAME) == 0) {
     *tracer = "./bin/zygisk-ptrace" MONITOR_ABI;
     *is_spawner = true;
   }

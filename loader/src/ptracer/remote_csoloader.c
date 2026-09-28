@@ -17,7 +17,7 @@
 #include <sys/syscall.h>
 
 #undef SYS_mmap
-#define SYS_mmap LP_SELECT(__NR_mmap2, __NR_mmap)
+#define SYS_mmap __NR_mmap
 
 #include "socket_utils.h"
 
@@ -42,17 +42,6 @@ static uintptr_t page_end(uintptr_t addr, size_t page_size) {
    GNU hash chain walk, for one, would spin on them forever. */
 static bool read_exact_offset(int fd, void *buf, size_t len, off_t off) {
   return read_loop_offset(fd, buf, len, off) == (ssize_t)len;
-}
-
-static long remote_mmap_offset_arg(off_t file_offset, size_t page_size) {
-  /* INFO: mmap2 needs the offset in page units, unlike mmap */
-  #ifdef __LP64__
-    (void) page_size;
-
-    return file_offset;
-  #else
-    return (long)(file_offset / (off_t)page_size);
-  #endif
 }
 
 /* INFO: Parse ELF headers and compute the total mapping size for PT_LOAD segments. */
@@ -419,13 +408,8 @@ static bool find_dynsym_value(int fd, const struct elf_dyn_info *info, const cha
   return false;
 }
 
-#ifdef __LP64__
-  #define ELF_R_TYPE ELF64_R_TYPE
-  #define ELF_R_SYM ELF64_R_SYM
-#else
-  #define ELF_R_TYPE ELF32_R_TYPE
-  #define ELF_R_SYM ELF32_R_SYM
-#endif
+#define ELF_R_TYPE ELF64_R_TYPE
+#define ELF_R_SYM ELF64_R_SYM
 
 /* INFO: Resolve a symbol address - either local or from DT_NEEDED libraries. */
 static bool resolve_symbol_addr(int fd, const struct elf_dyn_info *info,
@@ -482,7 +466,7 @@ static bool resolve_symbol_addr(int fd, const struct elf_dyn_info *info,
     LOGD("Trying to resolve %s from main executable as: %s", name, linker_dl_symbol);
 
     /* INFO: Special-case dlsym since some old devices don't have libdl.so loaded to resolve it from. */
-    void *addr = find_func_addr(local_map, remote_map, "/system/bin/" LP_SELECT("linker", "linker64"), linker_dl_symbol);
+    void *addr = find_func_addr(local_map, remote_map, "/system/bin/linker64", linker_dl_symbol);
     if (addr) {
       *out_addr = (uintptr_t)addr;
 
@@ -777,13 +761,11 @@ bool remote_csoloader_load_and_resolve_entry(int pid, struct user_regs_struct *r
     goto cleanup;
   }
 
-#ifdef __LP64__
   if (remote_base < min_addr) {
     LOGE("remote mmap reserve returned low base %p (< %p)", (void *)remote_base, (void *)min_addr);
 
     goto cleanup;
   }
-#endif
 
   load_bias = remote_base - (uintptr_t)min_vaddr;
 
@@ -822,7 +804,7 @@ bool remote_csoloader_load_and_resolve_entry(int pid, struct user_regs_struct *r
       args[2] = PROT_READ | PROT_WRITE;
       args[3] = MAP_FIXED | MAP_PRIVATE;
       args[4] = remote_fd;
-      args[5] = remote_mmap_offset_arg(file_page_offset, page_size);
+      args[5] = (long)file_page_offset;
 
       uintptr_t seg_map = (uintptr_t)remote_syscall(pid, regs, syscall_gadget, SYS_mmap, args, 6);
       if (!seg_map || seg_map == (uintptr_t)MAP_FAILED) {

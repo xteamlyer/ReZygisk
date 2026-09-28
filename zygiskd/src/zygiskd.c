@@ -76,13 +76,7 @@ struct ZnCompanion {
 };
 
 
-#ifdef __aarch64__
-  #define ARCH_STR "arm64-v8a"
-#elif __arm__
-  #define ARCH_STR "armeabi-v7a"
-#else
-  #error "Unsupported architecture"
-#endif
+#define ARCH_STR "arm64-v8a"
 
 /* INFO: A standard Zygisk module entry: the trailing zero byte tells the
            monitor whether the module targets Zygisk Next. */
