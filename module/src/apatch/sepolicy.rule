@@ -23,9 +23,6 @@ allow system_server system_server process execmem
 allow zygote tmpfs file *
 allow zygote appdomain_tmpfs file *
 
-# INFO: Needed for Tango Zygote
-allow zygote system_lib_file file execmod
-
 # INFO: Zygisk Next libraries travel as memfds created by this daemon, so they
 #       carry the daemon's own domain label, which under APatch is "su".
 #       dlopen needs "execute" on them from whichever process loads the module.
