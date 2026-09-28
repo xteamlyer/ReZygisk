@@ -121,12 +121,10 @@ $(MODULE_DONE): $(LOADER_DONE) $(ZYGISKD_DONE) $(MODULE_INPUTS)
 	done
 
 	@echo "Copying binaries..."
-	@for arch in $(ARCHS); do                                                                                  \
-		mkdir -p $(MODULE_OUT)/bin/$$arch $(MODULE_OUT)/lib/$$arch;                                            \
-		cp $(OBJ_DIR)/zygiskd/$$arch/zygiskd $(MODULE_OUT)/bin/$$arch/zygiskd;                                 \
-		cp $(OBJ_DIR)/loader/$$arch/stripped/libzygisk.so $(MODULE_OUT)/lib/$$arch/libzygisk.so;               \
-		cp $(OBJ_DIR)/loader/$$arch/stripped/libzygisk_ptrace.so $(MODULE_OUT)/lib/$$arch/libzygisk_ptrace.so; \
-	done
+	@mkdir -p $(MODULE_OUT)/bin/$(ARCH) $(MODULE_OUT)/lib/$(ARCH)
+	@cp $(OBJ_DIR)/zygiskd/$(ARCH)/zygiskd $(MODULE_OUT)/bin/$(ARCH)/zygiskd
+	@cp $(OBJ_DIR)/loader/$(ARCH)/stripped/libzygisk.so $(MODULE_OUT)/lib/$(ARCH)/libzygisk.so
+	@cp $(OBJ_DIR)/loader/$(ARCH)/stripped/libzygisk_ptrace.so $(MODULE_OUT)/lib/$(ARCH)/libzygisk_ptrace.so
 
 	@if [ -f module/private_key ]; then                                             \
 		echo "Signing module...";                                                   \

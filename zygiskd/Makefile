@@ -36,11 +36,7 @@ INCLUDES = -Isrc -Isrc/root_impl -I../loader/src/include
 
 .PHONY: all arch clean
 
-all:
-	@for arch in $(ARCHS); do                                                                                  \
-		$(MAKE) BUILD_TYPE=$(BUILD_TYPE) BUILD_DIR=$(BUILD_DIR) ARCH=$$arch ZKSU_VERSION=$(ZKSU_VERSION) arch; \
-	done
-
+all: arch
 	@mkdir -p $(OBJ_ROOT)
 	@touch $(OBJ_ROOT)/.done
 
