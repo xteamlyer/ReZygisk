@@ -1,7 +1,7 @@
 ROOT_DIR ?= .
 BUILD_TYPE ?= debug
 API_LEVEL ?= 25
-ARCHS ?= arm64-v8a armeabi-v7a
+ARCHS ?= arm64-v8a
 ARCH ?= arm64-v8a
 
 VER_NAME ?= v2.1.2
@@ -50,7 +50,6 @@ endif
 BUILD_DIR ?= $(ROOT_DIR)/build
 
 TARGET_arm64-v8a = aarch64-linux-android$(API_LEVEL)
-TARGET_armeabi-v7a = armv7a-linux-androideabi$(API_LEVEL)
 
 CC_ARCH = $(CC) --target=$(TARGET_$(ARCH)) --sysroot=$(SYSROOT)
 CXX_ARCH = $(CXX) --target=$(TARGET_$(ARCH)) --sysroot=$(SYSROOT)
