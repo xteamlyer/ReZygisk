@@ -1271,7 +1271,10 @@ static void rz_app_specialize_post(struct zygisk_context *ctx) {
             would be half a hide - a clearer signal than either state alone. */
   if (FLAG_GET(ctx, DO_REVERT_UNMOUNT)) {
     refresh_mount_line();
-    hide_module_maps();
+
+    /* INFO: Nothing was loaded into this process, so the scan could only come
+              back empty and it is the whole cost of asking. */
+    if (zygisk_module_length > 0 || zn_loaded_library_count() > 0) hide_module_maps();
   }
 
   /* INFO: HyperOS runtime dispatch. Modules registered through
