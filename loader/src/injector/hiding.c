@@ -94,6 +94,27 @@ static bool hide_map(const struct map_entry *map) {
   return true;
 }
 
+struct hide_state {
+  dev_t data_dev;
+  size_t maps;
+  size_t bytes;
+};
+
+static bool hide_one_map(const struct map_entry *map, void *userdata) {
+  struct hide_state *state = userdata;
+
+  if (!is_module_map(map, state->data_dev)) return true;
+
+  /* INFO: One library that cannot be replaced is not a reason to leave the
+            rest of them named. */
+  if (hide_map(map)) {
+    state->maps++;
+    state->bytes += map->end - map->start;
+  }
+
+  return true;
+}
+
 bool hide_module_maps(void) {
   struct stat data;
   if (stat("/data", &data) == -1) {
@@ -102,26 +123,18 @@ bool hide_module_maps(void) {
     return false;
   }
 
+  struct hide_state state = { .data_dev = data.st_dev };
+
   /* INFO: The safe variant, as everywhere else in the loader: reading this
             process's own maps directly would leave a fresh access time on the
             file for the application to find. */
-  struct maps_info *maps = parse_maps_safe("self");
-  if (maps == NULL) {
+  if (!scan_maps_safe("self", hide_one_map, &state)) {
     LOGE("Failed to read the maps of this process");
 
     return false;
   }
 
-  size_t hidden = 0;
-  for (size_t i = 0; i < maps->length; i++) {
-    const struct map_entry *map = &maps->maps[i];
-
-    if (is_module_map(map, data.st_dev) && hide_map(map)) hidden++;
-  }
-
-  free_maps(maps);
-
-  if (hidden > 0) LOGD("Hid %zu module map(s)", hidden);
+  if (state.maps > 0) LOGD("Hid %zu module map(s), %zu KiB", state.maps, state.bytes / 1024);
 
   return true;
 }

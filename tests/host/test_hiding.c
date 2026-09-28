@@ -17,17 +17,15 @@
 
 #include "../../loader/src/injector/hiding.c"
 
-/* INFO: hide_module_maps() reaches the maps through these two, which live in
-         the loader's common code and are never exercised here. The stubs keep
-         the predicate linkable without pulling the rest of the loader in. */
-struct maps_info *parse_maps_safe(const char *pid) {
+/* INFO: hide_module_maps() reaches the maps through this, which lives in the
+         loader's common code and is never exercised here. The stub keeps the
+         predicate linkable without pulling the rest of the loader in. */
+bool scan_maps_safe(const char *pid, maps_visitor visit, void *userdata) {
   (void) pid;
+  (void) visit;
+  (void) userdata;
 
-  return NULL;
-}
-
-void free_maps(struct maps_info *maps) {
-  (void) maps;
+  return false;
 }
 
 #define DATA_DEV  ((dev_t) 0x0a03)

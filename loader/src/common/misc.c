@@ -50,133 +50,176 @@ struct kernel_version parse_kversion(void) {
   return version;
 }
 
+/* INFO: One line of a maps stream into an entry. The path points into the
+         line, which stays the caller's to keep alive - the entry is only
+         valid for as long as that buffer is. */
+static bool parse_maps_line(char *line, struct map_entry *entry) {
+  /* INFO: strcspn leaves the content intact when the last maps line has no
+            trailing newline, which strlen - 1 would corrupt. */
+  line[strcspn(line, "\n")] = '\0';
+
+  uintptr_t start, end, offset;
+  unsigned int dev_major, dev_minor;
+  ino_t inode;
+  char perms[5] = { 0 };
+  int path_off;
+
+  if (sscanf(line, "%" PRIxPTR "-%" PRIxPTR " %4s %" PRIxPTR " %x:%x %lu %n",
+             &start, &end, perms, &offset, &dev_major, &dev_minor, &inode, &path_off) != 7) {
+    return false;
+  }
+
+  int perms_bit = 0;
+  if (perms[0] == 'r') perms_bit |= PROT_READ;
+  if (perms[1] == 'w') perms_bit |= PROT_WRITE;
+  if (perms[2] == 'x') perms_bit |= PROT_EXEC;
+
+  while (isspace((unsigned char)line[path_off]))
+    path_off++;
+
+  *entry = (struct map_entry) {
+    .start = start,
+    .end = end,
+    .perms = perms_bit,
+    .is_private = (perms[3] == 'p'),
+    .offset = offset,
+    .dev = makedev(dev_major, dev_minor),
+    .inode = inode,
+    .path = line + path_off
+  };
+
+  return true;
+}
+
+/* INFO: getline instead of a fixed buffer: maps lines with long paths used to
+           be split mid-line, fail the sscanf and silently drop their mapping. */
+static bool walk_maps_stream(FILE *fp, maps_visitor visit, void *userdata) {
+  char *line = NULL;
+  size_t line_capacity = 0;
+
+  while (getline(&line, &line_capacity, fp) != -1) {
+    struct map_entry entry;
+
+    if (!parse_maps_line(line, &entry)) continue;
+
+    if (!visit(&entry, userdata)) break;
+  }
+
+  /* INFO: A stream that ends early leaves a partial listing behind, which is
+            worse than none at all: the caller would take it for the whole
+            map. */
+  bool complete = !ferror(fp);
+  if (!complete) PLOGE("read a maps stream");
+
+  free(line);
+
+  return complete;
+}
+
+/* INFO: Collects every entry into a fresh table, which is what the callers
+         that want all of it - the ELF reader and the hook scanner - need. */
+struct collect_state {
+  struct maps_info *info;
+  size_t capacity;
+  bool failed;
+};
+
+static bool collect_map(const struct map_entry *map, void *userdata) {
+  struct collect_state *state = userdata;
+
+  if (state->info->length >= state->capacity) {
+    size_t capacity = state->capacity * 2;
+
+    struct map_entry *grown = realloc(state->info->maps, capacity * sizeof(struct map_entry));
+    if (grown == NULL) {
+      PLOGE("reallocate (extend: %zu -> %zu) memory for maps", state->capacity, capacity);
+
+      state->failed = true;
+
+      return false;
+    }
+
+    state->info->maps = grown;
+    state->capacity = capacity;
+  }
+
+  char *path = strdup(map->path);
+  if (path == NULL) {
+    PLOGE("allocate memory for map path");
+
+    state->failed = true;
+
+    return false;
+  }
+
+  state->info->maps[state->info->length] = *map;
+  state->info->maps[state->info->length].path = path;
+  state->info->length++;
+
+  return true;
+}
+
 /* INFO: Parses the lines of an already-open maps stream into a fresh
          maps_info. Returns NULL on failure. */
 static struct maps_info *parse_maps_stream(FILE *fp) {
-  struct maps_info *info_array = calloc(1, sizeof(struct maps_info));
-  if (info_array == NULL) {
+  struct maps_info *info = calloc(1, sizeof(struct maps_info));
+  if (info == NULL) {
     PLOGE("allocate memory");
 
     return NULL;
   }
 
-  size_t infos_capacity = 2;
-  info_array->maps = malloc(infos_capacity * sizeof(struct map_entry));
-  if (info_array->maps == NULL) {
+  info->maps = malloc(2 * sizeof(struct map_entry));
+  if (info->maps == NULL) {
     PLOGE("allocate memory for maps");
 
-    free(info_array);
+    free(info);
 
     return NULL;
   }
-  info_array->length = 0;
 
-  /* INFO: getline instead of a fixed buffer: maps lines with long paths
-            used to be split mid-line, fail the sscanf and silently drop
-            their mapping. */
-  char *line = NULL;
-  size_t line_capacity = 0;
-  while (getline(&line, &line_capacity, fp) != -1) {
-    /* INFO: strcspn leaves the content intact when the last maps line has no
-              trailing newline, which strlen - 1 would corrupt. */
-    line[strcspn(line, "\n")] = '\0';
+  struct collect_state state = { .info = info, .capacity = 2 };
 
-    uintptr_t start, end, offset;
-    unsigned int dev_major, dev_minor;
-    ino_t inode;
-    char perms[5] = { 0 };
-    int path_off;
+  bool walked = walk_maps_stream(fp, collect_map, &state);
+  if (!walked || state.failed) {
+    free_maps(info);
 
-    if (sscanf(line, "%" PRIxPTR "-%" PRIxPTR " %4s %" PRIxPTR " %x:%x %lu %n",
-               &start, &end, perms, &offset, &dev_major, &dev_minor, &inode, &path_off) != 7) {
-      continue;
-    }
-
-    uint8_t perms_bit = 0;
-    if (perms[0] == 'r') perms_bit |= PROT_READ;
-    if (perms[1] == 'w') perms_bit |= PROT_WRITE;
-    if (perms[2] == 'x') perms_bit |= PROT_EXEC;
-
-    while (isspace((unsigned char)line[path_off]))
-      path_off++;
-
-    char *path_str = strdup(line + path_off);
-    if (path_str == NULL) {
-      PLOGE("allocate memory for map path");
-
-      goto cleanup_maps;
-    }
-
-    if (info_array->length >= infos_capacity) {
-      infos_capacity *= 2;
-      struct map_entry *tmp_maps = realloc(info_array->maps, infos_capacity * sizeof(struct map_entry));
-      if (tmp_maps == NULL) {
-        PLOGE("reallocate (extend: %zu -> %zu) memory for maps", infos_capacity / 2, infos_capacity);
-
-        goto cleanup_maps_and_path;
-      }
-      info_array->maps = tmp_maps;
-    }
-
-    struct map_entry new_map = {
-      .start = start,
-      .end = end,
-      .perms = perms_bit,
-      .is_private = (perms[3] == 'p'),
-      .offset = offset,
-      .dev = makedev(dev_major, dev_minor),
-      .inode = inode,
-      .path = path_str
-    };
-
-    info_array->maps[info_array->length++] = new_map;
-
-    continue;
-
-    cleanup_maps_and_path:
-      free(path_str);
-    cleanup_maps:
-      free(line);
-
-      for (size_t i = 0; i < info_array->length; i++) {
-        free(info_array->maps[i].path);
-      }
-      free(info_array->maps);
-      free(info_array);
-
-      return NULL;
+    return NULL;
   }
 
-  free(line);
-
-  if (info_array->length == 0) {
+  if (info->length == 0) {
     LOGE("Failed to find any maps");
 
-    free_maps(info_array);
+    free_maps(info);
 
     return NULL;
   }
 
   /* INFO: Resize to the actual size */
-  struct map_entry *tmp_maps = realloc(info_array->maps, info_array->length * sizeof(struct map_entry));
+  struct map_entry *tmp_maps = realloc(info->maps, info->length * sizeof(struct map_entry));
   if (tmp_maps == NULL)
-    PLOGE("reallocate (reduce: %zu -> %zu) memory for maps", infos_capacity, info_array->length);
-  else info_array->maps = tmp_maps;
+    PLOGE("reallocate (reduce: %zu -> %zu) memory for maps", state.capacity, info->length);
+  else info->maps = tmp_maps;
 
-  return info_array;
+  return info;
 }
+
+/* INFO: The maps of a process, read through a child that opens them, so that
+         the access time the read leaves behind lands on that child's file and
+         not on the one the application can stat. */
+typedef bool (*maps_stream_fn)(FILE *fp, void *userdata);
 
 /* INFO: Opening /proc/.../maps leads to its access time being updated. This
            function bypasses this by reading the maps from a forked process,
            which is the same memory topology anyway. See more information in
            parse_maps().
 */
-struct maps_info *parse_maps_safe(const char *pid) {
+static bool with_maps_stream(const char *pid, maps_stream_fn callback, void *userdata) {
   int sockets[2];
   if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) < 0) {
     LOGE("Failed to create socket pair");
 
-    return NULL;
+    return false;
   }
 
   int ppid = clone(NULL, NULL, SIGCHLD, NULL);
@@ -186,7 +229,7 @@ struct maps_info *parse_maps_safe(const char *pid) {
     close(sockets[0]);
     close(sockets[1]);
 
-    return NULL;
+    return false;
   }
 
   if (ppid == 0) {
@@ -247,7 +290,7 @@ struct maps_info *parse_maps_safe(const char *pid) {
              zombie under the long-lived monitor. */
     waitpid(ppid, NULL, 0);
 
-    return NULL;
+    return false;
   }
 
   FILE *fp = fdopen(fd, "r");
@@ -261,10 +304,10 @@ struct maps_info *parse_maps_safe(const char *pid) {
              path, so the closed socket lets it exit and this reaps it. */
     waitpid(ppid, NULL, 0);
 
-    return NULL;
+    return false;
   }
 
-  struct maps_info *info = parse_maps_stream(fp);
+  bool ok = callback(fp, userdata);
 
   /* INFO: Notify the children process that we are done */
   uint8_t can_kill_itself = 1;
@@ -279,7 +322,40 @@ struct maps_info *parse_maps_safe(const char *pid) {
             or the child process will become zombie as shown in /proc/<child_pid>/status */
   waitpid(ppid, NULL, 0);
 
+  return ok;
+}
+
+static bool collect_maps(FILE *fp, void *userdata) {
+  struct maps_info **out = userdata;
+
+  *out = parse_maps_stream(fp);
+
+  return *out != NULL;
+}
+
+struct maps_info *parse_maps_safe(const char *pid) {
+  struct maps_info *info = NULL;
+
+  if (!with_maps_stream(pid, collect_maps, &info)) return NULL;
+
   return info;
+}
+
+struct scan_state {
+  maps_visitor visit;
+  void *userdata;
+};
+
+static bool walk_maps(FILE *fp, void *userdata) {
+  struct scan_state *state = userdata;
+
+  return walk_maps_stream(fp, state->visit, state->userdata);
+}
+
+bool scan_maps_safe(const char *pid, maps_visitor visit, void *userdata) {
+  struct scan_state state = { .visit = visit, .userdata = userdata };
+
+  return with_maps_stream(pid, walk_maps, &state);
 }
 
 /* INFO: Accessing /proc/.../maps will update its access time. This is detectable
