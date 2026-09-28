@@ -58,6 +58,7 @@ static bool is_module_map(const struct map_entry *map, dev_t data_dev) {
          library keeps running out of the same place and the name is gone. */
 static bool hide_map(const struct map_entry *map) {
   size_t size = map->end - map->start;
+  bool made_readable = (map->perms & PROT_READ) == 0;
 
   void *copy = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
   if (copy == MAP_FAILED) {
@@ -68,8 +69,7 @@ static bool hide_map(const struct map_entry *map) {
 
   /* INFO: A mapping without PROT_READ cannot be copied out of, so it is made
             readable for the duration of the copy and put back afterwards. */
-  if ((map->perms & PROT_READ) == 0 &&
-      mprotect((void *)map->start, size, map->perms | PROT_READ) == -1) {
+  if (made_readable && mprotect((void *)map->start, size, map->perms | PROT_READ) == -1) {
     PLOGE("make [%s] readable", map->path);
 
     munmap(copy, size);
@@ -83,6 +83,11 @@ static bool hide_map(const struct map_entry *map) {
     PLOGE("move the copy of [%s] over the original", map->path);
 
     munmap(copy, size);
+
+    /* INFO: The original is still the mapping on this path, and it may still
+              carry the PROT_READ added to copy it out of. */
+    if (made_readable && mprotect((void *)map->start, size, map->perms) == -1)
+      PLOGE("restore the permissions of [%s]", map->path);
 
     return false;
   }
