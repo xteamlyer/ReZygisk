@@ -10,8 +10,8 @@
 #include "zn_loader.h"
 
 __attribute__((visibility("default")))
-void entry(void *addr, size_t size, int tango_flag) {
-  LOGD("VexZygisk%s library injected, version %s", tango_flag ? " [TANGO]" : "", ZKSU_VERSION);
+void entry(void *addr, size_t size) {
+  LOGD("VexZygisk library injected, version %s", ZKSU_VERSION);
 
   start_addr = addr;
   block_size = size;

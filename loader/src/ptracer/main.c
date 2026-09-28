@@ -27,17 +27,13 @@ int main(int argc, char **argv) {
 
     return 0;
   } else if (argc >= 3 && strcmp(argv[1], "trace") == 0) {
-      bool is_tango = false;
       bool do_restart = false;
 
       for (int i = 3; i < argc; i++) {
         if (strcmp(argv[i], "--restart") == 0) do_restart = true;
-        else if (strcmp(argv[i], "--tango") == 0) is_tango = true;
       }
 
-      /* INFO: We need to be fast enough to not miss Tango's injection point,
-                 so we just delay for Tango Zygote. */
-      if (do_restart && !is_tango) rezygiskd_zygote_restart();
+      if (do_restart) rezygiskd_zygote_restart();
 
       /* INFO: Validated before use: a bogus pid would otherwise reach the
                 kill() below as 0, which signals the whole process group. */
@@ -49,7 +45,7 @@ int main(int argc, char **argv) {
         return 1;
       }
 
-      if (!trace_zygote((int)pid, is_tango)) {
+      if (!trace_zygote((int)pid)) {
         /* INFO: A failed zygote trace must not leave a broken zygote running,
                  so it is killed. A failed hyos_spawner trace is only detached
                  and resumed: the spawner is what starts every application,
@@ -63,8 +59,6 @@ int main(int argc, char **argv) {
 
         return 1;
       }
-
-      if (do_restart && is_tango) rezygiskd_zygote_restart();
 
       return 0;
   } else if (argc >= 3 && strcmp(argv[1], "ctl") == 0) {
@@ -139,7 +133,7 @@ int main(int argc, char **argv) {
     printf(
       "Available commands:\n"
       " - monitor\n"
-      " - trace <pid> [--restart] [--tango]\n"
+      " - trace <pid> [--restart]\n"
       " - ctl <start|stop|exit>\n"
       " - version: Shows the version of VexZygisk.\n"
       " - info: Shows information about the created daemon/injection.\n"

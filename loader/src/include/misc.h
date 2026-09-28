@@ -4,12 +4,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#ifdef __LP64__
-  #define LP_SELECT(lp32, lp64) lp64
-#else
-  #define LP_SELECT(lp32, lp64) lp32
-#endif
-
 /* INFO: Every uid is userId * 100000 + appId, and it is the appId that root
          implementations key off. A later user - Private Space included - shifts
          the uid by whole 100000s, so the raw value has to be reduced first. */

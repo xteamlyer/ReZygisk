@@ -6,8 +6,8 @@
 
 #define PROCESS_NAME_MAX_LEN (256 + 1)
 
-#define ZYGOTE_INJECTED LP_SELECT(5, 4)
-#define DAEMON_SET_INFO LP_SELECT(7, 6)
+#define ZYGOTE_INJECTED 4
+#define DAEMON_SET_INFO 6
 
 /* INFO: Plain macros rather than a typed enum: 1u << 31 does not fit an int,
          and a fixed underlying type is a C23 extension. */

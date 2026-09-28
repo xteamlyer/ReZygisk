@@ -11,20 +11,14 @@
 #include "constants.h"
 #include "root_impl/common.h"
 
-/* INFO: Kept here rather than pulled from the loader's shared header: this is
-         a two-line switch on a compiler-provided macro, and reusing it would
-         couple every file that includes utils.h to the loader's include tree,
-         including the host tests, which build the daemon sources on their own. */
-#ifdef __LP64__
-  #define LP_SELECT(a, b) b
-#else
-  #define LP_SELECT(a, b) a
-#endif
-
+/* INFO: Duplicated rather than pulled from the loader's shared header: reusing
+         it would couple every file that includes utils.h to the loader's
+         include tree, including the host tests, which build the daemon
+         sources on their own. */
 #define APP_ID(uid) ((uid) % 100000)
 
 #ifndef LOG_TAG
-  #define LOG_TAG "zygiskd" LP_SELECT("32", "64")
+  #define LOG_TAG "zygiskd"
 #endif
 
 /* INFO: Release builds are completely silent: every log level, and the

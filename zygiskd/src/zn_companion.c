@@ -1,4 +1,4 @@
-#define LOG_TAG "zygiskd-zn-companion" LP_SELECT("32", "64")
+#define LOG_TAG "zygiskd-zn-companion"
 
 #include <errno.h>
 #include <stdbool.h>

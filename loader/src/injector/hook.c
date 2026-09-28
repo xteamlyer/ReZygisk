@@ -272,11 +272,7 @@ DCL_HOOK_FUNC(int, fork) {
 }
 
 /* INFO: file_path is a std::string in the actual class. We represent it as opaque bytes. */
-#ifdef __LP64__
-  #define STD_STRING_SIZE 24
-#else
-  #define STD_STRING_SIZE 12
-#endif
+#define STD_STRING_SIZE 24
 
 struct FileDescriptorInfo {
   const int fd;

@@ -3,7 +3,7 @@
 Signing tool for VexZygisk module.
 
 Implements module signing according to the following scheme:
-  - machikado: per-architecture runtime file signatures
+  - machikado: runtime file signatures
   - misaki: whole-module signature
   - sha256: per-file SHA-256 hashes
 """
@@ -38,12 +38,10 @@ def file_sign_data(name: str, filepath: str) -> bytes:
   return bytes(data)
 
 
-def sign_machikado(module_dir: str, sig_name: str, abi: str, is_64bit: bool, private_key_bytes: bytes, public_key_bytes: bytes):
-  """Sign a machikado file for a specific architecture."""
+def sign_machikado(module_dir: str, sig_name: str, private_key_bytes: bytes, public_key_bytes: bytes):
+  """Sign a machikado file for the single shipped architecture."""
 
   root = Path(module_dir)
-  arch_suffix = "64" if is_64bit else "32"
-  path_suffix = "lib64" if is_64bit else "lib"
 
   # INFO: Create the list by sorting them based on their virtual/relative path,
   #         and use their virtual/relative path as the name in the signature.
@@ -59,27 +57,26 @@ def sign_machikado(module_dir: str, sig_name: str, abi: str, is_64bit: bool, pri
 
     entries.append((str(vpath), fname, str(vpath)))
 
-  # INFO: lib(64)/libzygisk.so -> lib/{abi}/libzygisk.so
-  vpath = root / path_suffix / "libzygisk.so"
-  rpath = root / "lib" / abi / "libzygisk.so"
+  # INFO: lib64/libzygisk.so -> lib/arm64-v8a/libzygisk.so
+  vpath = root / "lib64" / "libzygisk.so"
+  rpath = root / "lib" / "arm64-v8a" / "libzygisk.so"
   entries.append((str(vpath), "libzygisk.so", str(rpath)))
 
-  # INFO: bin/zygisk-ptrace{32|64} -> lib/{abi}/libzygisk_ptrace.so
-  vpath = root / "bin" / f"zygisk-ptrace{arch_suffix}"
-  rpath = root / "lib" / abi / "libzygisk_ptrace.so"
-  entries.append((str(vpath), f"zygisk-ptrace{arch_suffix}", str(rpath)))
+  # INFO: bin/zygisk-ptrace64 -> lib/arm64-v8a/libzygisk_ptrace.so
+  vpath = root / "bin" / "zygisk-ptrace64"
+  rpath = root / "lib" / "arm64-v8a" / "libzygisk_ptrace.so"
+  entries.append((str(vpath), "zygisk-ptrace64", str(rpath)))
 
-  # INFO: bin/zygiskd{32|64} -> bin/{abi}/zygiskd
-  vpath = root / "bin" / f"zygiskd{arch_suffix}"
-  rpath = root / "bin" / abi / "zygiskd"
-  entries.append((str(vpath), f"zygiskd{arch_suffix}", str(rpath)))
+  # INFO: bin/zygiskd64 -> bin/arm64-v8a/zygiskd
+  vpath = root / "bin" / "zygiskd64"
+  rpath = root / "bin" / "arm64-v8a" / "zygiskd"
+  entries.append((str(vpath), "zygiskd64", str(rpath)))
 
   # INFO: Sort by virtual path
   entries.sort(key=lambda e: e[0].replace("\\", "/"))
 
-  # INFO: Accumulate all sign data. Entries whose real file is absent (an
-  #       architecture that was not built, service.sh) are skipped: reading
-  #       them would abort the whole build.
+  # INFO: Accumulate all sign data. An entry whose real file is absent
+  #       (service.sh) is skipped: reading it would abort the whole build.
   sign_data = bytearray()
   for _, vname, rpath in entries:
     if not Path(rpath).is_file():
@@ -164,7 +161,7 @@ def main():
     print("No private_key and public_key found, this build will not be signed")
 
     # INFO: Create empty machikado files
-    for name in ["machikado.arm64", "machikado.arm"]:
+    for name in ["machikado.arm64"]:
       (root / name).touch()
 
     # INFO: Compute SHA256 hashes
@@ -186,8 +183,7 @@ def main():
   print("=== Guards the peace of Machikado ===")
 
   # INFO: Sign machikado for each architecture
-  sign_machikado(module_dir, "machikado.arm64", "arm64-v8a", True, private_key_bytes, public_key_bytes)
-  sign_machikado(module_dir, "machikado.arm", "armeabi-v7a", False, private_key_bytes, public_key_bytes)
+  sign_machikado(module_dir, "machikado.arm64", private_key_bytes, public_key_bytes)
 
   # INFO: Compute SHA256 hashes for all files (including machikado)
   compute_sha256_hashes(module_dir)

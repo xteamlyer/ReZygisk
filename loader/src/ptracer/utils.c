@@ -60,35 +60,31 @@ ssize_t read_proc(int pid, uintptr_t remote_addr, void *buf, size_t len) {
 }
 
 bool get_regs(int pid, struct user_regs_struct *regs) {
-  #if defined(__aarch64__) || defined(__arm__)
-    struct iovec iov = {
-      .iov_base = regs,
-      .iov_len = sizeof(struct user_regs_struct)
-    };
+  struct iovec iov = {
+    .iov_base = regs,
+    .iov_len = sizeof(struct user_regs_struct)
+  };
 
-    if (ptrace(PTRACE_GETREGSET, pid, NT_PRSTATUS, &iov) == -1) {
-      PLOGE("GETREGSET");
+  if (ptrace(PTRACE_GETREGSET, pid, NT_PRSTATUS, &iov) == -1) {
+    PLOGE("GETREGSET");
 
-      return false;
-    }
-  #endif
+    return false;
+  }
 
   return true;
 }
 
 bool set_regs(int pid, struct user_regs_struct *regs) {
-  #if defined(__aarch64__) || defined(__arm__)
-    struct iovec iov = {
-      .iov_base = regs,
-      .iov_len = sizeof(struct user_regs_struct)
-    };
+  struct iovec iov = {
+    .iov_base = regs,
+    .iov_len = sizeof(struct user_regs_struct)
+  };
 
-    if (ptrace(PTRACE_SETREGSET, pid, NT_PRSTATUS, &iov) == -1) {
-      PLOGE("SETREGSET");
+  if (ptrace(PTRACE_SETREGSET, pid, NT_PRSTATUS, &iov) == -1) {
+    PLOGE("SETREGSET");
 
-      return false;
-    }
-  #endif
+    return false;
+  }
 
   return true;
 }
@@ -191,44 +187,19 @@ uintptr_t remote_call(int pid, struct user_regs_struct *regs, uintptr_t func_add
     LOGV("arg %p", (void *)args[i]);
   }
 
-  #if defined(__aarch64__)
-    for (size_t i = 0; i < args_size && i < 8; i++) {
-      regs->regs[i] = args[i];
-    }
+  for (size_t i = 0; i < args_size && i < 8; i++) {
+    regs->regs[i] = args[i];
+  }
 
-    if (args_size > 8) {
-      long remain = (args_size - 8) * sizeof(long);
-      align_stack(regs, remain);
+  if (args_size > 8) {
+    long remain = (args_size - 8) * sizeof(long);
+    align_stack(regs, remain);
 
-      write_proc(pid, (uintptr_t)regs->REG_SP, &args[8], remain);
-    }
+    write_proc(pid, (uintptr_t)regs->REG_SP, &args[8], remain);
+  }
 
-    regs->regs[30] = return_addr;
-    regs->REG_IP = func_addr;
-  #elif defined(__arm__)
-    for (size_t i = 0; i < args_size && i < 4; i++) {
-      regs->uregs[i] = args[i];
-    }
-
-    if (args_size > 4) {
-      long remain = (args_size - 4) * sizeof(long);
-      align_stack(regs, remain);
-
-      write_proc(pid, (uintptr_t)regs->REG_SP, &args[4], remain);
-    }
-
-    regs->uregs[14] = return_addr;
-    regs->REG_IP = func_addr;
-
-    unsigned long CPSR_T_MASK = 1lu << 5;
-
-    if ((regs->REG_IP & 1) != 0) {
-      regs->REG_IP = regs->REG_IP & ~1;
-      regs->uregs[16] = regs->uregs[16] | CPSR_T_MASK;
-    } else {
-      regs->uregs[16] = regs->uregs[16] & ~CPSR_T_MASK;
-    }
-  #endif
+  regs->regs[30] = return_addr;
+  regs->REG_IP = func_addr;
 
   if (!set_regs(pid, regs)) {
     LOGE("failed to set regs");
@@ -285,17 +256,12 @@ int fork_dont_care() {
 }
 
 uintptr_t find_syscall_gadget(int pid, struct maps_info *remote_map) {
-  /* INFO: Find a syscall instruction (svc #0 on aarch64, svc 0 on arm32) in executable memory.
-           We search vdso first as it's always present. */
+  /* INFO: Find a syscall instruction (svc #0) in executable memory. We
+           search vdso first as it's always present. */
 
-  #if defined(__aarch64__)
-    const uint32_t svc_insn = 0xD4000001; /* svc #0 */
-    const size_t insn_size = 4;
-    const uintptr_t insn_bias = 0;
-  #elif defined(__arm__)
-    const uint16_t thumb_svc_insn = 0xDF00;
-    const uint32_t arm_svc_insn = 0xEF000000;
-  #endif
+  const uint32_t svc_insn = 0xD4000001; /* svc #0 */
+  const size_t insn_size = 4;
+  const uintptr_t insn_bias = 0;
 
   for (int pass = 0; pass < 2; pass++) {
     bool vdso_only = pass == 0;
@@ -319,43 +285,17 @@ uintptr_t find_syscall_gadget(int pid, struct maps_info *remote_map) {
         continue;
       }
 
-      /* INFO: The binary, in ARM32, might contain either ARM or Thumb instructions
-                 depending of how it was compiled. So, for safety, we included both
-                 as possibilities for the syscall gadget. Thumb instruction set is
-                 different, so take it in consideration too. */
-      #ifdef __arm__
-        for (size_t j = 0; j + sizeof(arm_svc_insn) <= region_size; j += sizeof(uint32_t)) {
-          if (memcmp(buf + j, &arm_svc_insn, sizeof(arm_svc_insn)) != 0) continue;
+      for (size_t j = 0; j + insn_size <= region_size; j += insn_size) {
+        if (memcmp(buf + j, &svc_insn, insn_size) != 0) continue;
 
-          LOGD("found ARM syscall gadget in %s at offset 0x%zx", vdso_only ? "vdso" : (m->path ? m->path : "<anon>"), j);
+        uintptr_t addr = m->start + j + insn_bias;
 
-          free(buf);
+        LOGD("found syscall gadget in %s at offset 0x%zx", vdso_only ? "vdso" : (m->path ? m->path : "<anon>"), j);
 
-          return m->start + j;
-        }
+        free(buf);
 
-        for (size_t j = 0; j + sizeof(thumb_svc_insn) <= region_size; j += sizeof(uint16_t)) {
-          if (memcmp(buf + j, &thumb_svc_insn, sizeof(thumb_svc_insn)) != 0) continue;
-
-          LOGD("found Thumb syscall gadget in %s at offset 0x%zx", vdso_only ? "vdso" : (m->path ? m->path : "<anon>"), j);
-
-          free(buf);
-
-          return m->start + j + 1;
-        }
-      #else
-        for (size_t j = 0; j + insn_size <= region_size; j += insn_size) {
-          if (memcmp(buf + j, &svc_insn, insn_size) != 0) continue;
-
-          uintptr_t addr = m->start + j + insn_bias;
-
-          LOGD("found syscall gadget in %s at offset 0x%zx", vdso_only ? "vdso" : (m->path ? m->path : "<anon>"), j);
-
-          free(buf);
-
-          return addr;
-        }
-      #endif
+        return addr;
+      }
 
       free(buf);
     }
@@ -366,21 +306,11 @@ uintptr_t find_syscall_gadget(int pid, struct maps_info *remote_map) {
   return 0;
 }
 
-#if defined(__aarch64__)
-  #define TARGET_JUMP_SLOT R_AARCH64_JUMP_SLOT
-#elif defined(__arm__)
-  #define TARGET_JUMP_SLOT R_ARM_JUMP_SLOT
-#endif
+#define TARGET_JUMP_SLOT R_AARCH64_JUMP_SLOT
 
-#if defined(__LP64__)
-  #define ELFW_R_TYPE(info) ELF64_R_TYPE(info)
-  #define ELFW_R_SYM(info)  ELF64_R_SYM(info)
-  #define EXPECTED_ELFCLASS ELFCLASS64
-#else
-  #define ELFW_R_TYPE(info) ELF32_R_TYPE(info)
-  #define ELFW_R_SYM(info)  ELF32_R_SYM(info)
-  #define EXPECTED_ELFCLASS ELFCLASS32
-#endif
+#define ELFW_R_TYPE(info) ELF64_R_TYPE(info)
+#define ELFW_R_SYM(info)  ELF64_R_SYM(info)
+#define EXPECTED_ELFCLASS ELFCLASS64
 
 bool elf_vaddr_to_off(const ElfW(Phdr) *phdr, int phnum, ElfW(Addr) vaddr, off_t *out_off) {
   for (int i = 0; i < phnum; i++) {
@@ -674,9 +604,7 @@ bool ptrace_poke_uintptr(pid_t pid, uintptr_t addr, uintptr_t value) {
   return true;
 }
 
-#ifdef __aarch64__
-  #define AARCH64_PSTATE_BTYPE_MASK (3ull << 10)
-#endif
+#define AARCH64_PSTATE_BTYPE_MASK (3ull << 10)
 
 bool wait_for_ptrace_syscall_stop(int pid, int *status) {
   int step_retries = 0;
@@ -748,38 +676,17 @@ long remote_syscall(int pid, struct user_regs_struct *regs, uintptr_t syscall_ga
   }
 
   /* Use *regs as scratch for syscall setup */
-  #if defined(__aarch64__)
-    /* x8 = syscall number, x0-x5 = args */
-    regs->regs[8] = sysnr;
-    for (size_t i = 0; i < 6; i++) {
-      regs->regs[i] = 0;
-    }
-    for (size_t i = 0; i < args_size && i < 6; i++) {
-      regs->regs[i] = args[i];
-    }
-    regs->REG_IP = syscall_gadget;
-    /* INFO: BTYPE so stepping the aarch64 vDSO svc will be accepted by the CPU */
-    regs->pstate &= ~AARCH64_PSTATE_BTYPE_MASK;
-  #elif defined(__arm__)
-    /* r7 = syscall number, r0-r5 = args */
-    regs->uregs[7] = sysnr;
-    for (size_t i = 0; i < 6; i++) {
-      regs->uregs[i] = 0;
-    }
-    for (size_t i = 0; i < args_size && i < 6; i++) {
-      regs->uregs[i] = args[i];
-    }
-    regs->REG_IP = syscall_gadget;
-
-    /* INFO: Handle Thumb mode */
-    unsigned long CPSR_T_MASK = 1lu << 5;
-    if ((syscall_gadget & 1) != 0) {
-      regs->REG_IP = syscall_gadget & ~1;
-      regs->uregs[16] |= CPSR_T_MASK;
-    } else {
-      regs->uregs[16] &= ~CPSR_T_MASK;
-    }
-  #endif
+  /* x8 = syscall number, x0-x5 = args */
+  regs->regs[8] = sysnr;
+  for (size_t i = 0; i < 6; i++) {
+    regs->regs[i] = 0;
+  }
+  for (size_t i = 0; i < args_size && i < 6; i++) {
+    regs->regs[i] = args[i];
+  }
+  regs->REG_IP = syscall_gadget;
+  /* INFO: BTYPE so stepping the aarch64 vDSO svc will be accepted by the CPU */
+  regs->pstate &= ~AARCH64_PSTATE_BTYPE_MASK;
 
   if (!set_regs(pid, regs)) {
     LOGE("Failed to set regs for syscall");
@@ -838,16 +745,12 @@ bool tracee_skip_syscall(int pid) {
   }
 
   /* INFO: Best effort — it might not work, don't fail for the SETREGSET */
-  #if defined(__aarch64__)
-    int sysnr = -1;
-    struct iovec iov = {
-      .iov_base = &sysnr,
-      .iov_len = sizeof(int),
-    };
-    ptrace(PTRACE_SETREGSET, pid, NT_ARM_SYSTEM_CALL, &iov);
-  #elif defined(__arm__)
-    ptrace(PTRACE_SET_SYSCALL, pid, 0, (void *) -1);
-  #endif
+  int sysnr = -1;
+  struct iovec iov = {
+    .iov_base = &sysnr,
+    .iov_len = sizeof(int),
+  };
+  ptrace(PTRACE_SETREGSET, pid, NT_ARM_SYSTEM_CALL, &iov);
 
   return true;
 }

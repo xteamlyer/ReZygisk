@@ -139,10 +139,7 @@ INJECTOR_CXX_OBJS = $(patsubst src/injector/%.cpp,$(OBJ_DIR)/injector/%.o,$(INJE
 
 .PHONY: all arch clean
 
-all:
-	@for arch in $(ARCHS); do                                                                                  \
-		$(MAKE) BUILD_TYPE=$(BUILD_TYPE) BUILD_DIR=$(BUILD_DIR) ARCH=$$arch ZKSU_VERSION=$(ZKSU_VERSION) arch; \
-	done
+all: arch
 
 arch: $(LIBZYGISK_STRIPPED) $(LIBPTRACE_STRIPPED)
 

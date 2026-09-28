@@ -17,7 +17,7 @@
 #include <sys/syscall.h>
 
 #undef SYS_mmap
-#define SYS_mmap LP_SELECT(__NR_mmap2, __NR_mmap)
+#define SYS_mmap __NR_mmap
 
 #include "socket_utils.h"
 
@@ -42,17 +42,6 @@ static uintptr_t page_end(uintptr_t addr, size_t page_size) {
    GNU hash chain walk, for one, would spin on them forever. */
 static bool read_exact_offset(int fd, void *buf, size_t len, off_t off) {
   return read_loop_offset(fd, buf, len, off) == (ssize_t)len;
-}
-
-static long remote_mmap_offset_arg(off_t file_offset, size_t page_size) {
-  /* INFO: mmap2 needs the offset in page units, unlike mmap */
-  #ifdef __LP64__
-    (void) page_size;
-
-    return file_offset;
-  #else
-    return (long)(file_offset / (off_t)page_size);
-  #endif
 }
 
 /* INFO: Parse ELF headers and compute the total mapping size for PT_LOAD segments. */
@@ -419,13 +408,8 @@ static bool find_dynsym_value(int fd, const struct elf_dyn_info *info, const cha
   return false;
 }
 
-#ifdef __LP64__
-  #define ELF_R_TYPE ELF64_R_TYPE
-  #define ELF_R_SYM ELF64_R_SYM
-#else
-  #define ELF_R_TYPE ELF32_R_TYPE
-  #define ELF_R_SYM ELF32_R_SYM
-#endif
+#define ELF_R_TYPE ELF64_R_TYPE
+#define ELF_R_SYM ELF64_R_SYM
 
 /* INFO: Resolve a symbol address - either local or from DT_NEEDED libraries. */
 static bool resolve_symbol_addr(int fd, const struct elf_dyn_info *info,
@@ -482,7 +466,7 @@ static bool resolve_symbol_addr(int fd, const struct elf_dyn_info *info,
     LOGD("Trying to resolve %s from main executable as: %s", name, linker_dl_symbol);
 
     /* INFO: Special-case dlsym since some old devices don't have libdl.so loaded to resolve it from. */
-    void *addr = find_func_addr(local_map, remote_map, "/system/bin/" LP_SELECT("linker", "linker64"), linker_dl_symbol);
+    void *addr = find_func_addr(local_map, remote_map, "/system/bin/linker64", linker_dl_symbol);
     if (addr) {
       *out_addr = (uintptr_t)addr;
 
@@ -497,10 +481,6 @@ static bool resolve_symbol_addr(int fd, const struct elf_dyn_info *info,
 
 static bool write_remote_addr(int pid, uintptr_t addr, ElfW(Addr) value) {
   return write_proc(pid, addr, &value, sizeof(value)) == (ssize_t)sizeof(value);
-}
-
-static bool read_remote_addr(int pid, uintptr_t addr, ElfW(Addr) *out) {
-  return read_proc(pid, addr, out, sizeof(*out)) == (ssize_t)sizeof(*out);
 }
 
 /* INFO: Process RELA-format relocations from a given offset/size. */
@@ -519,30 +499,19 @@ static bool apply_rela_section(int pid, int fd, const struct elf_dyn_info *info,
     uintptr_t target = (uintptr_t)load_bias + (uintptr_t)r.r_offset;
     ElfW(Addr) value = 0;
 
-    #if defined(__aarch64__)
-      if (type == R_AARCH64_RELATIVE) {
-        value = (ElfW(Addr))load_bias + (ElfW(Addr))r.r_addend;
-      } else if (type == R_AARCH64_GLOB_DAT || type == R_AARCH64_JUMP_SLOT || type == R_AARCH64_ABS64) {
-        uintptr_t sym_addr = 0;
-        if (!resolve_symbol_addr(fd, info, local_map, remote_map, needed_paths, load_bias, sym, &sym_addr))
-          return false;
-
-        value = sym_addr ? (ElfW(Addr))sym_addr + (ElfW(Addr))r.r_addend : 0;
-      } else {
-        LOGE("Unsupported AArch64 RELA type %u", type);
-
+    if (type == R_AARCH64_RELATIVE) {
+      value = (ElfW(Addr))load_bias + (ElfW(Addr))r.r_addend;
+    } else if (type == R_AARCH64_GLOB_DAT || type == R_AARCH64_JUMP_SLOT || type == R_AARCH64_ABS64) {
+      uintptr_t sym_addr = 0;
+      if (!resolve_symbol_addr(fd, info, local_map, remote_map, needed_paths, load_bias, sym, &sym_addr))
         return false;
-      }
-    #else
-      (void) info; (void) local_map; (void) remote_map; (void) sym; (void) type; (void) needed_paths;
 
-      if (type == 0) value = (ElfW(Addr))load_bias + (ElfW(Addr))r.r_addend;
-      else {
-        LOGE("Unsupported RELA type %u", type);
+      value = sym_addr ? (ElfW(Addr))sym_addr + (ElfW(Addr))r.r_addend : 0;
+    } else {
+      LOGE("Unsupported AArch64 RELA type %u", type);
 
-        return false;
-      }
-    #endif
+      return false;
+    }
 
     if (!write_remote_addr(pid, target, value)) return false;
   }
@@ -550,81 +519,22 @@ static bool apply_rela_section(int pid, int fd, const struct elf_dyn_info *info,
   return true;
 }
 
-/* INFO: Process REL-format relocations from a given offset/size. */
+/* INFO: Process REL-format relocations from a given offset/size.
+
+         aarch64 ELFs carry RELA, never REL, so a library this tracer can
+         inject into never brings one through here. It refuses rather than
+         guessing: a value worked out for a format the target does not use
+         would be worse than failing the load. */
 static bool apply_rel_section(int pid, int fd, const struct elf_dyn_info *info,
                               struct maps_info *local_map, struct maps_info *remote_map,
                               const char *const *needed_paths, uintptr_t load_bias,
                               off_t rel_off, size_t rel_sz) {
-  size_t count = rel_sz / sizeof(ElfW(Rel));
+  (void) pid; (void) fd; (void) info; (void) local_map; (void) remote_map;
+  (void) needed_paths; (void) load_bias; (void) rel_off; (void) rel_sz;
 
-  for (size_t i = 0; i < count; i++) {
-    ElfW(Rel) r;
-    if (!read_exact_offset(fd, &r, sizeof(r), rel_off + (off_t)(i * sizeof(r)))) return false;
+  LOGE("Unsupported REL relocation on this arch");
 
-    unsigned type = (unsigned)ELF_R_TYPE(r.r_info);
-    unsigned sym = (unsigned)ELF_R_SYM(r.r_info);
-    uintptr_t target = (uintptr_t)load_bias + (uintptr_t)r.r_offset;
-    ElfW(Addr) addend = 0;
-    ElfW(Addr) value = 0;
-
-    #if defined(__arm__)
-      if (type == R_ARM_RELATIVE) {
-        if (!read_remote_addr(pid, target, &addend)) return false;
-
-        value = (ElfW(Addr))load_bias + addend;
-      } else if (type == R_ARM_GLOB_DAT || type == R_ARM_JUMP_SLOT || type == R_ARM_ABS32) {
-        uintptr_t sym_addr = 0;
-        if (!resolve_symbol_addr(fd, info, local_map, remote_map, needed_paths, load_bias, sym, &sym_addr))
-          return false;
-
-        if (sym_addr == 0) value = 0;
-        else if (type == R_ARM_ABS32) {
-          if (!read_remote_addr(pid, target, &addend)) return false;
-
-          value = (ElfW(Addr))sym_addr + addend;
-        } else {
-          value = (ElfW(Addr))sym_addr;
-        }
-      } else {
-        LOGE("Unsupported ARM REL type %u", type);
-
-        return false;
-      }
-    #elif defined(__i386__)
-      if (type == R_386_RELATIVE) {
-        if (!read_remote_addr(pid, target, &addend)) return false;
-
-        value = (ElfW(Addr))load_bias + addend;
-      } else if (type == R_386_GLOB_DAT || type == R_386_JMP_SLOT || type == R_386_32) {
-        uintptr_t sym_addr = 0;
-        if (!resolve_symbol_addr(fd, info, local_map, remote_map, needed_paths, load_bias, sym, &sym_addr))
-          return false;
-
-        if (sym_addr == 0) value = 0;
-        else if (type == R_386_32) {
-          if (!read_remote_addr(pid, target, &addend)) return false;
-
-          value = (ElfW(Addr))sym_addr + addend;
-        } else {
-          value = (ElfW(Addr))sym_addr;
-        }
-      } else {
-        LOGE("Unsupported i386 REL type %u", type);
-
-        return false;
-      }
-    #else
-      (void) info; (void) local_map; (void) remote_map; (void) sym; (void) type; (void) needed_paths; (void) addend; (void) read_remote_addr; (void) target;
-
-      LOGE("Unsupported REL relocation on this arch");
-
-      return false;
-    #endif
-
-    if (!write_remote_addr(pid, target, value)) return false;
-  }
-
-  return true;
+  return false;
 }
 
 static bool apply_relocations(int pid, int fd, const struct elf_dyn_info *info,
@@ -777,13 +687,11 @@ bool remote_csoloader_load_and_resolve_entry(int pid, struct user_regs_struct *r
     goto cleanup;
   }
 
-#ifdef __LP64__
   if (remote_base < min_addr) {
     LOGE("remote mmap reserve returned low base %p (< %p)", (void *)remote_base, (void *)min_addr);
 
     goto cleanup;
   }
-#endif
 
   load_bias = remote_base - (uintptr_t)min_vaddr;
 
@@ -822,7 +730,7 @@ bool remote_csoloader_load_and_resolve_entry(int pid, struct user_regs_struct *r
       args[2] = PROT_READ | PROT_WRITE;
       args[3] = MAP_FIXED | MAP_PRIVATE;
       args[4] = remote_fd;
-      args[5] = remote_mmap_offset_arg(file_page_offset, page_size);
+      args[5] = (long)file_page_offset;
 
       uintptr_t seg_map = (uintptr_t)remote_syscall(pid, regs, syscall_gadget, SYS_mmap, args, 6);
       if (!seg_map || seg_map == (uintptr_t)MAP_FAILED) {

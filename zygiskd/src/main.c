@@ -20,7 +20,7 @@ int main(int argc, char *argv[]) {
     /* INFO: Keep the inherited stdout; logd output is unaffected. */
   }
 
-  LOGI("Welcome to VexZygiskd%s", LP_SELECT("32", "64"));
+  LOGI("Welcome to VexZygiskd");
 
   if (argc > 1) {
     if (strcmp(argv[1], "companion") == 0) {

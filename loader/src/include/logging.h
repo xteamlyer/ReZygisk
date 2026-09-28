@@ -9,7 +9,7 @@
 #include "misc.h"
 
 #ifndef LOG_TAG
-  #define LOG_TAG "zygisk-core" LP_SELECT("32", "64")
+  #define LOG_TAG "zygisk-core"
 #endif
 
 /* INFO: Release builds are completely silent — every level compiles away

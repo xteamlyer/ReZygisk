@@ -11,7 +11,7 @@
 #include <elf.h>
 #include <unistd.h>
 
-#define LOG_TAG "zygisk-injector" LP_SELECT("32", "64")
+#define LOG_TAG "zygisk-injector"
 
 #include "misc.h"
 #include "utils.h"
@@ -19,13 +19,12 @@
 
 #include "remote_csoloader.h"
 
-bool inject_on_main(int pid, const char *lib_path, uintptr_t libc_init_target, uintptr_t libc_init_got_slot, bool is_tango) {
+bool inject_on_main(int pid, const char *lib_path, uintptr_t libc_init_target, uintptr_t libc_init_got_slot) {
   LOGI("injecting %s to zygote %d via GOT hook", lib_path, pid);
 
   /* INFO: The GOT slot is poisoned with a guaranteed-unmapped address so the
-            call to __libc_init faults and the tracer picks the process up;
-            bit 0 is preserved for the Thumb bit on 32-bit ARM. */
-  uintptr_t break_addr = (uintptr_t)-16 | (libc_init_target & 1);
+            call to __libc_init faults and the tracer picks the process up. */
+  uintptr_t break_addr = (uintptr_t)-16;
   if (!ptrace_poke_uintptr(pid, libc_init_got_slot, break_addr)) {
     LOGE("Failed to patch GOT slot with break_addr");
 
@@ -102,19 +101,13 @@ bool inject_on_main(int pid, const char *lib_path, uintptr_t libc_init_target, u
   free_maps(local_map);
   free_maps(map);
 
-  long args[3] = {
+  long args[2] = {
     (long)remote_base,
-    (long)remote_size,
-    is_tango ? 1 : 0
+    (long)remote_size
   };
-  remote_call(pid, &regs, injector_entry, (uintptr_t)libc_return_addr, args, 3);
+  remote_call(pid, &regs, injector_entry, (uintptr_t)libc_return_addr, args, 2);
 
-  bool injector_ok = false;
-  #if defined(__arm__)
-    injector_ok = (((uintptr_t)regs.REG_IP & ~1u) == ((uintptr_t)libc_return_addr & ~1u));
-  #else
-    injector_ok = ((uintptr_t)regs.REG_IP == (uintptr_t)libc_return_addr);
-  #endif
+  bool injector_ok = ((uintptr_t)regs.REG_IP == (uintptr_t)libc_return_addr);
 
   if (!injector_ok) {
     LOGE("injector entry faulted at %p", (void *)regs.REG_IP);
@@ -141,7 +134,7 @@ bool inject_on_main(int pid, const char *lib_path, uintptr_t libc_init_target, u
     return false;                             \
   }
 
-bool trace_zygote(int pid, bool tango_flag) {
+bool trace_zygote(int pid) {
   LOGI("start tracing %d (tracer %d)", pid, getpid());
 
   int status = 0;
@@ -186,8 +179,8 @@ bool trace_zygote(int pid, bool tango_flag) {
   int stop_event = (int)((unsigned int)status >> 16);
   if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGSTOP &&
       (stop_event == PTRACE_EVENT_STOP || stop_event == 0)) {
-    char *lib_path = ZYGISK_MODULE_DIR "/lib" LP_SELECT("", "64") "/libzygisk.so";
-    if (!inject_on_main(pid, lib_path, libc_init_resolved, libc_init_got_slot, tango_flag)) {
+    char *lib_path = ZYGISK_MODULE_DIR "/lib64/libzygisk.so";
+    if (!inject_on_main(pid, lib_path, libc_init_resolved, libc_init_got_slot)) {
       LOGE("failed to inject");
 
       return false;

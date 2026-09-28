@@ -11,11 +11,7 @@
 
 #include "cpp_strings.h"
 
-#ifdef __LP64__
-  #define LONG_DATA_OFFSET 16
-#else
-  #define LONG_DATA_OFFSET 8
-#endif
+#define LONG_DATA_OFFSET 16
 
 /* INFO: In libc++ little-endian: LSB of first byte = 0 means short mode */
 static inline bool is_short_string(const unsigned char *bytes) {

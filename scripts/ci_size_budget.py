@@ -19,17 +19,11 @@ import sys
 
 BUDGET_KIB = {
     "build/obj/release/loader/arm64-v8a/stripped/libzygisk.so": 430,
-    "build/obj/release/loader/armeabi-v7a/stripped/libzygisk.so": 330,
     "build/obj/release/loader/arm64-v8a/stripped/libzygisk_ptrace.so": 100,
-    "build/obj/release/loader/armeabi-v7a/stripped/libzygisk_ptrace.so": 100,
     "build/obj/release/zygiskd/arm64-v8a/zygiskd": 56,
-    "build/obj/release/zygiskd/armeabi-v7a/zygiskd": 52,
     "build-apatch/obj/release/loader/arm64-v8a/stripped/libzygisk.so": 430,
-    "build-apatch/obj/release/loader/armeabi-v7a/stripped/libzygisk.so": 330,
     "build-apatch/obj/release/loader/arm64-v8a/stripped/libzygisk_ptrace.so": 100,
-    "build-apatch/obj/release/loader/armeabi-v7a/stripped/libzygisk_ptrace.so": 100,
     "build-apatch/obj/release/zygiskd/arm64-v8a/zygiskd": 60,
-    "build-apatch/obj/release/zygiskd/armeabi-v7a/zygiskd": 56,
 }
 
 
