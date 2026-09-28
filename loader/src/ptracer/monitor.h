@@ -5,7 +5,7 @@
 
 void init_monitor();
 
-bool trace_zygote(int pid, bool is_tango);
+bool trace_zygote(int pid);
 
 enum rezygiskd_command {
   START = 1,

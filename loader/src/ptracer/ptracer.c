@@ -19,7 +19,7 @@
 
 #include "remote_csoloader.h"
 
-bool inject_on_main(int pid, const char *lib_path, uintptr_t libc_init_target, uintptr_t libc_init_got_slot, bool is_tango) {
+bool inject_on_main(int pid, const char *lib_path, uintptr_t libc_init_target, uintptr_t libc_init_got_slot) {
   LOGI("injecting %s to zygote %d via GOT hook", lib_path, pid);
 
   /* INFO: The GOT slot is poisoned with a guaranteed-unmapped address so the
@@ -101,12 +101,11 @@ bool inject_on_main(int pid, const char *lib_path, uintptr_t libc_init_target, u
   free_maps(local_map);
   free_maps(map);
 
-  long args[3] = {
+  long args[2] = {
     (long)remote_base,
-    (long)remote_size,
-    is_tango ? 1 : 0
+    (long)remote_size
   };
-  remote_call(pid, &regs, injector_entry, (uintptr_t)libc_return_addr, args, 3);
+  remote_call(pid, &regs, injector_entry, (uintptr_t)libc_return_addr, args, 2);
 
   bool injector_ok = ((uintptr_t)regs.REG_IP == (uintptr_t)libc_return_addr);
 
@@ -135,7 +134,7 @@ bool inject_on_main(int pid, const char *lib_path, uintptr_t libc_init_target, u
     return false;                             \
   }
 
-bool trace_zygote(int pid, bool tango_flag) {
+bool trace_zygote(int pid) {
   LOGI("start tracing %d (tracer %d)", pid, getpid());
 
   int status = 0;
@@ -181,7 +180,7 @@ bool trace_zygote(int pid, bool tango_flag) {
   if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGSTOP &&
       (stop_event == PTRACE_EVENT_STOP || stop_event == 0)) {
     char *lib_path = ZYGISK_MODULE_DIR "/lib64/libzygisk.so";
-    if (!inject_on_main(pid, lib_path, libc_init_resolved, libc_init_got_slot, tango_flag)) {
+    if (!inject_on_main(pid, lib_path, libc_init_resolved, libc_init_got_slot)) {
       LOGE("failed to inject");
 
       return false;

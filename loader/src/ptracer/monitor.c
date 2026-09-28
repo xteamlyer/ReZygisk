@@ -578,7 +578,7 @@ static bool match_target(const char *program, const char **tracer, bool *is_spaw
          SIGSTOP is what lets a fresh tracer seize a process that is already
          past its exec, which is how the fork path and the claim below reach
          the same starting state. */
-static void launch_tracer(pid_t pid, const char *tracer, bool is_tango, bool is_spawner) {
+static void launch_tracer(pid_t pid, const char *tracer, bool is_spawner) {
   LOGD("Detaching %d", pid);
   ptrace(PTRACE_DETACH, pid, 0, SIGSTOP);
 
@@ -588,9 +588,8 @@ static void launch_tracer(pid_t pid, const char *tracer, bool is_tango, bool is_
     char pid_str[32];
     snprintf(pid_str, sizeof(pid_str), "%d", pid);
 
-    LOGI("exec tracer command: %s trace %s%s%s", tracer, pid_str,
-         (count_zygote > 1 && !is_spawner) ? " --restart" : "",
-         is_tango ? " --tango" : "");
+    LOGI("exec tracer command: %s trace %s%s", tracer, pid_str,
+         (count_zygote > 1 && !is_spawner) ? " --restart" : "");
 
     const char *tracer_name = position_after(tracer, '/');
 
@@ -605,7 +604,6 @@ static void launch_tracer(pid_t pid, const char *tracer, bool is_tango, bool is_
               the apps the spawner already forked are left talking
               to nothing. */
     if (count_zygote > 1 && !is_spawner) exec_argv[exec_argc++] = "--restart";
-    if (is_tango) exec_argv[exec_argc++] = "--tango";
     exec_argv[exec_argc] = NULL;
 
     execv(tracer, exec_argv);
@@ -651,10 +649,9 @@ static void claim_running_targets(void) {
     if (get_program((int)pid_value, program, sizeof(program)) == -1) continue;
 
     const char *tracer = NULL;
-    bool is_tango = false;
     bool is_spawner = false;
 
-    if (!match_target(program, &tracer, &is_tango, &is_spawner)) continue;
+    if (!match_target(program, &tracer, &is_spawner)) continue;
 
     /* INFO: The zygote crash accounting is about restarts: these processes
               were started before this monitor existed, so none of them is a
@@ -689,7 +686,7 @@ static void claim_running_targets(void) {
       continue;
     }
 
-    launch_tracer((pid_t)pid_value, tracer, is_tango, is_spawner);
+    launch_tracer((pid_t)pid_value, tracer, is_spawner);
   }
 
   closedir(proc);
@@ -841,7 +838,6 @@ void sigchld_listener_callback() {
           LOGV("%d program %s", pid, program);
 
           const char *tracer = NULL;
-          bool is_tango = false;
           bool is_spawner = false;
 
           do {
@@ -851,7 +847,7 @@ void sigchld_listener_callback() {
               break;
             }
 
-            if (!match_target(program, &tracer, &is_tango, &is_spawner)) break;
+            if (!match_target(program, &tracer, &is_spawner)) break;
 
             /* INFO: Crash-loop accounting and daemon creation are zygote
                      matters. The spawner has its own lifecycle and execs on
@@ -861,7 +857,7 @@ void sigchld_listener_callback() {
                      what the zygote injection already did. */
             if (!is_spawner) {
               if (should_stop_inject()) {
-                LOGW("%s restart too many times, stop injecting", is_tango ? "Tango" : "Zygote" MONITOR_ABI);
+                LOGW("Zygote" MONITOR_ABI " restart too many times, stop injecting");
 
                 tracing_state = STOPPING;
                 monitor_stop_reason = "Zygote crashed";
@@ -881,7 +877,7 @@ void sigchld_listener_callback() {
               }
             }
 
-            LOGD("Stopping %d (program: %s, tracer: %s, tango: %s)", pid, program, tracer, is_tango ? "yes" : "no");
+            LOGD("Stopping %d (program: %s, tracer: %s)", pid, program, tracer);
 
             kill(pid, SIGSTOP);
             ptrace(PTRACE_CONT, pid, 0, 0);
@@ -899,7 +895,7 @@ void sigchld_listener_callback() {
 
             sigchld_status = 0;
 
-            launch_tracer(pid, tracer, is_tango, is_spawner);
+            launch_tracer(pid, tracer, is_spawner);
           } while (false);
         } else {
           char status_str[64];
