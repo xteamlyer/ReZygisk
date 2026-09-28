@@ -164,11 +164,10 @@ static size_t ap_read_package_config(struct ap_package_entry *out, size_t max_ro
          fork off zygote. The parsed rows are cached and the cache is
          invalidated on the file's stat identity, so a grant takes effect as
          soon as APatch rewrites the config (which lands on a fresh inode via
-         tmp + rename). The stat of the parsed file is kept as-is and compared
-         field by field in its own types: 32-bit bionic's struct stat carries
-         64-bit fields while dev_t/ino_t/off_t stay 32-bit, so copying into
-         separate members would truncate. The daemon serves one request at a
-         time, so the cache needs no lock. */
+         tmp + rename). The stat of the parsed file is kept as the call returned
+         it and compared field by field, so no field is read back through a
+         narrower type than the one it was stored as. The daemon serves one
+         request at a time, so the cache needs no lock. */
 struct ap_config_cache {
   bool valid;
   struct stat stat;

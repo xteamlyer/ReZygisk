@@ -957,10 +957,6 @@ static ElfW(Addr) handle_indirect_symbol(ElfImg *img, ElfW(Off) offset) {
     };
 
     return ((ifunc_resolver_t)resolver_addr)(args._hwcap | _IFUNC_ARG_HWCAP, &args);
-  #elif defined(__arm__)
-      typedef ElfW(Addr) (*ifunc_resolver_t)(unsigned long);
-
-      return ((ifunc_resolver_t)resolver_addr)(getauxval(AT_HWCAP));
   #elif defined(__riscv)
     typedef ElfW(Addr) (*ifunc_resolver_t)(uint64_t, __riscv_hwprobe_t, void *);
 

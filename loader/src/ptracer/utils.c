@@ -604,9 +604,7 @@ bool ptrace_poke_uintptr(pid_t pid, uintptr_t addr, uintptr_t value) {
   return true;
 }
 
-#ifdef __aarch64__
-  #define AARCH64_PSTATE_BTYPE_MASK (3ull << 10)
-#endif
+#define AARCH64_PSTATE_BTYPE_MASK (3ull << 10)
 
 bool wait_for_ptrace_syscall_stop(int pid, int *status) {
   int step_retries = 0;
