@@ -34,7 +34,15 @@ if [ "$ARCH" = "x86" ] || [ "$ARCH" = "x64" ]; then
   abort "! x86 / x86_64 devices are not supported by VexZygisk"
 fi
 
-if [ "$ARCH" != "arm" ] && [ "$ARCH" != "arm64" ]; then
+# INFO: 32-bit builds are gone. A 64-bit device never had its secondary
+#         32-bit Zygote injected - the monitor skips it on purpose - so
+#         dropping them costs nothing there, and a 32-bit device would be
+#         left with nothing to install.
+if [ "$ARCH" = "arm" ]; then
+  abort "! 32-bit devices are not supported by VexZygisk"
+fi
+
+if [ "$ARCH" != "arm64" ]; then
   abort "! Unsupported platform: $ARCH"
 fi
 
@@ -57,11 +65,11 @@ extract "$ZIPFILE" 'sepolicy.rule' "$TMPDIR"
 #         module.prop on every status change, and a write landing while this
 #         installer is replacing the file can leave a half-read copy behind.
 if [ "$BOOTMODE" ]; then
-  for tracer in     /data/adb/modules/rezygisk/bin/zygisk-ptrace64     /data/adb/modules/rezygisk/bin/zygisk-ptrace32; do
+  for tracer in /data/adb/modules/rezygisk/bin/zygisk-ptrace64; do
     [ -f "$tracer" ] && "$tracer" ctl exit >/dev/null 2>&1
   done
 
-  killall -9 zygisk-ptrace64 zygisk-ptrace32 >/dev/null 2>&1 || true
+  killall -9 zygisk-ptrace64 >/dev/null 2>&1 || true
 fi
 
 ui_print "- Extracting module files"
@@ -96,34 +104,15 @@ chmod +x "$MODPATH/uninstall.sh"
 
 mkdir "$MODPATH/bin"
 
-case "$ARCH" in
-  arm)
-    ARCH_BITS=32
-    ARCH_LIB_DIR=lib
-    ARCH_ABI=armeabi-v7a
-    ;;
-  *)
-    ARCH_BITS=64
-    ARCH_LIB_DIR=lib64
-    ARCH_ABI=arm64-v8a
-    ;;
-esac
+ui_print "- Extracting arm64-v8a libraries"
+mkdir "$MODPATH/lib64"
 
-if [ "$ARCH_BITS" = 32 ]; then
-  ui_print "- Device is 32-bit only"
-else
-  ui_print "- Device is 64-bit, 32-bit Zygote will not be injected"
-fi
-
-ui_print "- Extracting $ARCH_ABI libraries"
-mkdir "$MODPATH/$ARCH_LIB_DIR"
-
-extract "$ZIPFILE" "bin/$ARCH_ABI/zygiskd" "$MODPATH/bin" true
-mv "$MODPATH/bin/zygiskd" "$MODPATH/bin/zygiskd$ARCH_BITS"
-extract "$ZIPFILE" "lib/$ARCH_ABI/libzygisk.so" "$MODPATH/$ARCH_LIB_DIR" true
-extract "$ZIPFILE" "lib/$ARCH_ABI/libzygisk_ptrace.so" "$MODPATH/bin" true
-mv "$MODPATH/bin/libzygisk_ptrace.so" "$MODPATH/bin/zygisk-ptrace$ARCH_BITS"
+extract "$ZIPFILE" "bin/arm64-v8a/zygiskd" "$MODPATH/bin" true
+mv "$MODPATH/bin/zygiskd" "$MODPATH/bin/zygiskd64"
+extract "$ZIPFILE" "lib/arm64-v8a/libzygisk.so" "$MODPATH/lib64" true
+extract "$ZIPFILE" "lib/arm64-v8a/libzygisk_ptrace.so" "$MODPATH/bin" true
+mv "$MODPATH/bin/libzygisk_ptrace.so" "$MODPATH/bin/zygisk-ptrace64"
 
 ui_print "- Setting permissions"
 set_perm_recursive "$MODPATH/bin" 0 0 0755 0755
-set_perm_recursive "$MODPATH/$ARCH_LIB_DIR" 0 0 0755 0644 u:object_r:system_lib_file:s0
+set_perm_recursive "$MODPATH/lib64" 0 0 0755 0644 u:object_r:system_lib_file:s0

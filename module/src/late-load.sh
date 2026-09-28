@@ -23,7 +23,7 @@ set -e
 
 # INFO: The stage is run as a plain shell script with an inherited working
 #         directory, and nothing here may assume it is the module root: the
-#         monitor resolves its daemon as "./bin/zygiskd<abi>", a path relative
+#         monitor resolves its daemon as "./bin/zygiskd64", a path relative
 #         to the current directory, so the module directory has to be entered
 #         explicitly before the monitor is started. A wrong cwd makes that exec
 #         fail, which the monitor reports as "daemon not running" and reacts to
@@ -37,15 +37,7 @@ fi
 
 cd "$MODDIR"
 
-MONITOR_ABI=
-for abi in 64 32; do
-  if [ -x "$MODDIR/bin/zygisk-ptrace$abi" ]; then
-    MONITOR_ABI=$abi
-    break
-  fi
-done
-
-if [ -z "$MONITOR_ABI" ]; then
+if [ ! -x "$MODDIR/bin/zygisk-ptrace64" ]; then
   echo "VexZygisk: no monitor binary in $MODDIR/bin, nothing to start" >&2
   exit 1
 fi
@@ -57,7 +49,7 @@ fi
 #         The check is on the binary's own name rather than a pidfile, which
 #         the monitor does not keep and which every soft reboot would leave
 #         stale anyway.
-if pidof "zygisk-ptrace$MONITOR_ABI" >/dev/null 2>&1; then
+if pidof "zygisk-ptrace64" >/dev/null 2>&1; then
   echo "VexZygisk: monitor already running, leaving it alone"
   exit 0
 fi
@@ -74,6 +66,6 @@ if [ ! -d "$TMP_PATH" ]; then
 fi
 export TMP_PATH
 
-"$MODDIR/bin/zygisk-ptrace$MONITOR_ABI" monitor &
+"$MODDIR/bin/zygisk-ptrace64" monitor &
 
 exit 0

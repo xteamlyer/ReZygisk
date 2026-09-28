@@ -126,7 +126,7 @@ You can also ask the tracer directly, from a root shell:
 which prints the daemon PID, the root solution in use, and the loaded modules.
 
 > [!NOTE]
-> Only the Zygote matching the bitness of your device's primary ABI is injected. On 64-bit devices the secondary 32-bit Zygote is left untouched, as it is rarely used and injecting it brings no benefit; 32-bit only devices keep full support.
+> VexZygisk builds and injects arm64 only. On a 64-bit device the secondary 32-bit Zygote is left untouched - it is rarely used and injecting it brings no benefit - and 32-bit only devices are no longer supported.
 
 ## Building
 

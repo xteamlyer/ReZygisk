@@ -38,8 +38,6 @@ fi
 
 if [ -f "$MODDIR/bin/zygisk-ptrace64" ]; then
   "$MODDIR/bin/zygisk-ptrace64" monitor &
-elif [ -f "$MODDIR/bin/zygisk-ptrace32" ]; then
-  "$MODDIR/bin/zygisk-ptrace32" monitor &
 fi
 
 exit 0
