@@ -53,11 +53,12 @@ static void check_module_libraries(void) {
         "a module library is not hidden");
   CHECK(hides("/data/adb/modules/any_module/lib/libexample.so (deleted)", true, DATA_DEV),
         "a deleted module library is not hidden");
-  CHECK(hides("/data/local/tmp/loader.so", true, DATA_DEV),
-        "a library mapped from /data/local/tmp is not hidden");
-  CHECK(hides(ZYGISK_ZN_MEMFD, true, DATA_DEV),
+  /* INFO: The device decides a path but not the memfd, which is where a
+            Zygisk Next library has to be loaded from - there is no /data
+            device number that could ever describe it. */
+  CHECK(hides(ZYGISK_ZN_MEMFD, true, OTHER_DEV),
         "the Zygisk Next memfd is not hidden");
-  CHECK(hides(ZYGISK_ZN_MEMFD " (deleted)", true, DATA_DEV),
+  CHECK(hides(ZYGISK_ZN_MEMFD " (deleted)", true, OTHER_DEV),
         "a deleted Zygisk Next memfd is not hidden");
 }
 
@@ -67,6 +68,9 @@ static void check_everything_else(void) {
   CHECK(!hides(NULL, true, DATA_DEV), "an anonymous map is hidden");
   CHECK(!hides("/system/lib64/libc.so", true, DATA_DEV), "a system library is hidden");
   CHECK(!hides("/memfd:/boot-image-methods.art", true, DATA_DEV), "the ART image is hidden");
+  CHECK(!hides(ZYGISK_ZN_MEMFD, false, DATA_DEV), "a shared Zygisk Next memfd is hidden");
+  CHECK(!hides("/data/local/tmp/loader.so", true, DATA_DEV),
+        "a library mapped from /data/local/tmp is hidden");
   CHECK(!hides("/data/adb/modules/any_module/lib/libexample.so", false, DATA_DEV),
         "a shared map is hidden");
   CHECK(!hides(ZYGISK_MODULE_DIR "/lib/libzygisk.so", true, DATA_DEV),

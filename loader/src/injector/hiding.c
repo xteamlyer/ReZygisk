@@ -11,17 +11,22 @@
 #include "misc.h"
 #include "zygisk_paths.h"
 
-/* INFO: Prefixes rather than whole paths: a file deleted after it was mapped
+/* INFO: A prefix rather than a whole path: a file deleted after it was mapped
          keeps its name and only gains a " (deleted)" suffix, and which module
          owns a library makes no difference to whether it is a trace. */
 #define ADB_PREFIX "/data/adb/"
-#define TMP_PREFIX "/data/local/tmp/"
 
 /* INFO: What a hidden process has to stop naming in its own maps.
 
-         The device matters: a matching path is only a module library while it
-         sits on /data, and a bind mount or an sdcard can put the same names
-         on another device, where they are not ours to replace.
+         The device decides a path: a module library only counts while it sits
+         on /data, and a bind mount or an sdcard can put the same names on
+         another device, where they are not ours to replace.
+
+         The memfd is the exception, and it is checked first. A Zygisk Next
+         library is copied into one to be dlopen'd at all, and a memfd is on no
+         filesystem this process could hold a device number for - so the name
+         is the whole of what identifies it, and it is one only this loader
+         creates.
 
          Shared mappings are left alone. They are how a process reaches ashmem
          and the ART images, and turning one into a private copy would leave
@@ -37,14 +42,13 @@ static bool is_module_map(const struct map_entry *map, dev_t data_dev) {
 
   if (!map->is_private) return false;
 
+  if (strncmp(path, ZYGISK_ZN_MEMFD, sizeof(ZYGISK_ZN_MEMFD) - 1) == 0) return true;
+
   if (map->dev != data_dev) return false;
 
   if (strncmp(path, ZYGISK_MODULE_DIR "/", sizeof(ZYGISK_MODULE_DIR "/") - 1) == 0) return false;
 
-  if (strncmp(path, ADB_PREFIX, sizeof(ADB_PREFIX) - 1) == 0) return true;
-  if (strncmp(path, TMP_PREFIX, sizeof(TMP_PREFIX) - 1) == 0) return true;
-
-  return strncmp(path, ZYGISK_ZN_MEMFD, sizeof(ZYGISK_ZN_MEMFD) - 1) == 0;
+  return strncmp(path, ADB_PREFIX, sizeof(ADB_PREFIX) - 1) == 0;
 }
 
 /* INFO: A module library that is still mapped - every one the loader abandons
