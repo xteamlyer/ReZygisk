@@ -20,16 +20,24 @@ ZIP_FILE = $(ZIP_DIR)/$(ZIP_NAME)
 #       module files drop the KernelSU-only managedFeatures flag, rewrite the
 #       update entry to the APatch channel, and leave out the post-mount.d
 #       cleanup.
+#
+#       late-load.sh is per-flavour too: it is the stage a late-loaded
+#       KernelSU runs, and the APatch installer neither extracts it nor has a
+#       stage to install it into. Shipping it there leaves a script in the
+#       archive that nothing can ever run.
+SHARED_SCRIPTS = module/src/verify.sh module/src/rezygisk.sh
 ifeq ($(ROOT_IMPL),apatch)
 	SEPOLICY_SRC = module/src/apatch/sepolicy.rule
 	CUSTOMIZE_SRC = module/src/apatch/customize.sh
 	MODULE_PROP_SRC = module/src/apatch/module.prop
 	UNINSTALL_SRC = module/src/apatch/uninstall.sh
+	MODULE_SCRIPTS = $(SHARED_SCRIPTS)
 else
 	SEPOLICY_SRC = module/src/sepolicy.rule
 	CUSTOMIZE_SRC = module/src/customize.sh
 	MODULE_PROP_SRC = module/src/module.prop
 	UNINSTALL_SRC = module/src/uninstall.sh
+	MODULE_SCRIPTS = $(SHARED_SCRIPTS) module/src/late-load.sh
 endif
 
 ifeq ($(TERMUX_VERSION),)
@@ -100,7 +108,7 @@ $(MODULE_DONE): $(LOADER_DONE) $(ZYGISKD_DONE) $(MODULE_INPUTS)
 	@mkdir -p $(MODULE_OUT)
 
 	@echo "Copying module files..."
-	@cp module/src/verify.sh module/src/rezygisk.sh module/src/late-load.sh $(MODULE_OUT)/
+	@cp $(MODULE_SCRIPTS) $(MODULE_OUT)/
 	@cp $(SEPOLICY_SRC) $(MODULE_OUT)/sepolicy.rule
 
 	@echo "Customizing module.prop..."
