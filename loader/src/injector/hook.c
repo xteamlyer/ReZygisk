@@ -22,6 +22,7 @@
 #include <plti.h>
 
 #include "daemon.h"
+#include "hiding.h"
 #include "misc.h"
 #include "module.h"
 
@@ -1258,6 +1259,23 @@ static void rz_app_specialize_pre(struct zygisk_context *ctx) {
 
 static void rz_app_specialize_post(struct zygisk_context *ctx) {
   rz_run_modules_post(ctx);
+
+  /* INFO: Neither is a mount, so neither is reachable from the revert, and
+            both are only final once the modules have run: the libraries they
+            left mapped are known by then, and the mount table this process
+            hands to the application is already the cleaned one.
+
+            The condition is the revert flag and not the denylist bit: a module
+            can ask for the same revert on a process the denylist does not
+            name, and leaving that process's libraries and mount line behind
+            would be half a hide - a clearer signal than either state alone. */
+  if (FLAG_GET(ctx, DO_REVERT_UNMOUNT)) {
+    refresh_mount_line();
+
+    /* INFO: Nothing was loaded into this process, so the scan could only come
+              back empty and it is the whole cost of asking. */
+    if (zygisk_module_length > 0 || zn_loaded_library_count() > 0) hide_module_maps();
+  }
 
   /* INFO: HyperOS runtime dispatch. Modules registered through
              getRuntime().registerModule in the spawner (and inherited by
