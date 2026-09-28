@@ -17,9 +17,12 @@ The Zygisk Next developers are famous and trusted in the Android community, howe
 ## Advantages
 
 - FOSS (Forever)
-- Zygisk Next module support
+- Zygisk Next module support, companions and the `pltHook` contract included
 - KernelSU **and** APatch support, as dedicated builds
 - Denylist handled by reverting the mounts in the hidden process itself, with the cached clean namespace as the fallback
+- The traces a revert cannot reach are hidden as well: the module libraries a hidden process still has mapped, and the mount line bionic keeps in one static buffer
+- HyperOS runtime support: modules that register through the spawner are told when an app is specialized
+- Starts from an LKM: a late-load session, or a restarted monitor, claims the targets that are already running instead of waiting for the next fork
 
 ## Root solution support
 
@@ -46,10 +49,16 @@ system paths — `framework` and provider resources among them — so an unmount
 that reaches the filesystem leaves WebView resolving through a path its own
 mountinfo still reports as overlaid, and it fails to initialize. The detach
 removes the same mounts from the process's view without tearing anything down.
-The zygote and every process that is not on the denylist keep their mounts, so
-a metamodule's themes and overlays stay visible to the apps that rely on them,
-and each app ends up holding a namespace object of its own — the same shape a
-normal app has, rather than one shared with every other hidden app.
+The zygote and the processes that are not being hidden keep their mounts, so a
+metamodule's themes and overlays stay visible to the apps that rely on them, and
+each hidden process ends up holding a namespace object of its own — the same
+shape a normal app has, rather than one shared with every other hidden app.
+
+`webview_zygote` is the one process that is cleaned without ever being on the
+denylist. It execs into the real child zygote and every WebView sandboxed
+renderer inherits whatever namespace it holds, so it is switched into the cached
+clean namespace instead of being reverted in place: an unmount running inside it
+would reach processes no revert was meant for.
 
 Reverting out of the zygote instead is what used to break those modules: the
 mounts would go away for **every** process forked afterwards, hidden or not.
@@ -64,12 +73,45 @@ traces, which some ROMs overlay with zygote resources, or some of them refuse
 to come down — the process is hidden the namespace way instead, by switching it
 into a cached clean namespace.
 
+Neither mode reaches everything. Two traces stay inside a hidden process, and
+both are only final once the modules have run:
+
+- the module libraries still mapped into it, each naming its own file in
+  `/proc/self/maps`. Those mappings are replaced by anonymous copies of the same
+  bytes at the same address, so the library keeps running from where it was and
+  the name is gone — the Zygisk Next libraries included, which the loader hands
+  over as memfds and which no path under `/data` describes.
+- the mount line bionic parses into a single static buffer. The zygote reads it
+  while it still carries the module mounts and every application forked from it
+  inherits it, so a process whose tree was cleaned can still read the traces out
+  of its own libc. Parsing a mount table once the tree is already the clean one
+  is what replaces its content.
+
 Dropping a marker next to the module selects that namespace path for every
 process, without a rebuild:
 
 ```sh
 touch /data/adb/rezygisk/disable-revert   # or /data/adb/modules/rezygisk/disable-revert
 ```
+
+## Late load
+
+KernelSU can be injected into a system that is already running — the temporary
+root flows that leave the bootloader locked. KernelSU does not exist while
+`post-fs-data` passes in that session, so the module's own stage never runs, no
+monitor is started, and every Zygisk module stays dead while the manager keeps
+listing the module as installed.
+
+The KernelSU archive therefore installs itself into `late-load.d` as well, the
+stage `ksud late-load` runs straight after the injection. The monitor it starts
+claims the targets that are already running — the zygote and the HyperOS spawner
+— instead of waiting for the next fork, and attaches to them rather than killing
+them so init respawns them. A soft reboot replays the boot stages but keeps the
+injected KernelSU, so the same stage is what brings the monitor back, and it
+leaves an already running one alone.
+
+Only the KernelSU flavour ships this. APatch has no comparable stage, so the
+APatch archive removes any copy it finds rather than installing one.
 
 ## Zygisk Next support
 
@@ -139,7 +181,7 @@ make ROOT_IMPL=apatch release  # explicit form
 ```
 
 - `ROOT_IMPL` selects the backend (`ksu`, the default, or `apatch`); both flavours build from the same sources and land in separate trees so their caches never mix.
-- A CI run on `main` produces both release archives plus a generated `update.json`, and runs the host-side unit tests (`tests/host/`) that exercise the ELF reader and the mini-debug decompressor against glibc before anything is published.
+- A CI run on `main` produces both release archives plus a generated `update.json`, and runs the host-side suite (`tests/host/`) before anything is published: the ELF reader and its mini-debug decompressor, the mountinfo parsing behind the revert, the APatch package configuration parser, and what counts as a module trace — the parts that are plain text on a build host and silent failures on a device.
 
 ## Support
 

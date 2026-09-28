@@ -17,9 +17,12 @@ Zygisk Next 的开发者们在 Android 社区中广为人知且值得信任，�
 ## 优势
 
 - 永久开源（FOSS）
-- 支持 Zygisk Next 模块
+- 支持 Zygisk Next 模块，含 companion 与 `pltHook` 契约
 - 支持 KernelSU **与** APatch，并提供专用构建
 - 黑名单通过在被隐藏的进程自身中回滚挂载来处理，并以缓存好的干净命名空间作为回退
+- 连回滚够不到的痕迹也一并隐藏：被隐藏进程里仍映射着的模块库，以及 bionic 留在那个静态缓冲里的挂载行
+- 支持 HyperOS Runtime：通过 spawner 注册的模块会在应用特化时收到通知
+- 可从 LKM 启动：late-load 会话或 monitor 重启后，会直接接管已在运行的进程，而不是等下一次 fork
 
 ## Root 方案支持
 
@@ -38,7 +41,9 @@ Zygisk Next 的开发者们在 Android 社区中广为人知且值得信任，�
 
 仅回滚（revert-only）是默认的挂载模式，且它作用于被隐藏的进程本身，而不是 zygote。
 
-被列入黑名单的进程会获得一份私有的挂载树副本，root 痕迹从这份副本中**摘除（detach）**。之所以是摘除而不是卸载，是因为 metamodule 的 overlay 以 Root 方案的名称作为 source，并可能覆盖系统路径——其中包含 `framework` 与 provider 资源——一旦真正卸载到文件系统层面，WebView 就会去解析一条它自己 mountinfo 中仍标记为 overlay 的路径，从而初始化失败。摘除只是把这些挂载从该进程的视图中移除，不会拆掉任何东西。zygote 以及所有不在黑名单中的进程保留原有挂载，因此 metamodule 的主题与 overlay 对依赖它们的应用依然可见；同时每个应用最终各自持有一个独立的命名空间对象——与普通应用形态一致，而不是与所有其他被隐藏的应用共用同一个。
+被列入黑名单的进程会获得一份私有的挂载树副本，root 痕迹从这份副本中**摘除（detach）**。之所以是摘除而不是卸载，是因为 metamodule 的 overlay 以 Root 方案的名称作为 source，并可能覆盖系统路径——其中包含 `framework` 与 provider 资源——一旦真正卸载到文件系统层面，WebView 就会去解析一条它自己 mountinfo 中仍标记为 overlay 的路径，从而初始化失败。摘除只是把这些挂载从该进程的视图中移除，不会拆掉任何东西。zygote 以及所有未被隐藏的进程保留原有挂载，因此 metamodule 的主题与 overlay 对依赖它们的应用依然可见；同时每个被隐藏的进程最终各自持有一个独立的命名空间对象——与普通应用形态一致，而不是与所有其他被隐藏的应用共用同一个。
+
+`webview_zygote` 是唯一一个从未进入黑名单、却同样会被清理的进程。它会 exec 成真正的子 zygote，而每个 WebView 沙箱渲染进程都会继承它持有的命名空间，因此它是被切换到缓存好的干净命名空间，而不是就地回滚：在它内部执行卸载，会波及本不在回滚范围内的进程。
 
 反过来从 zygote 中回滚，正是过去会破坏这些模块的做法：此后 fork 出的**每一个**进程（无论是否被隐藏）都会失去这些挂载。
 
@@ -46,11 +51,24 @@ Zygisk Next 的开发者们在 Android 社区中广为人知且值得信任，�
 
 当回滚无法应用时——痕迹中包含一个精确的 `/product` 挂载（某些 ROM 用它覆盖 zygote 资源），或其中部分挂载拒绝卸载——进程会改用命名空间方式隐藏，即切换到缓存好的干净命名空间。
 
+两种模式都够不到全部。有两处痕迹留在被隐藏的进程内部，而且都要等模块跑完才定型：
+
+- 仍映射在其中的模块库，每一个都在 `/proc/self/maps` 里写着自身对应的文件。这些映射会被替换成同样字节、同一地址的匿名副本，库因此仍从原处继续运行，而名字消失了——Zygisk Next 的库也一样，加载器是以 memfd 把它们交出去的，任何 `/data` 下的路径都描述不了。
+- 被 bionic 解析进单个静态缓冲的那一行挂载。zygote 在仍带着模块挂载时读入它，此后 fork 出的每个应用都会继承，因此挂载树已被清理的进程仍能从自己的 libc 里读出这些痕迹。在挂载树已经干净的时候解析一次挂载表，就能替换掉它的内容。
+
 在模块旁放置一个标记文件即可让所有进程都走命名空间方式，无需重新编译：
 
 ```sh
 touch /data/adb/rezygisk/disable-revert   # or /data/adb/modules/rezygisk/disable-revert
 ```
+
+## Late load
+
+KernelSU 可以被注入进一个已经在运行的系统——也就是那些保持引导锁定的临时 Root 流程。在这样的会话里，`post-fs-data` 经过时 KernelSU 并不存在，模块自己的阶段脚本不会执行，monitor 也就不会启动：管理器仍把模块列为已安装，而所有 Zygisk 模块都是死的。
+
+因此 KernelSU 版还会把自己装进 `late-load.d`——即 `ksud late-load` 在注入完成后紧接着运行的阶段。它启动的 monitor 会直接接管已在运行的目标——zygote 与 HyperOS spawner——而不是等待下一次 fork，并且是 attach 上去，而不是杀掉它们让 init 重新拉起。软重启会重放启动阶段但保留已注入的 KernelSU，所以正是这个阶段把 monitor 带回来；若 monitor 已在运行，它会保持不动。
+
+只有 KernelSU 版会装这个。APatch 没有对应阶段，因此 APatch 包是删除已有的副本，而不是安装一份。
 
 ## 对 Zygisk Next 的支持
 
@@ -120,7 +138,7 @@ make ROOT_IMPL=apatch release  # explicit form
 ```
 
 - `ROOT_IMPL` 选择后端（`ksu` 为默认值，或 `apatch`）；两个版本由同一套源码构建，产物落在各自的目录树中，缓存互不干扰。
-- `main` 上的 CI 运行会产出两个 release 压缩包以及生成的 `update.json`，并在发布任何东西之前先运行宿主端单元测试（`tests/host/`），用 glibc 校验 ELF 读取器与 mini-debug 解压器。
+- `main` 上的 CI 运行会产出两个 release 压缩包以及生成的 `update.json`，并在发布任何东西之前先运行宿主端测试套件（`tests/host/`）：ELF 读取器与它的 mini-debug 解压器、回滚所依赖的 mountinfo 解析、APatch 包配置解析，以及什么算模块痕迹的判定——这些都是在构建机上只是纯文本、在设备上却会静默失败的部分。
 
 ## 支持
 
