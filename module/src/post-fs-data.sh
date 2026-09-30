@@ -2,28 +2,6 @@
 
 set -e
 
-# INFO: A monitor surviving from the current session owns this entire directory:
-#         it holds the controller socket, and the daemon it forked holds
-#         cp64.sock. A soft reboot replays the boot stages but leaves both
-#         processes running, so clearing TMP_PATH out from under them does not
-#         clean up after a dead session - it leaves a *live* daemon that nothing
-#         can reach, because the loader connects to the socket path and not to
-#         the process. Every module then stays dead until a real reboot.
-#
-#         That is why this only ever broke on the second soft reboot: the first
-#         one runs while no monitor exists yet, so the wipe below is harmless,
-#         and from the second one onwards the monitor from the previous session
-#         is still there and has its sockets pulled out from under it.
-#
-#         So a live session is left completely alone, exactly as late-load.sh
-#         already leaves it alone. On a cold boot nothing survives, pidof finds
-#         nothing, and the wipe still does its job of clearing the previous
-#         session's sockets before a fresh monitor binds them.
-if pidof "zygisk-ptrace64" >/dev/null 2>&1; then
-  echo "VexZygisk: monitor already running, leaving this session alone"
-  exit 0
-fi
-
 MODDIR=${0%/*}
 
 cd "$MODDIR"
@@ -33,11 +11,6 @@ create_sys_perm() {
   chmod 555 $1
   chcon u:object_r:system_file:s0 $1
 }
-
-export TMP_PATH=/data/adb/rezygisk
-rm -rf "$TMP_PATH"
-
-create_sys_perm $TMP_PATH
 
 # INFO: rezygisk.sh in post-fs-data.d resets module.prop from its pristine
 #         .bak copy. This explicit call looks redundant with the global
@@ -54,9 +27,40 @@ create_sys_perm $TMP_PATH
 #         module.prop for one boot. Letting that reach `set -e` would abort
 #         before the monitor is started and take the whole injection down with
 #         it, silently.
+#
+#         Deliberately above the session check below: the reset has nothing to
+#         do with the sockets, and skipping it on a soft reboot would leave the
+#         stale status text it exists to clear in place for another boot.
 if [ -f /data/adb/post-fs-data.d/rezygisk.sh ]; then
   sh /data/adb/post-fs-data.d/rezygisk.sh || true
 fi
+
+# INFO: A monitor surviving from the current session owns this entire directory:
+#         it holds the controller socket, and the daemon it forked holds
+#         cp64.sock. A soft reboot replays the boot stages but leaves both
+#         processes running, so clearing TMP_PATH out from under them does not
+#         clean up after a dead session - it leaves a *live* daemon that nothing
+#         can reach, because the loader connects to the socket path and not to
+#         the process. Every module then stays dead until a real reboot.
+#
+#         That is why this only ever broke on the second soft reboot: the first
+#         one runs while no monitor exists yet, so the wipe below is harmless,
+#         and from the second one onwards the monitor from the previous session
+#         is still there and has its sockets pulled out from under it.
+#
+#         Only the two steps a live session would be harmed by are skipped — the
+#         wipe and starting a second monitor. On a cold boot nothing survives,
+#         pidof finds nothing, and both still run, exactly as late-load.sh
+#         already leaves a live session alone on its side.
+if pidof "zygisk-ptrace64" >/dev/null 2>&1; then
+  echo "VexZygisk: monitor already running, leaving its session alone"
+  exit 0
+fi
+
+export TMP_PATH=/data/adb/rezygisk
+rm -rf "$TMP_PATH"
+
+create_sys_perm $TMP_PATH
 
 if [ -f "$MODDIR/bin/zygisk-ptrace64" ]; then
   "$MODDIR/bin/zygisk-ptrace64" monitor &

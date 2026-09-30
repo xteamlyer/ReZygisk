@@ -500,12 +500,22 @@ static struct timespec daemon_forked_at = {};
          That is not hypothetical. A soft reboot replays the boot stages, and
          the module's post-fs-data.sh clears the directory holding these sockets
          while a monitor and daemon from the previous session are still running.
-         The pid alone left that session permanently unreachable. */
+         The pid alone left that session permanently unreachable.
+
+         Only an outright missing file counts as "gone". Any other failure -
+         EACCES if the policy denies the check itself, ELOOP, a transient
+         ENOMEM - is answered as present on purpose, because reading it as
+         missing would kill a daemon that may be perfectly reachable, once per
+         process start, and the replacement would hit the same wall. */
 static bool daemon_socket_present() {
-  return access(ZYGISK_CP_SOCKET, F_OK) == 0;
+  if (access(ZYGISK_CP_SOCKET, F_OK) == 0) return true;
+
+  return errno != ENOENT;
 }
 
 static bool ensure_daemon_created() {
+  pid_t stale_pid = -1;
+
   if (status.daemon_pid != -1) {
     struct timespec now = {};
     clock_gettime(CLOCK_MONOTONIC, &now);
@@ -518,11 +528,12 @@ static bool ensure_daemon_created() {
 
     LOGW("VexZygiskd%s is alive but %s is gone, replacing it", MONITOR_ABI, ZYGISK_CP_SOCKET);
 
-    /* INFO: The stale daemon is killed rather than abandoned: it holds a socket
-              nobody can reach any more, and leaving it behind would leak one
-              daemon per replacement. Its own exit is then reaped by the generic
-              child handling, which no longer matches it against the pid below. */
-    kill(status.daemon_pid, SIGKILL);
+    /* INFO: Recorded rather than killed on the spot. Killing here and forking
+              afterwards would let a failed fork leave nothing behind at all,
+              turning a transient failure - ENOMEM on a loaded device - into the
+              permanent "not running" answer below. The old daemon keeps its
+              socket until the replacement has taken the path over. */
+    stale_pid = status.daemon_pid;
 
     status.daemon_pid = -1;
     status.daemon_running = false;
@@ -531,6 +542,14 @@ static bool ensure_daemon_created() {
   pid_t pid = fork();
   if (pid < 0) {
     PLOGE("create VexZygiskd%s", MONITOR_ABI);
+
+    /* INFO: Put the daemon that was about to be replaced back as the current
+              one. It cannot be connected to, but neither can nothing, and the
+              next attempt is still free to replace it. */
+    if (stale_pid != -1) {
+      status.daemon_pid = stale_pid;
+      status.daemon_running = true;
+    }
 
     return false;
   }
@@ -543,6 +562,15 @@ static bool ensure_daemon_created() {
     PLOGE("exec VexZygiskd%s failed", MONITOR_ABI);
 
     exit(1);
+  }
+
+  if (stale_pid != -1) {
+    /* INFO: The stale daemon is killed rather than abandoned: it holds a socket
+              nobody can reach any more, and leaving it behind would leak one
+              daemon per replacement. Its own exit is then reaped by the generic
+              child handling, which no longer matches it against the pid below,
+              and answers it as what it is - a process that already exited. */
+    kill(stale_pid, SIGKILL);
   }
 
   status.supported = true;
@@ -928,6 +956,16 @@ void sigchld_listener_callback() {
       }
 
       if (!known) {
+        /* INFO: A process that has already exited is not "newly attached": there
+                  is nothing left to set ptrace options on, and a slot taken here
+                  is never handed back. This is the path a replaced daemon takes -
+                  the branch above no longer matches it, because the pid it was
+                  recorded under already names the replacement. Letting it fall
+                  through would leak that slot and, once the kernel hands the pid
+                  to somebody else, make an unrelated process look like one that
+                  is already under trace. */
+        if (WIFEXITED(sigchld_status) || WIFSIGNALED(sigchld_status)) continue;
+
         LOGV("New process %d attached", pid);
 
         for (size_t i = 0; i < sigchld_process_count; i++) {
