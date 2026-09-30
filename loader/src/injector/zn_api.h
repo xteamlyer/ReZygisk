@@ -24,6 +24,11 @@ void zn_runtime_notify_app_specialized(const char *process_name, const char *pac
          skip the zygote-only hooks. */
 bool zn_is_hyos_spawner(void);
 
+/* INFO: Pins this process as the one the HyperOS runtime belongs to, so every
+         later process can tell whether it is a child of it. Call once, in the
+         spawner, before any module registers. */
+void zn_init_hyos_runtime(void);
+
 /* INFO: Whether any HyperOS runtime module registered in this process —
          the specialize post hook checks it before doing the JNI work of
          collecting the callback arguments. */

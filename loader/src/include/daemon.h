@@ -78,8 +78,9 @@ void free_modules(struct zygisk_modules *modules);
 
 /* INFO: Asks the daemon for the Zygisk Next libraries targeting this process.
          Returns false when the daemon cannot be reached, which is the signal to
-         fall back to reading the modules directly. */
-bool rezygiskd_read_zn_modules(const char *process_name, const char *process_path, struct zn_module_file **out, size_t *out_len);
+         fall back to reading the modules directly. `retry` is the number of
+         connection attempts, one second apart. */
+bool rezygiskd_read_zn_modules(const char *process_name, const char *process_path, uint8_t retry, struct zn_module_file **out, size_t *out_len);
 
 void free_zn_module_files(struct zn_module_file *files, size_t len);
 
