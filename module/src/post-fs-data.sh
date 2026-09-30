@@ -2,6 +2,28 @@
 
 set -e
 
+# INFO: A monitor surviving from the current session owns this entire directory:
+#         it holds the controller socket, and the daemon it forked holds
+#         cp64.sock. A soft reboot replays the boot stages but leaves both
+#         processes running, so clearing TMP_PATH out from under them does not
+#         clean up after a dead session - it leaves a *live* daemon that nothing
+#         can reach, because the loader connects to the socket path and not to
+#         the process. Every module then stays dead until a real reboot.
+#
+#         That is why this only ever broke on the second soft reboot: the first
+#         one runs while no monitor exists yet, so the wipe below is harmless,
+#         and from the second one onwards the monitor from the previous session
+#         is still there and has its sockets pulled out from under it.
+#
+#         So a live session is left completely alone, exactly as late-load.sh
+#         already leaves it alone. On a cold boot nothing survives, pidof finds
+#         nothing, and the wipe still does its job of clearing the previous
+#         session's sockets before a fresh monitor binds them.
+if pidof "zygisk-ptrace64" >/dev/null 2>&1; then
+  echo "VexZygisk: monitor already running, leaving this session alone"
+  exit 0
+fi
+
 MODDIR=${0%/*}
 
 cd "$MODDIR"

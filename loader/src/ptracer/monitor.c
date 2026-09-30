@@ -4,6 +4,7 @@
 #include <string.h>
 #include <time.h>
 #include <errno.h>
+#include <signal.h>
 
 #include <unistd.h>
 #include <sys/epoll.h>
@@ -481,11 +482,50 @@ static bool should_stop_inject() {
   return count_zygote >= MAX_RETRY_COUNT;
 }
 
+/* INFO: How long a freshly forked daemon is given to bind its socket before the
+         socket's absence is read as "unreachable". Only exists so the zygote
+         and the spawner, which exec within milliseconds of each other on a
+         normal boot, cannot have the daemon that was just forked for them
+         mistaken for a stale one and killed. */
+#define DAEMON_SETTLE_SECONDS 5
+
+/* INFO: When the current daemon was forked, on the monotonic clock. */
+static struct timespec daemon_forked_at = {};
+
+/* INFO: A daemon is reachable through its socket, not through its pid: one that
+         is still alive but whose socket file has been removed cannot be
+         connected to at all, and answering "already running" for it disables
+         every module while the process sits there looking healthy.
+
+         That is not hypothetical. A soft reboot replays the boot stages, and
+         the module's post-fs-data.sh clears the directory holding these sockets
+         while a monitor and daemon from the previous session are still running.
+         The pid alone left that session permanently unreachable. */
+static bool daemon_socket_present() {
+  return access(ZYGISK_CP_SOCKET, F_OK) == 0;
+}
+
 static bool ensure_daemon_created() {
   if (status.daemon_pid != -1) {
-    LOGI("VexZygiskd%s already running", MONITOR_ABI);
+    struct timespec now = {};
+    clock_gettime(CLOCK_MONOTONIC, &now);
 
-    return status.daemon_running;
+    if (now.tv_sec - daemon_forked_at.tv_sec < DAEMON_SETTLE_SECONDS || daemon_socket_present()) {
+      LOGD("VexZygiskd%s already running", MONITOR_ABI);
+
+      return status.daemon_running;
+    }
+
+    LOGW("VexZygiskd%s is alive but %s is gone, replacing it", MONITOR_ABI, ZYGISK_CP_SOCKET);
+
+    /* INFO: The stale daemon is killed rather than abandoned: it holds a socket
+              nobody can reach any more, and leaving it behind would leak one
+              daemon per replacement. Its own exit is then reaped by the generic
+              child handling, which no longer matches it against the pid below. */
+    kill(status.daemon_pid, SIGKILL);
+
+    status.daemon_pid = -1;
+    status.daemon_running = false;
   }
 
   pid_t pid = fork();
@@ -508,6 +548,8 @@ static bool ensure_daemon_created() {
   status.supported = true;
   status.daemon_pid = pid;
   status.daemon_running = true;
+
+  clock_gettime(CLOCK_MONOTONIC, &daemon_forked_at);
 
   return true;
 }
