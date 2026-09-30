@@ -424,6 +424,41 @@ static zn_hyos_setcontext_fn zn_hyos_original_setcontext = NULL;
 static zn_hyos_setname_fn zn_hyos_original_setname = NULL;
 static bool zn_hyos_hooks_warned = false;
 
+/* INFO: The file name HyperOS gives the Rust runtime image. It is looked for in
+         the process maps rather than through /proc/self/exe, and the difference
+         is not cosmetic: on HyperOS the process that hosts the runtime is an
+         app_process binary with this image mapped into it, so its executable
+         name reads app_process64 and the runtime is simply invisible to an exe
+         check. Reading the maps is what the working implementations do, and it
+         is the only thing that finds the spawner on those builds.
+
+         An exe check is what this used to do, and it is why getRuntime()
+         answered "no runtime" on a HyperOS 4 device while everything else
+         looked correct - the module side then reported a failed HyperOS
+         runtime injection, and every hook installed for the runtime was
+         installed in a process that had been classified as an ordinary
+         zygote. */
+#define ZN_HYOS_SPAWNER_NAME "hyos_spawner"
+
+static bool zn_hyos_path_is_spawner(const char *path) {
+  static const char kDeletedSuffix[] = " (deleted)";
+
+  size_t len = strlen(path);
+  if (len > sizeof(kDeletedSuffix) - 1 &&
+      memcmp(path + len - (sizeof(kDeletedSuffix) - 1), kDeletedSuffix, sizeof(kDeletedSuffix) - 1) == 0) {
+    len -= sizeof(kDeletedSuffix) - 1;
+  }
+
+  /* INFO: Compared as a whole path component, so a longer name that merely
+            ends with it (say "hyos_spawner.bak") is not a match, while a build
+            that ships the runtime from another directory still is. */
+  size_t name_len = sizeof(ZN_HYOS_SPAWNER_NAME) - 1;
+  if (len <= name_len) return false;
+  if (path[len - name_len - 1] != '/') return false;
+
+  return memcmp(path + len - name_len, ZN_HYOS_SPAWNER_NAME, name_len) == 0;
+}
+
 /* INFO: File identity of the spawner's own executable, so its PLT entries
          can be hooked (YukiSU style). Rewriting spawner code in place for an
          inline hook can fail where the image is not writable, while a GOT
@@ -447,7 +482,7 @@ static bool zn_hyos_spawner_file_identity(dev_t *dev, ino_t *inode) {
     struct map_entry *entry = &maps->maps[i];
 
     if (entry->offset != 0 || entry->inode == 0 || entry->path == NULL) continue;
-    if (strstr(entry->path, "hyos_spawner") == NULL) continue;
+    if (!zn_hyos_path_is_spawner(entry->path)) continue;
 
     zn_hyos_spawner_dev = entry->dev;
     zn_hyos_spawner_inode = entry->inode;
@@ -662,31 +697,49 @@ static const struct ZygiskNextRuntime zn_hyos_runtime = {
          identifies the whole tree, and a registration made in the spawner is
          inherited by every child. An upgraded binary leaves a " (deleted)"
          suffix on the link target. */
+/* INFO: Whether the HyperOS Rust runtime is reachable from this process. This
+         is the question the ZN runtime API answers, and the one the injector
+         needs before it picks its hook set, so both read it from here.
+
+         It is a mapping lookup and not an exe lookup - see
+         zn_hyos_path_is_spawner above. A child forked from the spawner inherits
+         the mapping and therefore answers yes as well, which is exactly what
+         the runtime contract wants: the module registered in the spawner is
+         inherited, and every app it forks answers for the same runtime.
+         An upgraded binary leaves a " (deleted)" suffix on the mapping, which
+         the predicate strips. */
 static bool zn_hyos_process_is_spawner(void) {
   static int is_spawner = -1;
 
-  if (is_spawner == -1) {
-    is_spawner = 0;
+  if (is_spawner != -1) return is_spawner == 1;
 
-    char exe[PATH_MAX];
-    ssize_t length = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+  struct maps_info *maps = parse_maps_safe("self");
+  if (maps == NULL) {
+    /* INFO: Left uncached on purpose: a failed scan is not an answer, and the
+              next call may well succeed. */
+    LOGE("HyperOS runtime: cannot read the process maps");
 
-    if (length > 0) {
-      exe[length] = '\0';
-
-      size_t len = (size_t)length;
-      if (len > 10 && strcmp(exe + len - 10, " (deleted)") == 0) {
-        len -= 10;
-        exe[len] = '\0';
-      }
-
-      const char *base = strrchr(exe, '/');
-
-      is_spawner = strcmp(base == NULL ? exe : base + 1, "hyos_spawner") == 0;
-    }
+    return false;
   }
 
-  return is_spawner == 1;
+  int found = 0;
+
+  for (size_t i = 0; i < maps->length; i++) {
+    struct map_entry *entry = &maps->maps[i];
+
+    if (entry->offset != 0 || entry->inode == 0 || entry->path == NULL) continue;
+    if (!zn_hyos_path_is_spawner(entry->path)) continue;
+
+    found = 1;
+
+    break;
+  }
+
+  free_maps(maps);
+
+  is_spawner = found;
+
+  return found == 1;
 }
 
 /* INFO: Remembers which process the runtime belongs to. Called once, in the

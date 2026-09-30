@@ -16,13 +16,13 @@ void entry(void *addr, size_t size) {
   start_addr = addr;
   block_size = size;
 
-  /* INFO: HyperOS forks applications from /system_ext/bin/hyos_spawner instead
-           of a zygote, and there is no ART specialize path in it to hook —
-           hooking the JNI there is what crashed the spawner and left every
-           app unable to start (the second-screen loop). The spawner only
-           carries the runtime: the modules load, register through
-           getRuntime(), and are notified from the fork and SELinux hooks the
-           runtime installs. The JNI and PLT hooks belong to the zygote. */
+  /* INFO: HyperOS runs applications on its own Rust runtime instead of a
+           zygote, and there is no ART specialize path there to hook — hooking
+           the JNI is what crashed the spawner and left every app unable to
+           start (the second-screen loop). That runtime only carries the module
+           table: the modules load, register through getRuntime(), and are
+           notified from the SELinux hooks the runtime installs. The JNI and
+           PLT hooks belong to the zygote. */
   bool is_spawner = zn_is_hyos_spawner();
 
   if (is_spawner) {
