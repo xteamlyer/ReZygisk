@@ -407,6 +407,15 @@ static bool zn_hyos_has_process_name = false;
 static bool zn_hyos_atfork_installed = false;
 static char zn_hyos_process_name[256];
 
+/* INFO: Whether zn_init_hyos_runtime() ran in this process, which is what
+          getRuntime() answers from. This is how the implementation the runtime
+          was ported from answers it, and it is the stable answer: decided once
+          in entry() by a check that has already succeeded, instead of being
+          re-derived from the process on every call - which gave the scan its
+          own ways to say no, and left getRuntime() returning nullptr in a
+          process that had been identified as the spawner. */
+static bool zn_hyos_runtime_enabled = false;
+
 /* INFO: The pid the runtime was initialized in, which is the spawner itself.
           Every app it forks has the same executable and a different pid, so
           that difference is what tells a child apart. Zero until
@@ -713,33 +722,34 @@ static bool zn_hyos_process_is_spawner(void) {
 
   if (is_spawner != -1) return is_spawner == 1;
 
-  struct maps_info *maps = parse_maps_safe("self");
-  if (maps == NULL) {
-    /* INFO: Left uncached on purpose: a failed scan is not an answer, and the
-              next call may well succeed. */
-    LOGE("HyperOS runtime: cannot read the process maps");
+  /* INFO: Answered from the executable's own path, the way the implementation
+           this runtime was ported from answers it: the spawner runs as its own
+           executable, so /proc/self/exe names it directly.
+
+           A mapping scan was tried here first and is not what decides this.
+           The spawner image is mapped in the spawner because it *is* its
+           executable, so the scan only ever re-derived the same answer, while
+           adding ways of its own to say no - a scan that could not be read, or
+           a mapping whose offset was not zero. The scan keeps the one job it is
+           actually needed for: getting the (dev, inode) pair that identifies
+           the image to the PLT hooks. */
+  char path[PATH_MAX];
+  ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
+
+  if (len <= 0) {
+    /* INFO: Left uncached on purpose: a failed read is not an answer. */
+    LOGE("HyperOS runtime: cannot read /proc/self/exe");
 
     return false;
   }
 
-  int found = 0;
+  path[len] = '\0';
 
-  for (size_t i = 0; i < maps->length; i++) {
-    struct map_entry *entry = &maps->maps[i];
+  is_spawner = zn_hyos_path_is_spawner(path) ? 1 : 0;
 
-    if (entry->offset != 0 || entry->inode == 0 || entry->path == NULL) continue;
-    if (!zn_hyos_path_is_spawner(entry->path)) continue;
+  LOGD("HyperOS runtime: %s (exe %s)", is_spawner == 1 ? "spawner" : "not the spawner", path);
 
-    found = 1;
-
-    break;
-  }
-
-  free_maps(maps);
-
-  is_spawner = found;
-
-  return found == 1;
+  return is_spawner == 1;
 }
 
 /* INFO: Remembers which process the runtime belongs to. Called once, in the
@@ -752,8 +762,12 @@ static bool zn_hyos_process_is_spawner(void) {
          for the rest of its life - onAppSpecialized would then never fire for
          that app, silently. Only the first call in a fresh process counts. */
 void zn_init_hyos_runtime(void) {
-  if (zn_hyos_spawner_pid != 0) return;
+  /* INFO: Idempotent, because the flag is inherited by every app the spawner
+            forks: a second call in one of them would otherwise pin the runtime
+            to the child and leave it answering "not a child" about itself. */
+  if (zn_hyos_runtime_enabled) return;
 
+  zn_hyos_runtime_enabled = true;
   zn_hyos_spawner_pid = (pid_t)syscall(__NR_getpid);
 
   LOGD("HyperOS runtime enabled in pid %d", zn_hyos_spawner_pid);
@@ -764,7 +778,19 @@ bool zn_is_hyos_spawner(void) {
 }
 
 static const struct ZygiskNextRuntime *zn_get_runtime(void) {
-  return zn_hyos_process_is_spawner() ? &zn_hyos_runtime : NULL;
+  /* INFO: Answered from the flag zn_init_hyos_runtime() set rather than from a
+            fresh look at the process. entry() has already decided what this
+            process is, and a module asking for the runtime has to be given the
+            answer entry() reached - a second, independent check can only
+            disagree with it, and disagreeing means handing out nullptr to a
+            module loaded into a process that does have a runtime. */
+  if (!zn_hyos_runtime_enabled) {
+    LOGD("HyperOS runtime: getRuntime() in a process that has no runtime");
+
+    return NULL;
+  }
+
+  return &zn_hyos_runtime;
 }
 
 bool zn_hyos_modules_registered(void) {
