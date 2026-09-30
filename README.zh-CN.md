@@ -22,7 +22,7 @@ Zygisk Next 的开发者们在 Android 社区中广为人知且值得信任，�
 - 黑名单通过在被隐藏的进程自身中回滚挂载来处理，并以缓存好的干净命名空间作为回退
 - 连回滚够不到的痕迹也一并隐藏：被隐藏进程里仍映射着的模块库，以及 bionic 留在那个静态缓冲里的挂载行
 - 支持 HyperOS Runtime：通过 spawner 注册的模块会在应用特化时收到通知
-- 可从 LKM 启动：late-load 会话或 monitor 重启后，会直接接管已在运行的进程，而不是等下一次 fork
+- 可从 LKM 启动：late-load 会话或 monitor 重启后，会重启（respawn）已在运行的进程，让真正被注入的是那一只全新的 fork
 
 ## Root 方案支持
 
@@ -66,7 +66,9 @@ touch /data/adb/rezygisk/disable-revert   # or /data/adb/modules/rezygisk/disabl
 
 KernelSU 可以被注入进一个已经在运行的系统——也就是那些保持引导锁定的临时 Root 流程。在这样的会话里，`post-fs-data` 经过时 KernelSU 并不存在，模块自己的阶段脚本不会执行，monitor 也就不会启动：管理器仍把模块列为已安装，而所有 Zygisk 模块都是死的。
 
-因此 KernelSU 版还会把自己装进 `late-load.d`——即 `ksud late-load` 在注入完成后紧接着运行的阶段。它启动的 monitor 会直接接管已在运行的目标——zygote 与 HyperOS spawner——而不是等待下一次 fork，并且是 attach 上去，而不是杀掉它们让 init 重新拉起。软重启会重放启动阶段但保留已注入的 KernelSU，所以正是这个阶段把 monitor 带回来；若 monitor 已在运行，它会保持不动。
+因此 KernelSU 版还会把自己装进 `late-load.d`——即 `ksud late-load` 在注入完成后紧接着运行的阶段。软重启会重放启动阶段但保留已注入的 KernelSU，所以正是这个阶段把 monitor 带回来；若 monitor 已在运行，它会保持不动。
+
+注入本身只在目标**全新** fork+exec 时才会发生，因此起步太晚的 monitor 用不了那些从真正开机起就一直跑着的 zygote 与 HyperOS spawner：所有注入入口等的都是这些进程早已走完的启动步骤。monitor 改为把它们重启（respawn）——各自杀掉一次，由把两者都当服务管理的 init 拉起重新的进程，再交给正常的 fork 路径注入。由于 zygote 是 system_server 的父进程，这一步正是 late-load 用户原本要手动在管理器里点一次「软重启」的那个动作，框架恢复时开机动画会重播一次。正常开机时 monitor 早于这两个进程存在，因此扫描什么也扫不到，不会改变任何行为。
 
 只有 KernelSU 版会装这个。APatch 没有对应阶段，因此 APatch 包是删除已有的副本，而不是安装一份。
 

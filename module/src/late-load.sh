@@ -66,6 +66,15 @@ if [ ! -d "$TMP_PATH" ]; then
 fi
 export TMP_PATH
 
+# INFO: The monitor binds its controller socket by path, and the kernel refuses
+#         a bind on a path that is still occupied, so the endpoint a monitor
+#         that died left behind has to go before a new one can come up. Only the
+#         monitor's own endpoint is removed: cp64.sock belongs to the daemon,
+#         and a daemon from an earlier session may still be serving it. The
+#         pidof check above already returned when a monitor is alive, so this
+#         can never pull the endpoint out from under a running one.
+rm -f "$TMP_PATH/init_monitor"
+
 "$MODDIR/bin/zygisk-ptrace64" monitor &
 
 exit 0
