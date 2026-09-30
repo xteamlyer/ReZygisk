@@ -553,8 +553,16 @@ int zn_companion_connect(void *handle) {
       got = read(sockets[0], &ack, sizeof(ack));
     } while (got == -1 && errno == EINTR);
 
-    if (got != (ssize_t)sizeof(ack) || ack != ZN_COMPANION_ACK) {
-      LOGE("The companion closed the connection or answered with %u instead of an acknowledgement", (unsigned)ack);
+    if (got != (ssize_t)sizeof(ack)) {
+      LOGE("The companion did not acknowledge the connection (read returned %zd)", got);
+
+      close(sockets[0]);
+
+      return -1;
+    }
+
+    if (ack != ZN_COMPANION_ACK) {
+      LOGE("The companion answered with %u instead of an acknowledgement", (unsigned)ack);
 
       close(sockets[0]);
 

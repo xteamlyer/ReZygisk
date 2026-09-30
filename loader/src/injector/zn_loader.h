@@ -8,10 +8,12 @@
          libraries whose target matches the current process. Meant for the
          zygote itself, where the process name can be read off /proc/self/exe.
 
-         `connect_retry` is how many times the daemon connection is attempted,
-         one second apart. The HyperOS spawner passes more than one: it can exec
-         in the same breath as the daemon's own fork, and a single attempt would
-         lose the race and leave the spawner with no runtime modules at all. */
+         `connect_retry` is the number of extra daemon connection attempts
+         after the first, spaced 0.1s apart. The HyperOS spawner passes more
+         than one because it can exec in the same breath as the daemon's own
+         fork, and a single attempt would lose that race and leave the spawner
+         with no runtime modules at all. Even at five that is 0.6s at worst,
+         and it only ever costs anything while the daemon is unreachable. */
 void zn_load_all_modules(uint8_t connect_retry);
 
 /* INFO: Same scan, but for a forked child that is about to specialize:

@@ -691,8 +691,16 @@ static bool zn_hyos_process_is_spawner(void) {
 
 /* INFO: Remembers which process the runtime belongs to. Called once, in the
          spawner, before any module can register: every later "is this a
-         child?" answer is that pid against the current one. */
+         child?" answer is that pid against the current one.
+
+         Idempotent on purpose. A process forked from the spawner inherits the
+         recorded pid, so a second call there would answer "this is the
+         spawner" with the child's own pid and make zn_hyos_in_child() false
+         for the rest of its life - onAppSpecialized would then never fire for
+         that app, silently. Only the first call in a fresh process counts. */
 void zn_init_hyos_runtime(void) {
+  if (zn_hyos_spawner_pid != 0) return;
+
   zn_hyos_spawner_pid = (pid_t)syscall(__NR_getpid);
 
   LOGD("HyperOS runtime enabled in pid %d", zn_hyos_spawner_pid);
