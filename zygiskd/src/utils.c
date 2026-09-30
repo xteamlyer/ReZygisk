@@ -660,6 +660,9 @@ struct mountinfo {
   char *root;
   char *target;
   char *source;
+  /* INFO: Kept so an overlay can be told from any other mount - the
+            source-path test has to leave overlays alone. */
+  char *type;
 };
 
 struct mountinfos {
@@ -672,6 +675,7 @@ void free_mounts(struct mountinfos *restrict mounts) {
     free(mounts->mounts[i].root);
     free(mounts->mounts[i].target);
     free(mounts->mounts[i].source);
+    free(mounts->mounts[i].type);
   }
 
   free(mounts->mounts);
@@ -684,6 +688,14 @@ void free_mounts(struct mountinfos *restrict mounts) {
            36 35 98:0 /root /target rw,... - type source rw,...
 */
 static bool mountinfo_parse_line(char *line, struct mountinfo *out) {
+  /* INFO: Cleared up front. The caller grows its array with realloc and hands
+            over whatever that memory happened to hold, so a line rejected
+            below would otherwise be freed through stale pointers. */
+  out->root = NULL;
+  out->target = NULL;
+  out->source = NULL;
+  out->type = NULL;
+
   char *separator = strstr(line, " - ");
   if (separator == NULL) return false;
 
@@ -700,15 +712,18 @@ static bool mountinfo_parse_line(char *line, struct mountinfo *out) {
   out->root = strdup(root);
   out->target = strdup(target);
   out->source = strdup(source);
+  out->type = strdup(type);
 
-  if (out->root == NULL || out->target == NULL || out->source == NULL) {
+  if (out->root == NULL || out->target == NULL || out->source == NULL || out->type == NULL) {
     free(out->root);
     free(out->target);
     free(out->source);
+    free(out->type);
 
     out->root = NULL;
     out->target = NULL;
     out->source = NULL;
+    out->type = NULL;
 
     return false;
   }
@@ -838,13 +853,25 @@ bool umount_root(void) {
   for (size_t i = 0; i < mounts.length; i++) {
     struct mountinfo mount = mounts.mounts[i];
 
+    /* INFO: The same set the loader reverts in place, for the same reasons -
+              see carries_root_trace() in injector/unmount.c. Both walk the
+              same mountinfo and have to remove the same mounts, or a process
+              comes out half hidden. */
     bool should_unmount = false;
     for (size_t s = 0; s < ROOT_SOURCE_COUNT && !should_unmount; s++) {
       if (strcmp(mount.source, kRootSources[s]) == 0) should_unmount = true;
     }
-    if (mount_path_at_or_under(mount.target, ROOT_MODULES_DIR)) should_unmount = true;
+    if (mount.target != NULL && strcmp(mount.target, ROOT_ADB_DIR) != 0 &&
+        mount_path_at_or_under(mount.target, ROOT_ADB_DIR)) should_unmount = true;
     if (mount_path_at_or_under(mount.root, ROOT_MODULES_ROOT)) should_unmount = true;
     if (loop_source != NULL && strcmp(mount.source, loop_source) == 0) should_unmount = true;
+    /* INFO: The magic mount case, and the reason the type is carried: a bind
+              mount names the modules directory in its source while covering a
+              system path, so none of the tests above can see it. Overlays are
+              left out - one built by a metamodule can be carrying resources
+              this process still resolves. */
+    if (mount.type != NULL && strcmp(mount.type, MOUNT_TYPE_OVERLAY) != 0 &&
+        mount_path_at_or_under(mount.source, ROOT_MODULES_DIR)) should_unmount = true;
 
     if (!should_unmount) continue;
 
