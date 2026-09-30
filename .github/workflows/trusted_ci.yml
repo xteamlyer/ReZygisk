@@ -7,7 +7,10 @@ on:
 jobs:
   test:
     name: Host unit tests
-    runs-on: ubuntu-latest
+    # INFO: Pinned rather than ubuntu-latest for the same reason as the build
+    #       job below; the two must agree so the suite a pull request runs is
+    #       the one that runs here after the merge.
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         # INFO: The host tests exercise in-tree sources only (the ELF reader,
@@ -29,7 +32,10 @@ jobs:
         run: bash tests/host/run.sh
 
   build:
-    runs-on: ubuntu-latest
+    # INFO: Pinned rather than ubuntu-latest: the -latest label moves to 26.04
+    #       in November 2026 on GitHub's schedule, and this build (NDK, GCC
+    #       cross-toolchain, the Python scripts) should move when we choose to.
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@v7

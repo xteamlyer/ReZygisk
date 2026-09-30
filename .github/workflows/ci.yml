@@ -7,7 +7,10 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # INFO: Pinned rather than ubuntu-latest: the -latest label moves to 26.04
+    #       in November 2026 on GitHub's schedule, and this build (NDK, GCC
+    #       cross-toolchain, the Python scripts) should move when we choose to.
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -35,7 +38,9 @@ jobs:
           archive: false
 
   host-test:
-    runs-on: ubuntu-latest
+    # INFO: Kept on the same image as the build job so the suite a pull request
+    #       runs is the one that will run on main, on the same OS release.
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@v7
