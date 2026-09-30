@@ -22,7 +22,7 @@ The Zygisk Next developers are famous and trusted in the Android community, howe
 - Denylist handled by reverting the mounts in the hidden process itself, with the cached clean namespace as the fallback
 - The traces a revert cannot reach are hidden as well: the module libraries a hidden process still has mapped, and the mount line bionic keeps in one static buffer
 - HyperOS runtime support: modules that register through the spawner are told when an app is specialized
-- Starts from an LKM: a late-load session, or a restarted monitor, claims the targets that are already running instead of waiting for the next fork
+- Starts from an LKM: a late-load session, or a restarted monitor, respawns the targets that are already running so the fresh fork is the one that gets injected
 
 ## Root solution support
 
@@ -103,12 +103,20 @@ monitor is started, and every Zygisk module stays dead while the manager keeps
 listing the module as installed.
 
 The KernelSU archive therefore installs itself into `late-load.d` as well, the
-stage `ksud late-load` runs straight after the injection. The monitor it starts
-claims the targets that are already running — the zygote and the HyperOS spawner
-— instead of waiting for the next fork, and attaches to them rather than killing
-them so init respawns them. A soft reboot replays the boot stages but keeps the
-injected KernelSU, so the same stage is what brings the monitor back, and it
-leaves an already running one alone.
+stage `ksud late-load` runs straight after the injection. A soft reboot replays
+the boot stages but keeps the injected KernelSU, so the same stage is what brings
+the monitor back, and it leaves an already running one alone.
+
+Injection itself only ever fires on a *fresh* fork+exec of a target, so a monitor
+that starts late cannot use the zygote and the HyperOS spawner that have been
+running since real boot: every injection entry point waits on a start-up step
+those processes are long past. The monitor respawns them instead — it kills each
+one once, and init, which owns both as services, starts fresh ones that the
+normal fork path injects. Because the zygote is the parent of system_server, this
+is the same one-time "soft restart" a late-load user otherwise triggers by hand
+from the root manager, and the boot animation replays once while the framework
+comes back up. On a normal boot the monitor is already up before either process
+exists, so the scan finds nothing and changes nothing.
 
 Only the KernelSU flavour ships this. APatch has no comparable stage, so the
 APatch archive removes any copy it finds rather than installing one.

@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <stdio.h>
 #include <dirent.h>
 #include <string.h>
 #include <time.h>
@@ -562,22 +563,23 @@ bool sigchld_listener_init() {
 }
 
 /* INFO: Which executable this monitor owns and how the tracer has to be told
-         about it. False for anything left to another monitor. */
+         about it. False for anything left to another monitor. The tracer and
+         the spawner flag describe the fork path's hand-off only, so a caller
+         that just needs the ownership answer - the respawn below - passes NULL
+         for both instead of keeping a second copy of the table. */
 static bool match_target(const char *program, const char **tracer, bool *is_spawner) {
-  if (strcmp(program, APP_PROCESS_NAME) == 0) {
-    *tracer = "./bin/zygisk-ptrace" MONITOR_ABI;
-  } else if (strcmp(program, HYOS_SPAWNER_NAME) == 0) {
-    *tracer = "./bin/zygisk-ptrace" MONITOR_ABI;
-    *is_spawner = true;
-  }
+  bool program_is_spawner = strcmp(program, HYOS_SPAWNER_NAME) == 0;
+  if (strcmp(program, APP_PROCESS_NAME) != 0 && !program_is_spawner) return false;
 
-  return *tracer != NULL;
+  if (tracer != NULL) *tracer = "./bin/zygisk-ptrace" MONITOR_ABI;
+  if (is_spawner != NULL) *is_spawner = program_is_spawner;
+
+  return true;
 }
 
 /* INFO: The hand-off leaves the target stopped and untraced. Detaching with
          SIGSTOP is what lets a fresh tracer seize a process that is already
-         past its exec, which is how the fork path and the claim below reach
-         the same starting state. */
+         past its exec. */
 static void launch_tracer(pid_t pid, const char *tracer, bool is_spawner) {
   LOGD("Detaching %d", pid);
   ptrace(PTRACE_DETACH, pid, 0, SIGSTOP);
@@ -622,20 +624,125 @@ static void launch_tracer(pid_t pid, const char *tracer, bool is_spawner) {
   }
 }
 
+/* INFO: get_program() is written for a single, known target: it reports a
+         readlink failure as an error. A /proc sweep is the opposite case -
+         most entries are kernel threads, zombies or otherwise unreadable, and
+         none of that is worth a line - so the bulk scan uses this silent
+         variant instead. The (deleted) suffix is stripped the same way, so a
+         program the kernel annotated still matches its expected path. */
+static bool program_matches(int pid, char *buf, size_t size) {
+  static const char kDeletedSuffix[] = " (deleted)";
+
+  char path[PATH_MAX];
+  snprintf(path, sizeof(path), "/proc/%d/exe", pid);
+
+  ssize_t sz = readlink(path, buf, size);
+  if (sz <= 0) return false;
+
+  if ((size_t)sz >= size) sz = (ssize_t)size - 1;
+
+  if ((size_t)sz >= sizeof(kDeletedSuffix) - 1 &&
+      memcmp(buf + sz - (sizeof(kDeletedSuffix) - 1), kDeletedSuffix, sizeof(kDeletedSuffix) - 1) == 0) {
+    sz -= (ssize_t)(sizeof(kDeletedSuffix) - 1);
+  }
+
+  buf[sz] = '\0';
+
+  return true;
+}
+
+/* INFO: The parent of a pid, or 0 when it cannot be determined. Field four of
+         /proc/<pid>/stat is the ppid, but the second field is the command name
+         in parentheses and may itself contain spaces and parentheses, so the
+         fields are counted from the last ')' rather than from the start of the
+         line. */
+static pid_t parent_of(int pid) {
+  char path[PATH_MAX];
+  snprintf(path, sizeof(path), "/proc/%d/stat", pid);
+
+  FILE *stat = fopen(path, "r");
+  if (stat == NULL) return 0;
+
+  char line[512];
+  if (fgets(line, sizeof(line), stat) == NULL) {
+    fclose(stat);
+
+    return 0;
+  }
+
+  fclose(stat);
+
+  char *rparen = strrchr(line, ')');
+  if (rparen == NULL) return 0;
+
+  int ppid = 0;
+
+  /* INFO: After the ')' come the state, then the ppid. */
+  if (sscanf(rparen + 1, " %*c %d", &ppid) != 1) return 0;
+
+  return (pid_t)ppid;
+}
+
 /* INFO: A TRACEFORK monitor sees only the forks made after init was seized, so
          anything already running when this monitor starts is invisible to that
-         path. That is the whole of a late-load session, and also the case for a
-         monitor that had to be restarted. Their executables are matched against
-         the same table the fork path uses, and each is seized and handed to a
-         tracer without being killed: a failed trace detaches and resumes it,
-         whereas a respawn depends on init restarting the process cleanly. */
-static void claim_running_targets(void) {
+         path. That is the whole of a late-load session - KernelSU loaded from
+         an LKM once the boot stages have passed - and also the case for a
+         monitor that had to be restarted.
+
+         Taking those processes over in place does not work. Every injection
+         entry point waits on a step of the target's own start-up that a process
+         which finished starting minutes ago never takes again: the tracer on
+         the linker resolving app_process's __libc_init slot, the injected GOT
+         break on the call through that slot. A tracer handed such a process
+         ends up stepping a live target instead of injecting it, and every
+         Zygisk module stays dead.
+
+         The one event that does work is the fresh fork+exec the fork path
+         already handles, so a target that predates this monitor is respawned
+         rather than taken over. init owns both the zygote and the HyperOS
+         spawner as services and forks them itself, so killing one makes init
+         start a fresh process that this monitor catches exactly the way it
+         catches them on a normal boot. The zygote is the framework's parent, so
+         its restart also replays the boot stages and re-forks system_server -
+         the one-time bootstrap a late-load user otherwise triggers by hand with
+         the root manager's "soft restart", and what makes a framework that is
+         already up agree to be injected at all.
+
+         On a normal boot this finds nothing, because the monitor starts well
+         before init ever execs either target; the scan only ever matches in a
+         late-load session or after a monitor restart.
+
+         A target is identified by three things together - its executable, its
+         parent being init, and being the lowest-pid match - because none of
+         them is enough on its own. See the scan below. */
+static void respawn_stale_targets(void) {
   DIR *proc = opendir("/proc");
   if (proc == NULL) {
     PLOGE("opendir /proc");
 
     return;
   }
+
+  /* INFO: The whole directory is read before anything is killed, and each
+           target is then killed at most once - the lowest pid that matched.
+
+           Two reasons it cannot be a kill-as-you-go scan. The executable alone
+           does not identify a target: every app process is a fork of the
+           zygote and reads back as app_process64, and there is more than one
+           init service using that executable (the secondary zygote uses the
+           32-bit one, but a WebView zygote does not). readdir returns entries
+           in directory order, so whichever one happens to come first would be
+           the one killed - possibly a user app, while the real zygote is left
+           alone and injection silently never happens. Restricting to init's
+           children removes the app processes, and taking the lowest pid picks
+           the zygote over any later, on-demand service. The zygote is init's
+           first Java process and so carries the lowest pid of any of them.
+
+           Killing one target also cannot disturb the other: init can bring a
+           fresh one up while this scan is still reading /proc, and killing that
+           one too would turn the respawn into a loop. */
+  pid_t stale_zygote = 0;
+  pid_t stale_spawner = 0;
 
   struct dirent *entry;
   while ((entry = readdir(proc)) != NULL) {
@@ -646,50 +753,30 @@ static void claim_running_targets(void) {
     if (endptr == entry->d_name || *endptr != '\0' || pid_value <= 1) continue;
 
     char program[PATH_MAX];
-    if (get_program((int)pid_value, program, sizeof(program)) == -1) continue;
+    if (!program_matches((int)pid_value, program, sizeof(program))) continue;
 
-    const char *tracer = NULL;
     bool is_spawner = false;
+    if (!match_target(program, NULL, &is_spawner)) continue;
 
-    if (!match_target(program, &tracer, &is_spawner)) continue;
+    /* INFO: The zygote and the spawner are init's own services, so both are
+             direct children of pid 1 - which no app process ever is. */
+    if (parent_of((int)pid_value) != 1) continue;
 
-    /* INFO: The zygote crash accounting is about restarts: these processes
-              were started before this monitor existed, so none of them is a
-              restart, and none carries the --restart flag below (the spawn
-              count is still 1). */
-    if (!is_spawner && !ensure_daemon_created()) {
-      LOGW("VexZygiskd%s not running, skipping %ld", MONITOR_ABI, pid_value);
-
-      continue;
-    }
-
-    LOGI("Claiming %ld (%s), already running when the monitor started", pid_value, program);
-
-    if (ptrace(PTRACE_SEIZE, (pid_t)pid_value, 0, 0) == -1) {
-      PLOGE("seize %ld", pid_value);
-
-      continue;
-    }
-
-    int status = 0;
-    if (waitpid((pid_t)pid_value, &status, __WALL) == -1) {
-      PLOGE("waitpid");
-
-      continue;
-    }
-
-    if (!WIFSTOPPED(status)) {
-      LOGE("Process %ld did not stop for the hand-off", pid_value);
-
-      ptrace(PTRACE_DETACH, (pid_t)pid_value, 0, SIGCONT);
-
-      continue;
-    }
-
-    launch_tracer((pid_t)pid_value, tracer, is_spawner);
+    pid_t *stale = is_spawner ? &stale_spawner : &stale_zygote;
+    if (*stale == 0 || (pid_t)pid_value < *stale) *stale = (pid_t)pid_value;
   }
 
   closedir(proc);
+
+  pid_t targets[2] = { stale_zygote, stale_spawner };
+
+  for (size_t i = 0; i < sizeof(targets) / sizeof(targets[0]); i++) {
+    if (targets[i] == 0) continue;
+
+    LOGI("pid %d predates this monitor; killing it so init hands us a fresh one to inject", targets[i]);
+
+    kill(targets[i], SIGKILL);
+  }
 }
 
 void sigchld_listener_callback() {
@@ -1238,8 +1325,10 @@ void init_monitor() {
 
   /* INFO: Targets that predate this monitor are not forks of init and so
             never reach the TRACEFORK path; a late-load session is made
-            entirely of them, so they are claimed here instead. */
-  claim_running_targets();
+            entirely of them, so they are respawned here. Ordered after the
+            seize on purpose: the fresh fork init makes in response is what
+            the fork path below then catches. */
+  respawn_stale_targets();
 
   if (!monitor_events_init()) exit(1);
 
