@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <stdio.h>
 #include <dirent.h>
 #include <string.h>
 #include <time.h>
@@ -650,6 +651,38 @@ static bool program_matches(int pid, char *buf, size_t size) {
   return true;
 }
 
+/* INFO: The parent of a pid, or 0 when it cannot be determined. Field four of
+         /proc/<pid>/stat is the ppid, but the second field is the command name
+         in parentheses and may itself contain spaces and parentheses, so the
+         fields are counted from the last ')' rather than from the start of the
+         line. */
+static pid_t parent_of(int pid) {
+  char path[PATH_MAX];
+  snprintf(path, sizeof(path), "/proc/%d/stat", pid);
+
+  FILE *stat = fopen(path, "r");
+  if (stat == NULL) return 0;
+
+  char line[512];
+  if (fgets(line, sizeof(line), stat) == NULL) {
+    fclose(stat);
+
+    return 0;
+  }
+
+  fclose(stat);
+
+  char *rparen = strrchr(line, ')');
+  if (rparen == NULL) return 0;
+
+  int ppid = 0;
+
+  /* INFO: After the ')' come the state, then the ppid. */
+  if (sscanf(rparen + 1, " %*c %d", &ppid) != 1) return 0;
+
+  return (pid_t)ppid;
+}
+
 /* INFO: A TRACEFORK monitor sees only the forks made after init was seized, so
          anything already running when this monitor starts is invisible to that
          path. That is the whole of a late-load session - KernelSU loaded from
@@ -677,7 +710,11 @@ static bool program_matches(int pid, char *buf, size_t size) {
 
          On a normal boot this finds nothing, because the monitor starts well
          before init ever execs either target; the scan only ever matches in a
-         late-load session or after a monitor restart. */
+         late-load session or after a monitor restart.
+
+         A target is identified by three things together - its executable, its
+         parent being init, and being the lowest-pid match - because none of
+         them is enough on its own. See the scan below. */
 static void respawn_stale_targets(void) {
   DIR *proc = opendir("/proc");
   if (proc == NULL) {
@@ -686,12 +723,26 @@ static void respawn_stale_targets(void) {
     return;
   }
 
-  /* INFO: Each target is respawned at most once. init can bring a fresh one up
-           while this scan is still reading /proc, and killing that one too
-           would turn the respawn into a loop, so the two the table knows about
-           are tracked instead of every pid the scan happens to match. */
-  bool respawned_zygote = false;
-  bool respawned_spawner = false;
+  /* INFO: The whole directory is read before anything is killed, and each
+           target is then killed at most once - the lowest pid that matched.
+
+           Two reasons it cannot be a kill-as-you-go scan. The executable alone
+           does not identify a target: every app process is a fork of the
+           zygote and reads back as app_process64, and there is more than one
+           init service using that executable (the secondary zygote uses the
+           32-bit one, but a WebView zygote does not). readdir returns entries
+           in directory order, so whichever one happens to come first would be
+           the one killed - possibly a user app, while the real zygote is left
+           alone and injection silently never happens. Restricting to init's
+           children removes the app processes, and taking the lowest pid picks
+           the zygote over any later, on-demand service. The zygote is init's
+           first Java process and so carries the lowest pid of any of them.
+
+           Killing one target also cannot disturb the other: init can bring a
+           fresh one up while this scan is still reading /proc, and killing that
+           one too would turn the respawn into a loop. */
+  pid_t stale_zygote = 0;
+  pid_t stale_spawner = 0;
 
   struct dirent *entry;
   while ((entry = readdir(proc)) != NULL) {
@@ -707,17 +758,25 @@ static void respawn_stale_targets(void) {
     bool is_spawner = false;
     if (!match_target(program, NULL, &is_spawner)) continue;
 
-    bool *respawned = is_spawner ? &respawned_spawner : &respawned_zygote;
-    if (*respawned) continue;
+    /* INFO: The zygote and the spawner are init's own services, so both are
+             direct children of pid 1 - which no app process ever is. */
+    if (parent_of((int)pid_value) != 1) continue;
 
-    *respawned = true;
-
-    LOGI("%s %ld predates this monitor; killing it so init hands us a fresh one to inject", program, pid_value);
-
-    kill((pid_t)pid_value, SIGKILL);
+    pid_t *stale = is_spawner ? &stale_spawner : &stale_zygote;
+    if (*stale == 0 || (pid_t)pid_value < *stale) *stale = (pid_t)pid_value;
   }
 
   closedir(proc);
+
+  pid_t targets[2] = { stale_zygote, stale_spawner };
+
+  for (size_t i = 0; i < sizeof(targets) / sizeof(targets[0]); i++) {
+    if (targets[i] == 0) continue;
+
+    LOGI("pid %d predates this monitor; killing it so init hands us a fresh one to inject", targets[i]);
+
+    kill(targets[i], SIGKILL);
+  }
 }
 
 void sigchld_listener_callback() {
