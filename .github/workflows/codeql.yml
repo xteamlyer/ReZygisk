@@ -32,11 +32,23 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # INFO: The C/C++ build reads the submodules, exactly as the two CI
+          #       workflows do; without them autobuild has nothing to compile.
+          submodules: ${{ matrix.language == 'c-cpp' && 'recursive' || 'false' }}
 
-      # INFO: C/C++ needs a build to be observed; the repository's own build
-      #       would drag in the submodules and the NDK. Autobuild discovers the
-      #       compile commands that matter for the traced sources, and the
-      #       Python and Actions analyses do not build at all.
+      # INFO: Autobuild runs this repository's own make, and common.mk points
+      #       the toolchain at $(HOME)/Android/Sdk/ndk/29.0.13113456, which
+      #       this image does not carry. Point NDK_PATH at the NDK the image
+      #       does have, the same way the build jobs in ci.yml and
+      #       trusted_ci.yml do, so autobuild finds a compiler.
+      - name: Setup NDK_PATH
+        if: matrix.language == 'c-cpp'
+        run: echo "NDK_PATH=$ANDROID_NDK_LATEST_HOME" >> $GITHUB_ENV
+
+      # INFO: C/C++ needs a build to be observed, so let autobuild run the
+      #       repository's make under tracing; the Python and Actions
+      #       analyses do not build at all.
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
