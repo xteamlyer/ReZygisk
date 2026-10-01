@@ -2,7 +2,6 @@ name: Trusted CI
 
 on:
   push:
-    branches: [ main ]
 
   # INFO: The same jobs, asked for by hand. A push is the normal way in, but
   #       until now it was the only way in - so when GitHub does not schedule
