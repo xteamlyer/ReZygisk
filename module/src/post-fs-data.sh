@@ -60,7 +60,29 @@ fi
 #         below is left for it, and it restarts its zygote count on finding it.
 #         Without that, a user rebooting three times in a row is counted as a
 #         crash loop and injection is shut off.
+#         Two checks, because they cover different windows of the same thing.
+#         pidof only sees a monitor once it has exec'd its own name, while what
+#         actually makes a second monitor fail is init already being seized -
+#         and TracerPid goes non-zero the moment that happens. Leaving only the
+#         first check in place is what occasionally starts a second monitor on
+#         the boot stages of a soft reboot, which then reports "Multiple
+#         Zygisks functioning" and exits while the first one keeps working.
+have_monitor=0
+
+#         `|| true` is load-bearing: this is a command-substitution assignment,
+#         so under `set -e` a status file that cannot be read would abort the
+#         script instead of just leaving the check without an answer - and
+#         aborting here means never starting a monitor at all.
+init_tracer="$(awk '/^TracerPid:/{print $2; exit}' /proc/1/status 2>/dev/null || true)"
+if [ -n "$init_tracer" ] && [ "$init_tracer" != "0" ]; then
+  have_monitor=1
+fi
+
 if pidof "zygisk-ptrace64" >/dev/null 2>&1; then
+  have_monitor=1
+fi
+
+if [ "$have_monitor" = "1" ]; then
   echo "VexZygisk: monitor already running, leaving its session alone"
 
   : > /data/adb/rezygisk/soft-reboot || true

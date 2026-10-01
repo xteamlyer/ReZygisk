@@ -615,6 +615,52 @@ static int sigchld_status;
 static pid_t *sigchld_process;
 static size_t sigchld_process_count = 0;
 
+/* INFO: Who holds init right now, or 0 when nobody does. Read out of
+         /proc/1/status instead of inferred, because it answers the only
+         question a failed seizure leaves open. */
+static pid_t init_tracer_pid() {
+  FILE *status = fopen("/proc/1/status", "re");
+  if (status == NULL) return 0;
+
+  char line[256];
+  pid_t tracer = 0;
+
+  while (fgets(line, sizeof(line), status) != NULL) {
+    if (sscanf(line, "TracerPid: %d", &tracer) == 1) break;
+  }
+
+  fclose(status);
+
+  return tracer;
+}
+
+/* INFO: Whether the process tracing init is one of ours. A second monitor
+         losing the race is a normal outcome of a soft reboot - the boot stages
+         replay and two of them can look at the same untraced init within
+         milliseconds - and it is worth saying nothing about. A seizure held by
+         anything else is the conflict the status line below exists to report.
+         The two are only told apart by looking at who is holding it. */
+static bool init_traced_by_monitor() {
+  pid_t tracer = init_tracer_pid();
+  if (tracer <= 0) return false;
+
+  char path[PATH_MAX];
+  snprintf(path, sizeof(path), "/proc/%d/comm", tracer);
+
+  FILE *comm = fopen(path, "re");
+  if (comm == NULL) return false;
+
+  char name[64] = { 0 };
+  /* INFO: The comm is capped at fifteen characters, which both monitor names
+            fit exactly; the prefix leaves the ABI out of it. */
+  bool matched = fgets(name, sizeof(name), comm) != NULL &&
+                 strncmp(name, "zygisk-ptrace", sizeof("zygisk-ptrace") - 1) == 0;
+
+  fclose(comm);
+
+  return matched;
+}
+
 static bool claim_init_tracer() {
   if (ptrace(PTRACE_SEIZE, 1, 0, PTRACE_O_TRACEFORK) == -1) {
     /* INFO: In cases where, for example, 2 VexZygisks were executed, the second
@@ -622,9 +668,17 @@ static bool claim_init_tracer() {
                In this case, we should just exit the second process to avoid
                conflicts. */
     if (errno == EPERM) {
-      LOGW("Another process is already tracing init");
+      if (init_traced_by_monitor()) {
+        /* INFO: Another monitor of ours holds init. Nothing is wrong, this
+                  process simply has nothing to do, and reporting it as a
+                  conflict would put a failure into the manager's status for a
+                  session that is working. */
+        LOGD("A VexZygisk monitor is already tracing init, leaving it to that one");
+      } else {
+        LOGW("Another process is already tracing init");
 
-      update_status("❌ Multiple Zygisks functioning");
+        update_status("❌ Multiple Zygisks functioning");
+      }
     } else {
       PLOGE("failed to seize init");
     }
