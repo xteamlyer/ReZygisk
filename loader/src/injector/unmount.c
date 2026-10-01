@@ -22,6 +22,10 @@ struct mount_info {
   char *root;
   char *target;
   char *source;
+  /* INFO: Kept so an overlay can be told from any other mount: it is the one
+            field that always names how a mount was made. See
+            carries_root_trace(), which needs to exempt overlays. */
+  char *type;
 };
 
 struct mount_list {
@@ -35,6 +39,7 @@ static void mount_list_free(struct mount_list *list) {
     free(list->items[i].root);
     free(list->items[i].target);
     free(list->items[i].source);
+    free(list->items[i].type);
   }
 
   free(list->items);
@@ -103,15 +108,20 @@ static bool mount_info_parse(char *line, struct mount_info *out) {
   out->root = strdup(root);
   out->target = strdup(target);
   out->source = strdup(source);
+  out->type = strdup(type);
 
-  if (out->root == NULL || out->target == NULL || out->source == NULL) {
+  /* INFO: Every field is cleared even when only one allocation failed, so a
+            caller that frees a rejected entry cannot reach a stale pointer. */
+  if (out->root == NULL || out->target == NULL || out->source == NULL || out->type == NULL) {
     free(out->root);
     free(out->target);
     free(out->source);
+    free(out->type);
 
     out->root = NULL;
     out->target = NULL;
     out->source = NULL;
+    out->type = NULL;
 
     LOGE("Failed copying a mountinfo entry");
 
@@ -192,14 +202,45 @@ static bool mount_path_at_or_under(const char *path, const char *prefix) {
 }
 
 static bool carries_root_trace(const struct mount_info *info, const char *loop_source) {
+  /* INFO: Where a mount lands. The whole of /data/adb is covered rather than
+            just the modules directory: a root solution keeps more than its
+            modules there - the directories its own stages run from among them
+            - and a mount point anywhere under it is the solution's to have
+            made, so a detector reading the mount table finds it either way.
+
+            /data/adb itself is left out. It is the home of the tree rather
+            than a trace on it, and the mounts being hidden are the ones made
+            inside it. */
+  if (info->target != NULL && strcmp(info->target, ROOT_ADB_DIR) != 0 &&
+      mount_path_at_or_under(info->target, ROOT_ADB_DIR)) return true;
+
+  /* INFO: Where an overlay was taken from: the overlayfs root the solution
+            stacks its modules into. */
   if (mount_path_at_or_under(info->root, ROOT_MODULES_ROOT)) return true;
-  if (mount_path_at_or_under(info->target, ROOT_MODULES_DIR)) return true;
 
   for (size_t i = 0; i < ROOT_SOURCE_COUNT; i++) {
     if (strcmp(info->source, kRootSources[i]) == 0) return true;
   }
 
-  return loop_source != NULL && strcmp(info->source, loop_source) == 0;
+  if (loop_source != NULL && strcmp(info->source, loop_source) == 0) return true;
+
+  /* INFO: A magic mount is a bind mount, and a bind mount is the one case
+            where the modules directory is named by the *source* rather than by
+            the target: what it covers is a system path, so neither of the two
+            tests above can see it. That is what leaves a magic mount readable
+            in a process whose every other trace has been reverted.
+
+            Overlays are exempt, and that is the whole reason the type is
+            carried: an overlay is already matched by its source name above,
+            and one built by a metamodule can be carrying resources the process
+            still resolves through those paths - taking it down here is how a
+            fix for a detector turns into a broken module. A bind mount reports
+            the filesystem it was taken from, so the type is what separates the
+            two. */
+  if (info->type != NULL && strcmp(info->type, MOUNT_TYPE_OVERLAY) != 0 &&
+      mount_path_at_or_under(info->source, ROOT_MODULES_DIR)) return true;
+
+  return false;
 }
 
 static int compare_by_id_descending(const void *a, const void *b) {
@@ -279,10 +320,13 @@ bool revert_root_traces_here(void) {
     traces.items[traces.len] = all.items[i];
 
     /* INFO: The entry now belongs to the trace list, detaching it keeps the
-              cleanup below from freeing it twice. */
+              cleanup below from freeing it twice. Every field has to be
+              detached, or the type - the newest one - would be freed by both
+              lists. */
     all.items[i].root = NULL;
     all.items[i].target = NULL;
     all.items[i].source = NULL;
+    all.items[i].type = NULL;
 
     traces.len++;
   }
