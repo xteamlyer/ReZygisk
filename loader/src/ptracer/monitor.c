@@ -4,6 +4,7 @@
 #include <string.h>
 #include <time.h>
 #include <errno.h>
+#include <signal.h>
 
 #include <unistd.h>
 #include <sys/epoll.h>
@@ -462,6 +463,18 @@ void rezygiskd_listener_stop() {
 
 #define MAX_RETRY_COUNT 5
 
+/* INFO: Left behind by the module's post-fs-data.sh when it finds this monitor
+         already running, which only happens when the boot stages have just been
+         replayed around a session that stayed up.
+
+         That mark is the one thing that tells a soft reboot apart from a crash
+         on this side: both are a zygote that went away and came back. Counting
+         a soft reboot towards the crash-loop stop is what shuts injection off
+         on the third one in a row, and a single reboot costs more than one
+         count - every process matched here is /system/bin/app_process64, which
+         is also what the WebView zygote runs as, and the reboot restarts both. */
+#define SOFT_REBOOT_MARKER ZYGISK_TMP_PATH "/soft-reboot"
+
 static struct timespec last_zygote = {
   .tv_sec = 0,
   .tv_nsec = 0
@@ -471,6 +484,20 @@ static int count_zygote = 0;
 static bool should_stop_inject() {
   struct timespec now = {};
   clock_gettime(CLOCK_MONOTONIC, &now);
+
+  /* INFO: Consumed as it is read, so one replayed stage restarts the count
+            once. Done before the count is touched: this exec belongs to the
+            reboot, and must not also be read as the first restart of a new
+            crash loop. */
+  if (unlink(SOFT_REBOOT_MARKER) == 0) {
+    LOGI("The boot stages were replayed around this session, restarting the zygote count");
+
+    count_zygote = 0;
+    last_zygote = now;
+
+    return false;
+  }
+
   if (now.tv_sec - last_zygote.tv_sec < 30)
     count_zygote++;
   else
@@ -481,16 +508,74 @@ static bool should_stop_inject() {
   return count_zygote >= MAX_RETRY_COUNT;
 }
 
-static bool ensure_daemon_created() {
-  if (status.daemon_pid != -1) {
-    LOGI("VexZygiskd%s already running", MONITOR_ABI);
+/* INFO: How long a freshly forked daemon is given to bind its socket before the
+         socket's absence is read as "unreachable". Only exists so the zygote
+         and the spawner, which exec within milliseconds of each other on a
+         normal boot, cannot have the daemon that was just forked for them
+         mistaken for a stale one and killed. */
+#define DAEMON_SETTLE_SECONDS 5
 
-    return status.daemon_running;
+/* INFO: When the current daemon was forked, on the monotonic clock. */
+static struct timespec daemon_forked_at = {};
+
+/* INFO: A daemon is reachable through its socket, not through its pid: one that
+         is still alive but whose socket file has been removed cannot be
+         connected to at all, and answering "already running" for it disables
+         every module while the process sits there looking healthy.
+
+         That is not hypothetical. A soft reboot replays the boot stages, and
+         the module's post-fs-data.sh clears the directory holding these sockets
+         while a monitor and daemon from the previous session are still running.
+         The pid alone left that session permanently unreachable.
+
+         Only an outright missing file counts as "gone". Any other failure -
+         EACCES if the policy denies the check itself, ELOOP, a transient
+         ENOMEM - is answered as present on purpose, because reading it as
+         missing would kill a daemon that may be perfectly reachable, once per
+         process start, and the replacement would hit the same wall. */
+static bool daemon_socket_present() {
+  if (access(ZYGISK_CP_SOCKET, F_OK) == 0) return true;
+
+  return errno != ENOENT;
+}
+
+static bool ensure_daemon_created() {
+  pid_t stale_pid = -1;
+
+  if (status.daemon_pid != -1) {
+    struct timespec now = {};
+    clock_gettime(CLOCK_MONOTONIC, &now);
+
+    if (now.tv_sec - daemon_forked_at.tv_sec < DAEMON_SETTLE_SECONDS || daemon_socket_present()) {
+      LOGD("VexZygiskd%s already running", MONITOR_ABI);
+
+      return status.daemon_running;
+    }
+
+    LOGW("VexZygiskd%s is alive but %s is gone, replacing it", MONITOR_ABI, ZYGISK_CP_SOCKET);
+
+    /* INFO: Recorded rather than killed on the spot. Killing here and forking
+              afterwards would let a failed fork leave nothing behind at all,
+              turning a transient failure - ENOMEM on a loaded device - into the
+              permanent "not running" answer below. The old daemon keeps its
+              socket until the replacement has taken the path over. */
+    stale_pid = status.daemon_pid;
+
+    status.daemon_pid = -1;
+    status.daemon_running = false;
   }
 
   pid_t pid = fork();
   if (pid < 0) {
     PLOGE("create VexZygiskd%s", MONITOR_ABI);
+
+    /* INFO: Put the daemon that was about to be replaced back as the current
+              one. It cannot be connected to, but neither can nothing, and the
+              next attempt is still free to replace it. */
+    if (stale_pid != -1) {
+      status.daemon_pid = stale_pid;
+      status.daemon_running = true;
+    }
 
     return false;
   }
@@ -505,9 +590,20 @@ static bool ensure_daemon_created() {
     exit(1);
   }
 
+  if (stale_pid != -1) {
+    /* INFO: The stale daemon is killed rather than abandoned: it holds a socket
+              nobody can reach any more, and leaving it behind would leak one
+              daemon per replacement. Its own exit is then reaped by the generic
+              child handling, which no longer matches it against the pid below,
+              and answers it as what it is - a process that already exited. */
+    kill(stale_pid, SIGKILL);
+  }
+
   status.supported = true;
   status.daemon_pid = pid;
   status.daemon_running = true;
+
+  clock_gettime(CLOCK_MONOTONIC, &daemon_forked_at);
 
   return true;
 }
@@ -519,6 +615,52 @@ static int sigchld_status;
 static pid_t *sigchld_process;
 static size_t sigchld_process_count = 0;
 
+/* INFO: Who holds init right now, or 0 when nobody does. Read out of
+         /proc/1/status instead of inferred, because it answers the only
+         question a failed seizure leaves open. */
+static pid_t init_tracer_pid() {
+  FILE *status = fopen("/proc/1/status", "re");
+  if (status == NULL) return 0;
+
+  char line[256];
+  pid_t tracer = 0;
+
+  while (fgets(line, sizeof(line), status) != NULL) {
+    if (sscanf(line, "TracerPid: %d", &tracer) == 1) break;
+  }
+
+  fclose(status);
+
+  return tracer;
+}
+
+/* INFO: Whether the process tracing init is one of ours. A second monitor
+         losing the race is a normal outcome of a soft reboot - the boot stages
+         replay and two of them can look at the same untraced init within
+         milliseconds - and it is worth saying nothing about. A seizure held by
+         anything else is the conflict the status line below exists to report.
+         The two are only told apart by looking at who is holding it. */
+static bool init_traced_by_monitor() {
+  pid_t tracer = init_tracer_pid();
+  if (tracer <= 0) return false;
+
+  char path[PATH_MAX];
+  snprintf(path, sizeof(path), "/proc/%d/comm", tracer);
+
+  FILE *comm = fopen(path, "re");
+  if (comm == NULL) return false;
+
+  char name[64] = { 0 };
+  /* INFO: The comm is capped at fifteen characters, which both monitor names
+            fit exactly; the prefix leaves the ABI out of it. */
+  bool matched = fgets(name, sizeof(name), comm) != NULL &&
+                 strncmp(name, "zygisk-ptrace", sizeof("zygisk-ptrace") - 1) == 0;
+
+  fclose(comm);
+
+  return matched;
+}
+
 static bool claim_init_tracer() {
   if (ptrace(PTRACE_SEIZE, 1, 0, PTRACE_O_TRACEFORK) == -1) {
     /* INFO: In cases where, for example, 2 VexZygisks were executed, the second
@@ -526,9 +668,17 @@ static bool claim_init_tracer() {
                In this case, we should just exit the second process to avoid
                conflicts. */
     if (errno == EPERM) {
-      LOGW("Another process is already tracing init");
+      if (init_traced_by_monitor()) {
+        /* INFO: Another monitor of ours holds init. Nothing is wrong, this
+                  process simply has nothing to do, and reporting it as a
+                  conflict would put a failure into the manager's status for a
+                  session that is working. */
+        LOGD("A VexZygisk monitor is already tracing init, leaving it to that one");
+      } else {
+        LOGW("Another process is already tracing init");
 
-      update_status("❌ Multiple Zygisks functioning");
+        update_status("❌ Multiple Zygisks functioning");
+      }
     } else {
       PLOGE("failed to seize init");
     }
@@ -886,6 +1036,16 @@ void sigchld_listener_callback() {
       }
 
       if (!known) {
+        /* INFO: A process that has already exited is not "newly attached": there
+                  is nothing left to set ptrace options on, and a slot taken here
+                  is never handed back. This is the path a replaced daemon takes -
+                  the branch above no longer matches it, because the pid it was
+                  recorded under already names the replacement. Letting it fall
+                  through would leak that slot and, once the kernel hands the pid
+                  to somebody else, make an unrelated process look like one that
+                  is already under trace. */
+        if (WIFEXITED(sigchld_status) || WIFSIGNALED(sigchld_status)) continue;
+
         LOGV("New process %d attached", pid);
 
         for (size_t i = 0; i < sigchld_process_count; i++) {
