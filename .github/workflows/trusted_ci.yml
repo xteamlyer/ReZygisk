@@ -2,8 +2,7 @@ name: Trusted CI
 
 on:
   push:
-    branches: [ main ]
-
+    
 jobs:
   test:
     name: Host unit tests
