@@ -463,6 +463,18 @@ void rezygiskd_listener_stop() {
 
 #define MAX_RETRY_COUNT 5
 
+/* INFO: Left behind by the module's post-fs-data.sh when it finds this monitor
+         already running, which only happens when the boot stages have just been
+         replayed around a session that stayed up.
+
+         That mark is the one thing that tells a soft reboot apart from a crash
+         on this side: both are a zygote that went away and came back. Counting
+         a soft reboot towards the crash-loop stop is what shuts injection off
+         on the third one in a row, and a single reboot costs more than one
+         count - every process matched here is /system/bin/app_process64, which
+         is also what the WebView zygote runs as, and the reboot restarts both. */
+#define SOFT_REBOOT_MARKER ZYGISK_TMP_PATH "/soft-reboot"
+
 static struct timespec last_zygote = {
   .tv_sec = 0,
   .tv_nsec = 0
@@ -472,6 +484,20 @@ static int count_zygote = 0;
 static bool should_stop_inject() {
   struct timespec now = {};
   clock_gettime(CLOCK_MONOTONIC, &now);
+
+  /* INFO: Consumed as it is read, so one replayed stage restarts the count
+            once. Done before the count is touched: this exec belongs to the
+            reboot, and must not also be read as the first restart of a new
+            crash loop. */
+  if (unlink(SOFT_REBOOT_MARKER) == 0) {
+    LOGI("The boot stages were replayed around this session, restarting the zygote count");
+
+    count_zygote = 0;
+    last_zygote = now;
+
+    return false;
+  }
+
   if (now.tv_sec - last_zygote.tv_sec < 30)
     count_zygote++;
   else

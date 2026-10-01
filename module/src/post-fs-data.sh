@@ -52,8 +52,19 @@ fi
 #         wipe and starting a second monitor. On a cold boot nothing survives,
 #         pidof finds nothing, and both still run, exactly as late-load.sh
 #         already leaves a live session alone on its side.
+#
+#         Getting here also means the boot stages have just been replayed around
+#         a session that stayed up, which is a soft reboot and not a crash. The
+#         monitor cannot tell the two apart by itself - a replayed stage and a
+#         zygote that died look identical from where it stands - so the mark
+#         below is left for it, and it restarts its zygote count on finding it.
+#         Without that, a user rebooting three times in a row is counted as a
+#         crash loop and injection is shut off.
 if pidof "zygisk-ptrace64" >/dev/null 2>&1; then
   echo "VexZygisk: monitor already running, leaving its session alone"
+
+  : > /data/adb/rezygisk/soft-reboot || true
+
   exit 0
 fi
 
