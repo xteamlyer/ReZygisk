@@ -1,3 +1,5 @@
+#include <errno.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -7,6 +9,7 @@
 #include <dlfcn.h>
 #include <unistd.h>
 #include <dobby.h>
+#include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 
@@ -158,12 +161,14 @@ static int zn_plt_hook(void *base_addr, const char *symbol, void *hook_handler, 
 
 /* INFO: The Zygisk Next contract allows a single inline hook per address, so
          the hooked addresses are remembered: a second request for one of them
-         is rejected instead of piling a second trampoline on top. */
-#define ZN_MAX_INLINE_HOOKS 64
-
+         is rejected instead of piling a second trampoline on top. The table
+         itself is unbounded, exactly as NyaZygisk's is - a module that hooks
+         many addresses is not refused at an arbitrary cap; it only fails when
+         memory does. */
 static pthread_mutex_t zn_hooked_lock = PTHREAD_MUTEX_INITIALIZER;
-static uintptr_t zn_hooked[ZN_MAX_INLINE_HOOKS];
+static uintptr_t *zn_hooked = NULL;
 static size_t zn_hooked_count = 0;
+static size_t zn_hooked_capacity = 0;
 
 static bool zn_is_hooked(uintptr_t address) {
   for (size_t i = 0; i < zn_hooked_count; i++)
@@ -196,12 +201,21 @@ static int zn_claim_address(uintptr_t address) {
     return ZN_FAILED;
   }
 
-  if (zn_hooked_count >= ZN_MAX_INLINE_HOOKS) {
-    pthread_mutex_unlock(&zn_hooked_lock);
+  if (zn_hooked_count == zn_hooked_capacity) {
+    size_t capacity = zn_hooked_capacity == 0 ? 16 : zn_hooked_capacity * 2;
 
-    LOGE("Reached the limit of %d inline hooks, rejecting %p", ZN_MAX_INLINE_HOOKS, (void *)address);
+    uintptr_t *grown = (uintptr_t *)realloc(zn_hooked, capacity * sizeof(uintptr_t));
 
-    return ZN_FAILED;
+    if (grown == NULL) {
+      pthread_mutex_unlock(&zn_hooked_lock);
+
+      LOGE("Failed growing the inline hook table for %p", (void *)address);
+
+      return ZN_FAILED;
+    }
+
+    zn_hooked = grown;
+    zn_hooked_capacity = capacity;
   }
 
   zn_hooked[zn_hooked_count++] = address;
@@ -499,7 +513,7 @@ static bool zn_hyos_spawner_file_identity(dev_t *dev, ino_t *inode) {
     *inode = zn_hyos_spawner_inode;
     found = true;
 
-    LOGD("HyperOS runtime: spawner image at %s (dev %lu, inode %lu)",
+    LOGI("HyperOS runtime: spawner image at %s (dev %lu, inode %lu)",
          entry->path, (unsigned long)entry->dev, (unsigned long)entry->inode);
 
     break;
@@ -510,22 +524,76 @@ static bool zn_hyos_spawner_file_identity(dev_t *dev, ino_t *inode) {
   return found;
 }
 
+/* INFO: The process name of last resort, read the way NyaZygisk reads it:
+         /proc/self/cmdline, one byte at a time, counting a lone NUL as "the
+         kernel has nothing" rather than as a name. */
+static bool zn_hyos_read_cmdline(char *out, size_t max_len) {
+  if (out == NULL || max_len == 0) return false;
+
+  int fd;
+  do {
+    fd = open("/proc/self/cmdline", O_RDONLY | O_CLOEXEC);
+  } while (fd == -1 && errno == EINTR);
+
+  if (fd == -1) return false;
+
+  size_t length = 0;
+  bool complete = false;
+
+  while (length + 1 < max_len) {
+    char value = '\0';
+    ssize_t got;
+
+    do {
+      got = read(fd, &value, sizeof(value));
+    } while (got == -1 && errno == EINTR);
+
+    if (got != (ssize_t)sizeof(value)) break;
+
+    if (value == '\0') {
+      complete = length != 0;
+
+      break;
+    }
+
+    out[length++] = value;
+  }
+
+  close(fd);
+
+  out[length] = '\0';
+
+  return complete;
+}
+
 /* INFO: Fires once per child: the callback contract promises exactly one
-         onAppSpecialized per app process. */
+          onAppSpecialized per app process. */
 static void zn_hyos_deliver(const char *pkg_name, const char *se_info) {
   if (!zn_hyos_in_child() || zn_hyos_fired || zn_hyos_module_count == 0) return;
 
   zn_hyos_fired = true;
 
-  const char *process_name = zn_hyos_has_process_name ? zn_hyos_process_name : "hyos_app";
+  char process_name[256];
+  char package_name[256];
+  char se_info_buf[64];
 
-  LOGD("HyperOS runtime: app specialized, process=%s package=%s", process_name, pkg_name);
+  if (zn_hyos_has_process_name && zn_hyos_process_name[0] != '\0') {
+    snprintf(process_name, sizeof(process_name), "%s", zn_hyos_process_name);
+  } else if (!zn_hyos_read_cmdline(process_name, sizeof(process_name)) || process_name[0] == '\0') {
+    if (prctl(PR_GET_NAME, process_name, 0, 0, 0) != 0 || process_name[0] == '\0') {
+      snprintf(process_name, sizeof(process_name), "%s", "hyos_app");
+    }
+  }
+
+  snprintf(package_name, sizeof(package_name), "%s", pkg_name != NULL ? pkg_name : "");
+  snprintf(se_info_buf, sizeof(se_info_buf), "%s", se_info != NULL ? se_info : "");
+
+  LOGI("HyperOS runtime: app specialized, process=%s package=%s se_info=%s",
+       process_name, package_name, se_info_buf);
 
   /* INFO: The contract hands the modules strings, never NULL: a package the
             platform did not resolve is an empty one. */
-  zn_runtime_notify_app_specialized(process_name,
-                                    pkg_name != NULL ? pkg_name : "",
-                                    se_info != NULL ? se_info : "");
+  zn_runtime_notify_app_specialized(process_name, package_name, se_info_buf);
 }
 
 static int zn_hyos_setcontext_hook(uid_t uid, int is_system_server, const char *se_info, const char *pkg_name) {
@@ -553,7 +621,7 @@ static int zn_hyos_setname_hook(pthread_t thread, const char *name) {
     snprintf(zn_hyos_process_name, sizeof(zn_hyos_process_name), "%s", name);
     zn_hyos_has_process_name = true;
 
-    LOGD("HyperOS runtime: captured process name %s", zn_hyos_process_name);
+    LOGI("HyperOS runtime: captured process name %s", zn_hyos_process_name);
   }
 
   return result;
@@ -568,7 +636,7 @@ static void *zn_hyos_plt_hook_spawner(dev_t dev, ino_t inode, const char *symbol
 
   if (zn_lsplt_register_hook(dev, inode, symbol, hook, &backup) == 0 &&
       zn_lsplt_commit_hook() == 0 && backup != NULL) {
-    LOGD("HyperOS runtime: PLT hooked %s in the spawner", symbol);
+    LOGI("HyperOS runtime: PLT hooked %s in the spawner", symbol);
 
     return backup;
   }
@@ -617,7 +685,7 @@ static void zn_hyos_install_hooks(void) {
       if (zn_inline_hook(target, (void *)(uintptr_t)zn_hyos_setcontext_hook, &backup) == ZN_SUCCESS) {
         zn_hyos_original_setcontext = (zn_hyos_setcontext_fn)(uintptr_t)backup;
 
-        LOGD("HyperOS runtime: inline hooked selinux_android_setcontext at %p", target);
+        LOGI("HyperOS runtime: inline hooked selinux_android_setcontext at %p", target);
       }
     }
   }
@@ -636,7 +704,7 @@ static void zn_hyos_install_hooks(void) {
       if (zn_inline_hook(target, (void *)(uintptr_t)zn_hyos_setname_hook, &backup) == ZN_SUCCESS) {
         zn_hyos_original_setname = (zn_hyos_setname_fn)(uintptr_t)backup;
 
-        LOGD("HyperOS runtime: hooked pthread_setname_np at %p", target);
+        LOGI("HyperOS runtime: inline hooked pthread_setname_np at %p", target);
       }
     }
   }
@@ -657,8 +725,8 @@ static int zn_hyos_register_module(const void *module_ptr) {
 
   if (module == NULL || module->onAppSpecialized == NULL) return ZN_FAILED;
 
-  if (module->target_api_version <= 0 || module->target_api_version > ZYGISK_NEXT_HYOS_API_VERSION) {
-    LOGE("HyperOS runtime module targets API %d, supported is 1..%d",
+  if (module->target_api_version > ZYGISK_NEXT_HYOS_API_VERSION) {
+    LOGE("HyperOS runtime module targets API %d, only up to %d is supported",
          module->target_api_version, ZYGISK_NEXT_HYOS_API_VERSION);
 
     return ZN_FAILED;
@@ -690,7 +758,7 @@ static int zn_hyos_register_module(const void *module_ptr) {
     zn_hyos_install_hooks();
   }
 
-  LOGD("HyperOS runtime: module registered (%zu total)", zn_hyos_module_count);
+  LOGI("HyperOS runtime: module registered (%zu total)", zn_hyos_module_count);
 
   return ZN_SUCCESS;
 }
@@ -770,7 +838,7 @@ void zn_init_hyos_runtime(void) {
   zn_hyos_runtime_enabled = true;
   zn_hyos_spawner_pid = (pid_t)syscall(__NR_getpid);
 
-  LOGD("HyperOS runtime enabled in pid %d", zn_hyos_spawner_pid);
+  LOGI("HyperOS runtime enabled in pid %d", zn_hyos_spawner_pid);
 }
 
 bool zn_is_hyos_spawner(void) {

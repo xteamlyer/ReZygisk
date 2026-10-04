@@ -448,8 +448,12 @@ static bool load_entry(struct zn_entry *entry, void **lib_handle, int module_fd)
     return false;
   }
 
-  if (module->target_api_version < 1 || module->target_api_version > ZYGISK_NEXT_API_VERSION) {
-    LOGE("Unsupported Zygisk Next API version %d in [%s]", module->target_api_version, entry->lib_path);
+  /* INFO: Only the upper bound is a rejection: a module declaring a version
+            below 2 still loads and is served the table it would have reached,
+            exactly as NyaZygisk serves its oldest modules. */
+  if (module->target_api_version > ZYGISK_NEXT_API_VERSION) {
+    LOGW("The module [%s] targets Zygisk Next API version %d, only up to %d is supported",
+         entry->lib_path, module->target_api_version, ZYGISK_NEXT_API_VERSION);
 
     dlclose(lib);
     if (module_fd >= 0) close(module_fd);
