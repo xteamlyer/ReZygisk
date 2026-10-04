@@ -9,12 +9,16 @@
          zygote itself, where the process name can be read off /proc/self/exe.
 
          `connect_retry` is the number of extra daemon connection attempts
-         after the first, spaced 0.1s apart. The HyperOS spawner passes more
-         than one because it can exec in the same breath as the daemon's own
-         fork, and a single attempt would lose that race and leave the spawner
-         with no runtime modules at all. Even at five that is 0.6s at worst,
-         and it only ever costs anything while the daemon is unreachable. */
-void zn_load_all_modules(uint8_t connect_retry);
+         after the first, spaced `connect_delay_us` apart. Ordinary targets
+         pass the default 0.1s spacing; the HyperOS spawner passes five
+         attempts a second apart, because it can exec in the same breath as
+         the daemon's own fork, its module plan is the only one its apps will
+         ever see - they inherit it and nothing asks again - and the
+         direct-scan fallback cannot rescue it: reading /data/adb needs
+         permissions only the zygote's domain holds. NyaZygisk, whose loader
+         carries the same one-shot contract, waits out the same window; the
+         wait only ever costs anything while the daemon is unreachable. */
+void zn_load_all_modules(uint8_t connect_retry, uint32_t connect_delay_us);
 
 /* INFO: Same scan, but for a forked child that is about to specialize:
          process_name is the nice_name the zygote was given, and only the

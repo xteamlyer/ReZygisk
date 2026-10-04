@@ -2,10 +2,26 @@
 #define DAEMON_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "zygisk_paths.h"
 
 #include <unistd.h>
+
+/* INFO: How long one unproductive daemon connection attempt waits before the
+         next one. The default is short because the socket either accepts at
+         once or is refused outright, so a full second only stalls the
+         injection of every process while the daemon is down - it is still long
+         enough to ride out a daemon restart. */
+#define REZYGISKD_RETRY_DELAY_US 100000
+
+/* INFO: The HyperOS spawner passes the long one. Its daemon may have been
+         forked in the same breath as the spawner's own exec, and its module
+         plan is loaded once for every app the spawner will ever fork: the
+         children inherit it, and nothing asks again. NyaZygisk, whose loader
+         carries the same one-shot contract, connects five times a second
+         apart, which is the window this matches. */
+#define REZYGISKD_RETRY_DELAY_SPAWNER_US 1000000
 
 /* INFO: Must stay in step with enum DaemonSocketAction on the daemon. */
 enum rezygiskd_actions {
@@ -79,10 +95,10 @@ void free_modules(struct zygisk_modules *modules);
 /* INFO: Asks the daemon for the Zygisk Next libraries targeting this process.
          Returns false when the daemon cannot be reached, which is the signal to
          fall back to reading the modules directly. `retry` is the number of
-         extra attempts after the first, and rezygiskd_connect() spaces them
-         0.1s apart, so the call makes retry + 1 attempts and waits at most
-         retry * 0.1s. */
-bool rezygiskd_read_zn_modules(const char *process_name, const char *process_path, uint8_t retry, struct zn_module_file **out, size_t *out_len);
+         extra attempts after the first, spaced `retry_delay_us` apart, so the
+         call makes retry + 1 attempts and waits at most retry * retry_delay_us
+         while the daemon is unreachable. */
+bool rezygiskd_read_zn_modules(const char *process_name, const char *process_path, uint8_t retry, uint32_t retry_delay_us, struct zn_module_file **out, size_t *out_len);
 
 void free_zn_module_files(struct zn_module_file *files, size_t len);
 

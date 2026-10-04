@@ -39,10 +39,17 @@ void entry(void *addr, size_t size) {
   }
 
   /* INFO: The spawner is waited for: the daemon may have been forked for this
-           very process moments ago, and a single connection attempt would lose
-           that race and leave it with no runtime modules at all. Every other
-           target is reached long after the daemon is up. */
-  zn_load_all_modules(is_spawner ? 5 : 1);
+           very process moments ago, a single connection attempt would lose
+           that race and leave it with no runtime modules at all, and nothing
+           after this point ever asks again - every app the spawner forks
+           inherits what was loaded here. Its plan is also beyond the reach of
+           the direct-scan fallback, which needs the zygote's permissions on
+           /data/adb, so the retry window is the one safety there is: five
+           attempts a second apart, the window NyaZygisk's loader waits out
+           for the same one-shot contract. Every other target is reached long
+           after the daemon is up and keeps the short spacing. */
+  zn_load_all_modules(is_spawner ? 5 : 1,
+                      is_spawner ? REZYGISKD_RETRY_DELAY_SPAWNER_US : REZYGISKD_RETRY_DELAY_US);
 
   struct kernel_version version = parse_kversion();
   if (version.major > 3 || (version.major == 3 && version.minor >= 8)) {

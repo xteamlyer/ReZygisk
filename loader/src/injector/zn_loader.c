@@ -664,11 +664,11 @@ static void load_module_file(const char *module_dir, const char *file, const cha
          Returns false only when the daemon itself could not be reached, which
          is the one case where scanning the modules directly is worth trying.
          An empty answer is a valid answer and must not trigger the fallback. */
-static bool load_modules_from_daemon(const char *process_name, const char *process_path, uint8_t connect_retry) {
+static bool load_modules_from_daemon(const char *process_name, const char *process_path, uint8_t connect_retry, uint32_t connect_delay_us) {
   struct zn_module_file *files = NULL;
   size_t files_len = 0;
 
-  if (!rezygiskd_read_zn_modules(process_name, process_path, connect_retry, &files, &files_len)) return false;
+  if (!rezygiskd_read_zn_modules(process_name, process_path, connect_retry, connect_delay_us, &files, &files_len)) return false;
 
   LOGD("Got %zu Zygisk Next module(s) from VexZygiskd", files_len);
 
@@ -743,9 +743,17 @@ static bool load_modules_from_daemon(const char *process_name, const char *proce
 
          This runs once in the zygote itself, and once more in every forked
          child with that child's own process name — without the second call,
-         per-application targets (name=com.foo) would never match anywhere. */
-static void zn_load_modules_for(const char *process_name, const char *process_path, uint8_t connect_retry) {
-  if (load_modules_from_daemon(process_name, process_path, connect_retry)) return;
+         per-application targets (name=com.foo) would never match anywhere.
+
+         The direct scan below is a zygote-shaped safety net: reading /data/adb
+         takes permissions only the zygote's domain holds, so for every other
+         target - the HyperOS spawner above all - a race lost against the
+         daemon's own startup is unrecoverable. That is why a caller whose
+         load is one-shot for a whole process tree passes a connection window
+         measured in seconds, and why an ordinary one still keeps the short
+         spacing it can afford. */
+static void zn_load_modules_for(const char *process_name, const char *process_path, uint8_t connect_retry, uint32_t connect_delay_us) {
+  if (load_modules_from_daemon(process_name, process_path, connect_retry, connect_delay_us)) return;
 
   LOGW("VexZygiskd is unavailable, reading the Zygisk Next modules directly");
 
@@ -778,7 +786,7 @@ static void zn_load_modules_for(const char *process_name, const char *process_pa
   closedir(dir);
 }
 
-void zn_load_all_modules(uint8_t connect_retry) {
+void zn_load_all_modules(uint8_t connect_retry, uint32_t connect_delay_us) {
   char *process_path = read_process_path();
   if (process_path == NULL) {
     LOGE("Failed resolving the current process path");
@@ -788,7 +796,7 @@ void zn_load_all_modules(uint8_t connect_retry) {
 
   const char *process_name = get_process_name(process_path);
 
-  zn_load_modules_for(process_name, process_path, connect_retry);
+  zn_load_modules_for(process_name, process_path, connect_retry, connect_delay_us);
 
   free(process_path);
 }
@@ -803,7 +811,7 @@ void zn_load_modules_for_process(const char *process_name) {
     return;
   }
 
-  zn_load_modules_for(process_name, process_path, 1);
+  zn_load_modules_for(process_name, process_path, 1, REZYGISKD_RETRY_DELAY_US);
 
   free(process_path);
 }
