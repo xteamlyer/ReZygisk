@@ -153,38 +153,39 @@ jobs:
           echo "publishing from $(pwd)"
           ls -la build/out/ build-apatch/out/
 
+          # INFO: Every zip of the build travels as ONE media group - a single
+          #       message, one caption on its first item, the shape a channel
+          #       reader expects a build to arrive in.
+          count=0
+          doc_args=()
           for zip in $zips; do
-            # INFO: The caption mirrors the channel format the builds are
-            #       expected in: the project, the run, the commit message as
-            #       a quote, and the two links at the foot.
-            caption="<b>VexZygisk</b>"$'\n'"Run: #$RUN_NUMBER"$'\n\n'"<blockquote>$message</blockquote>"$'\n\n'"<a href=\"$COMMIT_URL\">Commit</a>"$'\n'"<a href=\"$RUN_URL\">Workflow run</a>"
-
-            # INFO: Text fields go through --form-string, which sends them
-            #       literally - no @ or ; the form parser could act on. The
-            #       document keeps -F, whose @filename is what makes curl
-            #       read the file, addressed absolutely so it cannot depend
-            #       on where a previous step left the working directory.
-            args=(-sS -o tg_response.json -w '%{http_code}'
-                  --form-string "chat_id=$TG_CHAT_ID"
-                  --form-string "caption=$caption"
-                  --form-string "parse_mode=HTML"
-                  -F "document=@$GITHUB_WORKSPACE/$zip")
-
-            if [ -n "$TG_THREAD_ID" ]; then
-              args+=(--form-string "message_thread_id=$TG_THREAD_ID")
-            fi
-
-            args+=("https://api.telegram.org/bot$TG_BOT_TOKEN/sendDocument")
-
-            # INFO: A Telegram hiccup must not fail a build that already
-            #       produced its artifacts: warn and keep sending the rest.
-            http=$(curl "${args[@]}" 2>curl_err.txt) || http="curl-failed"
-
-            if [ "$http" != "200" ]; then
-              echo "::warning::Telegram upload of $(basename "$zip") failed ($http)"
-              [ -s curl_err.txt ] && echo "::warning::curl: $(cat curl_err.txt)"
-              [ -s tg_response.json ] && echo "::warning::Telegram said: $(head -c 400 tg_response.json)"
-            else
-              echo "Sent $(basename "$zip"): $(head -c 120 tg_response.json)"
-            fi
+            doc_args+=(-F "doc$count=@$GITHUB_WORKSPACE/$zip")
+            count=$((count + 1))
           done
+
+          media=$(CAPTION="<b>VexZygisk</b>"$'\n'"Run: #ci_$RUN_NUMBER"$'\n\n'"<blockquote>$message</blockquote>"$'\n\n'"<a href=\"$COMMIT_URL\">Commit</a>"$'\n'"<a href=\"$RUN_URL\">Workflow run</a>" \
+            python3 -c 'import json, sys, os; n = int(sys.argv[1]); m = [{"type": "document", "media": "attach://doc%d" % i} for i in range(n)]; m[0]["caption"] = os.environ["CAPTION"]; m[0]["parse_mode"] = "HTML"; print(json.dumps(m))' "$count")
+
+          curl_args=(-sS -o tg_response.json -w '%{http_code}'
+                     --form-string "chat_id=$TG_CHAT_ID"
+                     -F "media=$media"
+                     "${doc_args[@]}")
+
+          if [ -n "$TG_THREAD_ID" ]; then
+            curl_args+=(--form-string "message_thread_id=$TG_THREAD_ID")
+          fi
+
+          curl_args+=("https://api.telegram.org/bot$TG_BOT_TOKEN/sendMediaGroup")
+
+          # INFO: A Telegram hiccup must not fail a build that already
+          #       produced its artifacts: warn and keep the delivery to the
+          #       next run instead of failing the build over it.
+          http=$(curl "${curl_args[@]}" 2>curl_err.txt) || http="curl-failed"
+
+          if [ "$http" != "200" ]; then
+            echo "::warning::Telegram upload failed ($http)"
+            [ -s curl_err.txt ] && echo "::warning::curl: $(cat curl_err.txt)"
+            [ -s tg_response.json ] && echo "::warning::Telegram said: $(head -c 400 tg_response.json)"
+          else
+            echo "Sent $count zips as one media group: $(head -c 160 tg_response.json)"
+          fi
