@@ -70,6 +70,9 @@ jobs:
           COMMIT_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$COMMIT_SHA"
           title=$(escape_html <<< "$COMMIT_TITLE" | head -c 300)
 
+          echo "publishing from $(pwd)"
+          ls -la build/out/
+
           for zip in $zips; do
             name=$(escape_html <<< "$(basename "$zip" .zip)")
 
@@ -79,18 +82,33 @@ jobs:
             fi
             caption+=$'\n'"<a href=\"$COMMIT_URL\">commit</a> · <a href=\"$RUN_URL\">CI run</a>"
 
+            # INFO: Text fields go through --form-string, which sends them
+            #       literally - no @ or ; the form parser could act on. The
+            #       document keeps -F, whose @filename is what makes curl
+            #       read the file, addressed absolutely so it cannot depend
+            #       on where a previous step left the working directory.
+            args=(-sS -o tg_response.json -w '%{http_code}'
+                  --form-string "chat_id=$TG_CHAT_ID"
+                  --form-string "caption=$caption"
+                  --form-string "parse_mode=HTML"
+                  -F "document=@$GITHUB_WORKSPACE/$zip")
+
+            if [ -n "$TG_THREAD_ID" ]; then
+              args+=(--form-string "message_thread_id=$TG_THREAD_ID")
+            fi
+
+            args+=("https://api.telegram.org/bot$TG_BOT_TOKEN/sendDocument")
+
             # INFO: A Telegram hiccup must not fail a build that already
             #       produced its artifacts: warn and keep sending the rest.
-            http=$(curl -sS -o tg_response.json -w '%{http_code}' \
-              -F "chat_id=$TG_CHAT_ID" \
-              ${TG_THREAD_ID:+-F "message_thread_id=$TG_THREAD_ID"} \
-              -F "caption=$caption" \
-              -F "parse_mode=HTML" \
-              -F "document=@$zip" \
-              "https://api.telegram.org/bot$TG_BOT_TOKEN/sendDocument") || http="curl-failed"
+            http=$(curl "${args[@]}" 2>curl_err.txt) || http="curl-failed"
 
             if [ "$http" != "200" ]; then
-              echo "::warning::Telegram upload of $(basename "$zip") failed ($http): $(head -c 400 tg_response.json 2>/dev/null || true)"
+              echo "::warning::Telegram upload of $(basename "$zip") failed ($http)"
+              [ -s curl_err.txt ] && echo "::warning::curl: $(cat curl_err.txt)"
+              [ -s tg_response.json ] && echo "::warning::Telegram said: $(head -c 400 tg_response.json)"
+            else
+              echo "Sent $(basename "$zip"): $(head -c 120 tg_response.json)"
             fi
           done
 
