@@ -170,7 +170,7 @@ jobs:
           #       attempt with "can't parse media JSON object", while the
           #       identical JSON through a file parses and ships.
           CAPTION="<b>VexZygisk</b>"$'\n'"Run: #ci_$RUN_NUMBER"$'\n\n'"<blockquote>$message</blockquote>"$'\n\n'"<a href=\"$COMMIT_URL\">Commit</a>"$'\n'"<a href=\"$RUN_URL\">Workflow run</a>" \
-            python3 -c 'import json, sys, os; n = int(sys.argv[1]); m = [{"type": "document", "media": "attach://doc%d" % i} for i in range(n)]; m[0]["caption"] = os.environ["CAPTION"]; m[0]["parse_mode"] = "HTML"; open(sys.argv[2], "w").write(json.dumps(m))' "$count" "$GITHUB_WORKSPACE/tg_media.json"
+            python3 -c 'import json, sys, os; n = int(sys.argv[1]); m = [{"type": "document", "media": "attach://doc%d" % i} for i in range(n)]; m[-1]["caption"] = os.environ["CAPTION"]; m[-1]["parse_mode"] = "HTML"; open(sys.argv[2], "w").write(json.dumps(m))' "$count" "$GITHUB_WORKSPACE/tg_media.json"
 
           curl_args=(-sS -o tg_response.json -w '%{http_code}'
                      --form-string "chat_id=$TG_CHAT_ID"
