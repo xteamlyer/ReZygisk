@@ -116,7 +116,7 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
           COMMIT_SHA: ${{ github.sha }}
-          COMMIT_TITLE: ${{ github.event.head_commit.message }}
+          RUN_NUMBER: ${{ github.run_number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
@@ -141,19 +141,23 @@ jobs:
           }
 
           COMMIT_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$COMMIT_SHA"
-          title=$(escape_html <<< "$COMMIT_TITLE" | head -c 300)
+
+          # INFO: The commit message quoted whole, the way the channel shows
+          #       it, cut by characters (not bytes) and far enough ahead of
+          #       Telegram's 1024-character caption limit that the escaping
+          #       of the text below cannot push the caption over it.
+          message=$(git log -1 --pretty=%B "$COMMIT_SHA" \
+            | python3 -c "import sys; sys.stdout.write(sys.stdin.read().strip()[:600])" \
+            | escape_html)
 
           echo "publishing from $(pwd)"
           ls -la build/out/ build-apatch/out/
 
           for zip in $zips; do
-            name=$(escape_html <<< "$(basename "$zip" .zip)")
-
-            caption="<b>$name</b>"
-            if [ -n "$title" ]; then
-              caption+=$'\n'"<i>$title</i>"
-            fi
-            caption+=$'\n'"<a href=\"$COMMIT_URL\">commit</a> · <a href=\"$RUN_URL\">CI run</a>"
+            # INFO: The caption mirrors the channel format the builds are
+            #       expected in: the project, the run, the commit message as
+            #       a quote, and the two links at the foot.
+            caption="<b>VexZygisk</b>"$'\n'"Run: #$RUN_NUMBER"$'\n\n'"<blockquote>$message</blockquote>"$'\n\n'"<a href=\"$COMMIT_URL\">Commit</a>"$'\n'"<a href=\"$RUN_URL\">Workflow run</a>"
 
             # INFO: Text fields go through --form-string, which sends them
             #       literally - no @ or ; the form parser could act on. The
