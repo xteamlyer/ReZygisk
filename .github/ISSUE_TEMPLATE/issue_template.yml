@@ -6,7 +6,7 @@ labels: ["bug", "not confirmed"]
 body:
   - type: markdown
     attributes:
-      value: "请先阅读置顶的 #32「如何反馈问题:抓一份「能定位问题」的日志」,按其中的检查清单准备日志 - 附带有效日志的 issue 通常很快就能定位,没有日志的只能靠猜。See the pinned #32 for how to capture useful logs."
+      value: "请先阅读置顶的 #33「如何反馈问题:抓一份「能定位问题」的日志」,按其中的检查清单准备日志 - 附带有效日志的 issue 通常很快就能定位,没有日志的只能靠猜。See the pinned #33 for how to capture useful logs."
 
   - type: input
     id: version
