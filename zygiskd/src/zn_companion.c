@@ -1,1 +1,213 @@
-I2RlZmluZSBMT0dfVEFHICJ6eWdpc2tkLXpuLWNvbXBhbmlvbiIKCiNpbmNsdWRlIDxlcnJuby5oPgojaW5jbHVkZSA8c3RkYm9vbC5oPgojaW5jbHVkZSA8c3RkaW50Lmg+CiNpbmNsdWRlIDxzdGRpby5oPgojaW5jbHVkZSA8c3RkbGliLmg+CiNpbmNsdWRlIDxzdHJpbmcuaD4KCiNpbmNsdWRlIDxkbGZjbi5oPgojaW5jbHVkZSA8cHRocmVhZC5oPgojaW5jbHVkZSA8c2lnbmFsLmg+CiNpbmNsdWRlIDxzeXMvc29ja2V0Lmg+CiNpbmNsdWRlIDxzeXMvc3RhdC5oPgojaW5jbHVkZSA8dW5pc3RkLmg+CgojaW5jbHVkZSA8bGludXgvbGltaXRzLmg+CgojaW5jbHVkZSAienlnaXNrX25leHRfYXBpLmgiCiNpbmNsdWRlICJ1dGlscy5oIgoKLyogSU5GTzogVGhlIGNvbW1hbmQgYnl0ZSBhbmQgdGhlIGNvbnRyb2wgYnVmZmVyIGNvbWUgZnJvbSB0aGUgc2hhcmVkIHByb3RvY29sCiAgICAgICAgIGhlYWRlciwgc28gdGhlIGxvYWRlciB0aGF0IHNlcnZlcyB0aGlzIHNvY2tldCBhbmQgdGhlIGRhZW1vbiB0aGF0CiAgICAgICAgIGhvc3RzIGl0IGNhbm5vdCBkZWZpbmUgdGhlbSBkaWZmZXJlbnRseS4gKi8KI2luY2x1ZGUgInpuX2NvbXBhbmlvbl9wcm90b2NvbC5oIgoKc3RhdGljIHN0cnVjdCBaeWdpc2tOZXh0Q29tcGFuaW9uTW9kdWxlICpsb2FkX2NvbXBhbmlvbl9tb2R1bGUoaW50IGxpYnJhcnlfZmQpIHsKICBjaGFyIHBhdGhbUEFUSF9NQVhdOwogIHNucHJpbnRmKHBhdGgsIHNpemVvZihwYXRoKSwgIi9wcm9jL3NlbGYvZmQvJWQiLCBsaWJyYXJ5X2ZkKTsKCiAgdm9pZCAqaGFuZGxlID0gZGxvcGVuKHBhdGgsIFJUTERfTk9XKTsKICBpZiAoaGFuZGxlID09IE5VTEwpIHsKICAgIExPR0UoIkZhaWxlZCB0byBkbG9wZW4gdGhlIGNvbXBhbmlvbiBsaWJyYXJ5OiAlcyIsIGRsZXJyb3IoKSk7CgogICAgcmV0dXJuIE5VTEw7CiAgfQoKICBzdHJ1Y3QgWnlnaXNrTmV4dENvbXBhbmlvbk1vZHVsZSAqbW9kdWxlID0gKHN0cnVjdCBaeWdpc2tOZXh0Q29tcGFuaW9uTW9kdWxlICopZGxzeW0oaGFuZGxlLCAiem5fY29tcGFuaW9uX21vZHVsZSIpOwogIGlmIChtb2R1bGUgPT0gTlVMTCkgTE9HRSgiRmFpbGVkIHRvIGRsc3ltIHpuX2NvbXBhbmlvbl9tb2R1bGU6ICVzIiwgZGxlcnJvcigpKTsKCiAgcmV0dXJuIG1vZHVsZTsKfQoKc3RydWN0IHpuX2NsaWVudF90aHJlYWRfYXJncyB7CiAgaW50IGZkOwogIHZvaWQgKCpvbl9tb2R1bGVfY29ubmVjdGVkKShpbnQpOwp9OwoKc3RhdGljIHZvaWQgKnpuX2NsaWVudF90aHJlYWQodm9pZCAqYXJnKSB7CiAgc3RydWN0IHpuX2NsaWVudF90aHJlYWRfYXJncyAqYXJncyA9IChzdHJ1Y3Qgem5fY2xpZW50X3RocmVhZF9hcmdzICopYXJnOwoKICBpbnQgZmQgPSBhcmdzLT5mZDsKICB2b2lkICgqb25fbW9kdWxlX2Nvbm5lY3RlZCkoaW50KSA9IGFyZ3MtPm9uX21vZHVsZV9jb25uZWN0ZWQ7CgogIGZyZWUoYXJncyk7CgogIHN0cnVjdCBzdGF0IHN0MCA9IHsgMCB9OwogIGlmIChmc3RhdChmZCwgJnN0MCkgPT0gLTEpIHsKICAgIExPR0UoIiAtIEZhaWxlZCB0byBzdGF0IHRoZSBjb25uZWN0aW9uIGZkOiAlcyIsIHN0cmVycm9yKGVycm5vKSk7CgogICAgcmV0dXJuIE5VTEw7CiAgfQoKICBvbl9tb2R1bGVfY29ubmVjdGVkKGZkKTsKCiAgLyogSU5GTzogU2FtZSBoZXVyaXN0aWMgYXMgdGhlIHN0YW5kYXJkIGNvbXBhbmlvbjogb25seSBjbG9zZSB0aGUgZmQgaWYgaXQKICAgICAgICAgICAgIHN0aWxsIGRlc2NyaWJlcyB0aGUgc2FtZSBmaWxlLCBzbyBhIG1vZHVsZSB0aGF0IGFscmVhZHkgY2xvc2VkCiAgICAgICAgICAgICBpdCBkb2VzIG5vdCBjYXVzZSBhIGRvdWJsZSBjbG9zZSBvbiBhIHJlY3ljbGVkIGRlc2NyaXB0b3IuICovCiAgc3RydWN0IHN0YXQgc3QxOwogIGlmIChmc3RhdChmZCwgJnN0MSkgIT0gLTEgJiYgc3QwLnN0X2RldiA9PSBzdDEuc3RfZGV2ICYmIHN0MC5zdF9pbm8gPT0gc3QxLnN0X2lubyAmJgogICAgICAoKHN0MC5zdF9tb2RlIF4gc3QxLnN0X21vZGUpICYgU19JRk1UKSA9PSAwKSB7CiAgICBMT0dJKCIgLSBDb25uZWN0aW9uIGZkIHVuY2hhbmdlZCBhZnRlciBvbk1vZHVsZUNvbm5lY3RlZCwgY2xvc2luZyBpdCIpOwoKICAgIGNsb3NlKGZkKTsKICB9CgogIHJldHVybiBOVUxMOwp9CgovKiBJTkZPOiBFbnRyeSBwb2ludCBvZiAienlnaXNrZCB6bi1jb21wYW5pb24gPGZkPiIuIEZvcmtlZCBmcm9tIHRoZSBkYWVtb24gc28gdGhlCiAgICAgICAgIGNvbXBhbmlvbiBpbmhlcml0cyB0aGUgZGFlbW9uJ3MgU0VMaW51eCBkb21haW4gcmF0aGVyIHRoYW4gdGhlIHJlc3RyaWN0ZWQKICAgICAgICAgb25lIG9mIHRoZSB0YXJnZXQgdGhhdCBsb2FkZWQgdGhlIG1vZHVsZS4gT25lIHByb2Nlc3Mgc2VydmVzIG9uZSBsaWJyYXJ5CiAgICAgICAgIGZvciB0aGUgZGFlbW9uJ3MgbGlmZXRpbWU7IGV2ZXJ5IGNvbm5lY3RvciBnZXRzIGEgZHVwbGljYXRlIG9mIHRoZSBjb250cm9sCiAgICAgICAgIHNvY2tldC4gUHJvdG9jb2w6IHBhdGggYW5kIGZkIGluLCBvbmUgcmVhZGluZXNzIGJ5dGUgYmFjaywgdGhlbgogICAgICAgICBvbkNvbXBhbmlvbkxvYWRlZCBvbmNlLCB0aGVuIGEgY29tbWFuZCBieXRlIHBsdXMgYW4gZmQgcGVyCiAgICAgICAgIGNvbm5lY3RDb21wYW5pb24gLSBlYWNoIGhhbmRlZCB0byBvbk1vZHVsZUNvbm5lY3RlZCBvbiBpdHMgb3duIHRocmVhZCwgc28KICAgICAgICAgb25lIGJsb2NraW5nIGNvbm5lY3Rpb24gY2Fubm90IHN0YXJ2ZSB0aGUgb3RoZXJzLiAqLwp2b2lkIHpuX2NvbXBhbmlvbl9lbnRyeShpbnQgZmQpIHsKICBMT0dJKCJOZXcgWnlnaXNrIE5leHQgY29tcGFuaW9uLiBDb250cm9sIGZkOiAlZCIsIGZkKTsKCiAgY2hhciBwYXRoW1BBVEhfTUFYXTsKICBzc2l6ZV90IHJldCA9IHJlYWRfc3RyaW5nKGZkLCBwYXRoLCBzaXplb2YocGF0aCkpOwogIGlmIChyZXQgPD0gMCkgewogICAgTE9HRSgiRmFpbGVkIHJlYWRpbmcgdGhlIGNvbXBhbmlvbiBsaWJyYXJ5IHBhdGgiKTsKCiAgICBnb3RvIGNsZWFudXA7CiAgfQoKICBpbnQgbGlicmFyeV9mZCA9IHJlYWRfZmQoZmQpOwogIGlmIChsaWJyYXJ5X2ZkID09IC0xKSB7CiAgICBMT0dFKCJGYWlsZWQgcmVjZWl2aW5nIHRoZSBjb21wYW5pb24gbGlicmFyeSBmZCIpOwoKICAgIGdvdG8gY2xlYW51cDsKICB9CgogIExPR0koIiAtIExpYnJhcnk6ICVzIChmZCAlZCkiLCBwYXRoLCBsaWJyYXJ5X2ZkKTsKCiAgc3RydWN0IFp5Z2lza05leHRDb21wYW5pb25Nb2R1bGUgKm1vZHVsZSA9IGxvYWRfY29tcGFuaW9uX21vZHVsZShsaWJyYXJ5X2ZkKTsKICBjbG9zZShsaWJyYXJ5X2ZkKTsKCiAgaWYgKG1vZHVsZSA9PSBOVUxMIHx8IG1vZHVsZS0+b25Db21wYW5pb25Mb2FkZWQgPT0gTlVMTCB8fCBtb2R1bGUtPm9uTW9kdWxlQ29ubmVjdGVkID09IE5VTEwpIHsKICAgIExPR0UoIiAtIE5vIHVzYWJsZSB6bl9jb21wYW5pb25fbW9kdWxlIGluIFwiJXNcIiIsIHBhdGgpOwoKICAgIHJldCA9IHdyaXRlX3VpbnQ4X3QoZmQsICh1aW50OF90KTApOwogICAgQVNTVVJFX1NJWkVfV1JJVEUoIlpuQ29tcGFuaW9uIiwgInJlc3BvbnNlIiwgcmV0LCBzaXplb2YodWludDhfdCksIGdvdG8gY2xlYW51cCk7CgogICAgZ290byBjbGVhbnVwOwogIH0KCiAgcmV0ID0gd3JpdGVfdWludDhfdChmZCwgKHVpbnQ4X3QpMSk7CiAgaWYgKHJldCAhPSAoc3NpemVfdClzaXplb2YodWludDhfdCkpIHsKICAgIExPR0UoIkZhaWxlZCBjb25maXJtaW5nIHRoZSBjb21wYW5pb24gaXMgcmVhZHkiKTsKCiAgICBnb3RvIGNsZWFudXA7CiAgfQoKICBzdHJ1Y3Qgc2lnYWN0aW9uIHNhOwogIG1lbXNldCgmc2EsIDAsIHNpemVvZihzYSkpOwogIHNhLnNhX2hhbmRsZXIgPSBTSUdfSUdOOwogIHNpZ2FjdGlvbihTSUdQSVBFLCAmc2EsIE5VTEwpOwoKICBtb2R1bGUtPm9uQ29tcGFuaW9uTG9hZGVkKCk7CgogIHdoaWxlICh0cnVlKSB7CiAgICB1aW50OF90IGNvbW1hbmQgPSAwOwogICAgdW5pb24gem5fY21zZ19idWZmZXIgYnVmZmVyOwoKICAgIHN0cnVjdCBpb3ZlYyBpbzsKICAgIGlvLmlvdl9iYXNlID0gJmNvbW1hbmQ7CiAgICBpby5pb3ZfbGVuID0gc2l6ZW9mKGNvbW1hbmQpOwoKICAgIHN0cnVjdCBtc2doZHIgbWVzc2FnZTsKICAgIG1lbXNldCgmbWVzc2FnZSwgMCwgc2l6ZW9mKG1lc3NhZ2UpKTsKICAgIG1lc3NhZ2UubXNnX2lvdiA9ICZpbzsKICAgIG1lc3NhZ2UubXNnX2lvdmxlbiA9IDE7CiAgICBtZXNzYWdlLm1zZ19jb250cm9sID0gYnVmZmVyLmNvbnRyb2w7CiAgICBtZXNzYWdlLm1zZ19jb250cm9sbGVuID0gc2l6ZW9mKGJ1ZmZlci5jb250cm9sKTsKCiAgICBzc2l6ZV90IHJlY2VpdmVkOwogICAgZG8gewogICAgICByZWNlaXZlZCA9IHJlY3Ztc2coZmQsICZtZXNzYWdlLCAwKTsKICAgIH0gd2hpbGUgKHJlY2VpdmVkID09IC0xICYmIGVycm5vID09IEVJTlRSKTsKCiAgICBpZiAocmVjZWl2ZWQgPD0gMCkgewogICAgICBMT0dJKCIgLSBDb250cm9sIHNvY2tldCBjbG9zZWQsIGNvbXBhbmlvbiBvZiBcIiVzXCIgaXMgZG9uZSIsIHBhdGgpOwoKICAgICAgYnJlYWs7CiAgICB9CgogICAgLyogSU5GTzogVGFrZW4gb3V0IGJlZm9yZSB0aGUgY29tbWFuZCBpcyBsb29rZWQgYXQ6IGFuIHVuc2VydmVkIHJlcXVlc3QKICAgICAgICAgICAgIHN0aWxsIG93bnMgdGhlIGZkIGl0IGNhcnJpZWQsIGFuZCBkcm9wcGluZyBpdCBoZXJlIHdvdWxkIGxlYWsgb25lCiAgICAgICAgICAgICBkZXNjcmlwdG9yIHBlciByZXF1ZXN0LiAqLwogICAgaW50IGNvbm5lY3Rpb25fZmQgPSAtMTsKICAgIGZvciAoc3RydWN0IGNtc2doZHIgKmhlYWRlciA9IENNU0dfRklSU1RIRFIoJm1lc3NhZ2UpOyBoZWFkZXIgIT0gTlVMTDsgaGVhZGVyID0gQ01TR19OWFRIRFIoJm1lc3NhZ2UsIGhlYWRlcikpIHsKICAgICAgaWYgKGhlYWRlci0+Y21zZ19sZXZlbCAhPSBTT0xfU09DS0VUIHx8IGhlYWRlci0+Y21zZ190eXBlICE9IFNDTV9SSUdIVFMpIGNvbnRpbnVlOwoKICAgICAgbWVtY3B5KCZjb25uZWN0aW9uX2ZkLCBDTVNHX0RBVEEoaGVhZGVyKSwgc2l6ZW9mKGNvbm5lY3Rpb25fZmQpKTsKCiAgICAgIGJyZWFrOwogICAgfQoKICAgIGlmIChjb21tYW5kICE9IFpOX0NPTVBBTklPTl9DTURfQ09OTkVDVCkgewogICAgICBpZiAoY29ubmVjdGlvbl9mZCA+PSAwKSBjbG9zZShjb25uZWN0aW9uX2ZkKTsKCiAgICAgIGNvbnRpbnVlOwogICAgfQoKICAgIGlmIChjb25uZWN0aW9uX2ZkIDwgMCkgewogICAgICBMT0dFKCIgLSBDb25uZWN0aW9uIHJlcXVlc3Qgd2l0aG91dCBhIGZpbGUgZGVzY3JpcHRvciIpOwoKICAgICAgY29udGludWU7CiAgICB9CgogICAgc3RydWN0IHpuX2NsaWVudF90aHJlYWRfYXJncyAqYXJncyA9IG1hbGxvYyhzaXplb2Yoc3RydWN0IHpuX2NsaWVudF90aHJlYWRfYXJncykpOwogICAgaWYgKGFyZ3MgPT0gTlVMTCkgewogICAgICBMT0dFKCJGYWlsZWQgYWxsb2NhdGluZyB0aGUgY2xpZW50IHRocmVhZCBhcmdzIik7CgogICAgICBjbG9zZShjb25uZWN0aW9uX2ZkKTsKCiAgICAgIGNvbnRpbnVlOwogICAgfQoKICAgIGFyZ3MtPmZkID0gY29ubmVjdGlvbl9mZDsKICAgIGFyZ3MtPm9uX21vZHVsZV9jb25uZWN0ZWQgPSBtb2R1bGUtPm9uTW9kdWxlQ29ubmVjdGVkOwoKICAgIHB0aHJlYWRfdCB0aHJlYWQ7CiAgICBpZiAocHRocmVhZF9jcmVhdGUoJnRocmVhZCwgTlVMTCwgem5fY2xpZW50X3RocmVhZCwgYXJncykgIT0gMCkgewogICAgICBMT0dFKCJGYWlsZWQgY3JlYXRpbmcgYSB0aHJlYWQgZm9yIHRoZSBtb2R1bGUgY29ubmVjdGlvbiIpOwoKICAgICAgY2xvc2UoY29ubmVjdGlvbl9mZCk7CiAgICAgIGZyZWUoYXJncyk7CgogICAgICBjb250aW51ZTsKICAgIH0KCiAgICBwdGhyZWFkX2RldGFjaCh0aHJlYWQpOwogIH0KCiAgY2xlYW51cDoKICAgIGNsb3NlKGZkKTsKCiAgICBleGl0KDApOwp9Cg==
+#define LOG_TAG "zygiskd-zn-companion"
+
+#include <errno.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include <dlfcn.h>
+#include <pthread.h>
+#include <signal.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include <linux/limits.h>
+
+#include "zygisk_next_api.h"
+#include "utils.h"
+
+/* INFO: The command byte and the control buffer come from the shared protocol
+         header, so the loader that serves this socket and the daemon that
+         hosts it cannot define them differently. */
+#include "zn_companion_protocol.h"
+
+static struct ZygiskNextCompanionModule *load_companion_module(int library_fd) {
+  char path[PATH_MAX];
+  snprintf(path, sizeof(path), "/proc/self/fd/%d", library_fd);
+
+  void *handle = dlopen(path, RTLD_NOW);
+  if (handle == NULL) {
+    LOGE("Failed to dlopen the companion library: %s", dlerror());
+
+    return NULL;
+  }
+
+  struct ZygiskNextCompanionModule *module = (struct ZygiskNextCompanionModule *)dlsym(handle, "zn_companion_module");
+  if (module == NULL) LOGE("Failed to dlsym zn_companion_module: %s", dlerror());
+
+  return module;
+}
+
+struct zn_client_thread_args {
+  int fd;
+  void (*on_module_connected)(int);
+};
+
+static void *zn_client_thread(void *arg) {
+  struct zn_client_thread_args *args = (struct zn_client_thread_args *)arg;
+
+  int fd = args->fd;
+  void (*on_module_connected)(int) = args->on_module_connected;
+
+  free(args);
+
+  struct stat st0 = { 0 };
+  if (fstat(fd, &st0) == -1) {
+    LOGE(" - Failed to stat the connection fd: %s", strerror(errno));
+
+    return NULL;
+  }
+
+  on_module_connected(fd);
+
+  /* INFO: Same heuristic as the standard companion: only close the fd if it
+             still describes the same file, so a module that already closed
+             it does not cause a double close on a recycled descriptor. */
+  struct stat st1;
+  if (fstat(fd, &st1) != -1 && st0.st_dev == st1.st_dev && st0.st_ino == st1.st_ino &&
+      ((st0.st_mode ^ st1.st_mode) & S_IFMT) == 0) {
+    LOGI(" - Connection fd unchanged after onModuleConnected, closing it");
+
+    close(fd);
+  }
+
+  return NULL;
+}
+
+/* INFO: Entry point of "zygiskd zn-companion <fd>". Forked from the daemon so the
+         companion inherits the daemon's SELinux domain rather than the restricted
+         one of the target that loaded the module. One process serves one library
+         for the daemon's lifetime; every connector gets a duplicate of the control
+         socket. Protocol: path and fd in, one readiness byte back, then
+         onCompanionLoaded once, then a command byte plus an fd per
+         connectCompanion - each handed to onModuleConnected on its own thread, so
+         one blocking connection cannot starve the others. */
+void zn_companion_entry(int fd) {
+  LOGI("New Zygisk Next companion. Control fd: %d", fd);
+
+  char path[PATH_MAX];
+  ssize_t ret = read_string(fd, path, sizeof(path));
+  if (ret <= 0) {
+    LOGE("Failed reading the companion library path");
+
+    goto cleanup;
+  }
+
+  int library_fd = read_fd(fd);
+  if (library_fd == -1) {
+    LOGE("Failed receiving the companion library fd");
+
+    goto cleanup;
+  }
+
+  LOGI(" - Library: %s (fd %d)", path, library_fd);
+
+  struct ZygiskNextCompanionModule *module = load_companion_module(library_fd);
+  close(library_fd);
+
+  if (module == NULL || module->onCompanionLoaded == NULL || module->onModuleConnected == NULL) {
+    LOGE(" - No usable zn_companion_module in \"%s\"", path);
+
+    ret = write_uint8_t(fd, (uint8_t)0);
+    ASSURE_SIZE_WRITE("ZnCompanion", "response", ret, sizeof(uint8_t), goto cleanup);
+
+    goto cleanup;
+  }
+
+  ret = write_uint8_t(fd, (uint8_t)1);
+  if (ret != (ssize_t)sizeof(uint8_t)) {
+    LOGE("Failed confirming the companion is ready");
+
+    goto cleanup;
+  }
+
+  struct sigaction sa;
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_handler = SIG_IGN;
+  sigaction(SIGPIPE, &sa, NULL);
+
+  module->onCompanionLoaded();
+
+  while (true) {
+    uint8_t command = 0;
+    union zn_cmsg_buffer buffer;
+
+    struct iovec io;
+    io.iov_base = &command;
+    io.iov_len = sizeof(command);
+
+    struct msghdr message;
+    memset(&message, 0, sizeof(message));
+    message.msg_iov = &io;
+    message.msg_iovlen = 1;
+    message.msg_control = buffer.control;
+    message.msg_controllen = sizeof(buffer.control);
+
+    ssize_t received;
+    do {
+      received = recvmsg(fd, &message, 0);
+    } while (received == -1 && errno == EINTR);
+
+    if (received <= 0) {
+      LOGI(" - Control socket closed, companion of \"%s\" is done", path);
+
+      break;
+    }
+
+    /* INFO: Taken out before the command is looked at: an unserved request
+             still owns the fd it carried, and dropping it here would leak one
+             descriptor per request. */
+    int connection_fd = -1;
+    for (struct cmsghdr *header = CMSG_FIRSTHDR(&message); header != NULL; header = CMSG_NXTHDR(&message, header)) {
+      if (header->cmsg_level != SOL_SOCKET || header->cmsg_type != SCM_RIGHTS) continue;
+
+      memcpy(&connection_fd, CMSG_DATA(header), sizeof(connection_fd));
+
+      break;
+    }
+
+    if (command != ZN_COMPANION_CMD_CONNECT) {
+      if (connection_fd >= 0) close(connection_fd);
+
+      continue;
+    }
+
+    if (connection_fd < 0) {
+      LOGE(" - Connection request without a file descriptor");
+
+      continue;
+    }
+
+    struct zn_client_thread_args *args = malloc(sizeof(struct zn_client_thread_args));
+    if (args == NULL) {
+      LOGE("Failed allocating the client thread args");
+
+      close(connection_fd);
+
+      continue;
+    }
+
+    args->fd = connection_fd;
+    args->on_module_connected = module->onModuleConnected;
+
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, zn_client_thread, args) != 0) {
+      LOGE("Failed creating a thread for the module connection");
+
+      close(connection_fd);
+      free(args);
+
+      continue;
+    }
+
+    pthread_detach(thread);
+  }
+
+  cleanup:
+    close(fd);
+
+    exit(0);
+}

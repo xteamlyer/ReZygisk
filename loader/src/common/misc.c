@@ -1,1 +1,391 @@
-I2luY2x1ZGUgPHN0ZGlvLmg+CiNpbmNsdWRlIDxzdGRsaWIuaD4KI2luY2x1ZGUgPGludHR5cGVzLmg+CiNpbmNsdWRlIDxzY2hlZC5oPgojaW5jbHVkZSA8c3lzL21tYW4uaD4KI2luY2x1ZGUgPHN5cy9zb2NrZXQuaD4KI2luY2x1ZGUgPHN5cy9zeXNtYWNyb3MuaD4KI2luY2x1ZGUgPHN5cy91dHNuYW1lLmg+CiNpbmNsdWRlIDxzeXMvd2FpdC5oPgojaW5jbHVkZSA8Y3R5cGUuaD4KI2luY2x1ZGUgPGZjbnRsLmg+CgojaW5jbHVkZSA8dW5pc3RkLmg+CgojaW5jbHVkZSAibG9nZ2luZy5oIgojaW5jbHVkZSAic29ja2V0X3V0aWxzLmgiCgojaW5jbHVkZSAibWlzYy5oIgoKaW50IHBhcnNlX2ludChjb25zdCBjaGFyICpzdHIpIHsKICBpbnQgdmFsID0gMDsKCiAgY2hhciAqYyA9IChjaGFyICopc3RyOwogIHdoaWxlICgqYykgewogICAgaWYgKCpjID4gJzknIHx8ICpjIDwgJzAnKQogICAgICByZXR1cm4gLTE7CgogICAgdmFsID0gdmFsICogMTAgKyAqYyAtICcwJzsKICAgIGMrKzsKICB9CgogIHJldHVybiB2YWw7Cn0KCnN0cnVjdCBrZXJuZWxfdmVyc2lvbiBwYXJzZV9rdmVyc2lvbih2b2lkKSB7CiAgc3RydWN0IHV0c25hbWUgdXRzOwogIGlmICh1bmFtZSgmdXRzKSA9PSAtMSkgewogICAgUExPR0UoInVuYW1lIik7CgogICAgcmV0dXJuIChzdHJ1Y3Qga2VybmVsX3ZlcnNpb24pIHsgMCB9OwogIH0KCiAgc3RydWN0IGtlcm5lbF92ZXJzaW9uIHZlcnNpb247CiAgaWYgKHNzY2FuZih1dHMucmVsZWFzZSwgIiVoaHUuJXUuJXUiLCAmdmVyc2lvbi5tYWpvciwgJnZlcnNpb24ubWlub3IsICZ2ZXJzaW9uLnBhdGNoKSAhPSAzKSB7CiAgICBMT0dFKCJGYWlsZWQgdG8gcGFyc2Uga2VybmVsIHZlcnNpb24iKTsKCiAgICByZXR1cm4gKHN0cnVjdCBrZXJuZWxfdmVyc2lvbikgeyAwIH07CiAgfQoKICByZXR1cm4gdmVyc2lvbjsKfQoKLyogSU5GTzogT25lIGxpbmUgb2YgYSBtYXBzIHN0cmVhbSBpbnRvIGFuIGVudHJ5LiBUaGUgcGF0aCBwb2ludHMgaW50byB0aGUKICAgICAgICAgbGluZSwgd2hpY2ggc3RheXMgdGhlIGNhbGxlcidzIHRvIGtlZXAgYWxpdmUgLSB0aGUgZW50cnkgaXMgb25seQogICAgICAgICB2YWxpZCBmb3IgYXMgbG9uZyBhcyB0aGF0IGJ1ZmZlciBpcy4gKi8Kc3RhdGljIGJvb2wgcGFyc2VfbWFwc19saW5lKGNoYXIgKmxpbmUsIHN0cnVjdCBtYXBfZW50cnkgKmVudHJ5KSB7CiAgLyogSU5GTzogc3RyY3NwbiBsZWF2ZXMgdGhlIGNvbnRlbnQgaW50YWN0IHdoZW4gdGhlIGxhc3QgbWFwcyBsaW5lIGhhcyBubwogICAgICAgICAgICB0cmFpbGluZyBuZXdsaW5lLCB3aGljaCBzdHJsZW4gLSAxIHdvdWxkIGNvcnJ1cHQuICovCiAgbGluZVtzdHJjc3BuKGxpbmUsICJcbiIpXSA9ICdcMCc7CgogIHVpbnRwdHJfdCBzdGFydCwgZW5kLCBvZmZzZXQ7CiAgdW5zaWduZWQgaW50IGRldl9tYWpvciwgZGV2X21pbm9yOwogIGlub190IGlub2RlOwogIGNoYXIgcGVybXNbNV0gPSB7IDAgfTsKICBpbnQgcGF0aF9vZmY7CgogIGlmIChzc2NhbmYobGluZSwgIiUiIFBSSXhQVFIgIi0lIiBQUkl4UFRSICIgJTRzICUiIFBSSXhQVFIgIiAleDoleCAlbHUgJW4iLAogICAgICAgICAgICAgJnN0YXJ0LCAmZW5kLCBwZXJtcywgJm9mZnNldCwgJmRldl9tYWpvciwgJmRldl9taW5vciwgJmlub2RlLCAmcGF0aF9vZmYpICE9IDcpIHsKICAgIHJldHVybiBmYWxzZTsKICB9CgogIGludCBwZXJtc19iaXQgPSAwOwogIGlmIChwZXJtc1swXSA9PSAncicpIHBlcm1zX2JpdCB8PSBQUk9UX1JFQUQ7CiAgaWYgKHBlcm1zWzFdID09ICd3JykgcGVybXNfYml0IHw9IFBST1RfV1JJVEU7CiAgaWYgKHBlcm1zWzJdID09ICd4JykgcGVybXNfYml0IHw9IFBST1RfRVhFQzsKCiAgd2hpbGUgKGlzc3BhY2UoKHVuc2lnbmVkIGNoYXIpbGluZVtwYXRoX29mZl0pKQogICAgcGF0aF9vZmYrKzsKCiAgKmVudHJ5ID0gKHN0cnVjdCBtYXBfZW50cnkpIHsKICAgIC5zdGFydCA9IHN0YXJ0LAogICAgLmVuZCA9IGVuZCwKICAgIC5wZXJtcyA9IHBlcm1zX2JpdCwKICAgIC5pc19wcml2YXRlID0gKHBlcm1zWzNdID09ICdwJyksCiAgICAub2Zmc2V0ID0gb2Zmc2V0LAogICAgLmRldiA9IG1ha2VkZXYoZGV2X21ham9yLCBkZXZfbWlub3IpLAogICAgLmlub2RlID0gaW5vZGUsCiAgICAucGF0aCA9IGxpbmUgKyBwYXRoX29mZgogIH07CgogIHJldHVybiB0cnVlOwp9CgovKiBJTkZPOiBnZXRsaW5lIGluc3RlYWQgb2YgYSBmaXhlZCBidWZmZXI6IG1hcHMgbGluZXMgd2l0aCBsb25nIHBhdGhzIHVzZWQgdG8KICAgICAgICAgICBiZSBzcGxpdCBtaWQtbGluZSwgZmFpbCB0aGUgc3NjYW5mIGFuZCBzaWxlbnRseSBkcm9wIHRoZWlyIG1hcHBpbmcuICovCnN0YXRpYyBib29sIHdhbGtfbWFwc19zdHJlYW0oRklMRSAqZnAsIG1hcHNfdmlzaXRvciB2aXNpdCwgdm9pZCAqdXNlcmRhdGEpIHsKICBjaGFyICpsaW5lID0gTlVMTDsKICBzaXplX3QgbGluZV9jYXBhY2l0eSA9IDA7CgogIHdoaWxlIChnZXRsaW5lKCZsaW5lLCAmbGluZV9jYXBhY2l0eSwgZnApICE9IC0xKSB7CiAgICBzdHJ1Y3QgbWFwX2VudHJ5IGVudHJ5OwoKICAgIGlmICghcGFyc2VfbWFwc19saW5lKGxpbmUsICZlbnRyeSkpIGNvbnRpbnVlOwoKICAgIGlmICghdmlzaXQoJmVudHJ5LCB1c2VyZGF0YSkpIGJyZWFrOwogIH0KCiAgLyogSU5GTzogQSBzdHJlYW0gdGhhdCBlbmRzIGVhcmx5IGxlYXZlcyBhIHBhcnRpYWwgbGlzdGluZyBiZWhpbmQsIHdoaWNoIGlzCiAgICAgICAgICAgIHdvcnNlIHRoYW4gbm9uZSBhdCBhbGw6IHRoZSBjYWxsZXIgd291bGQgdGFrZSBpdCBmb3IgdGhlIHdob2xlCiAgICAgICAgICAgIG1hcC4gKi8KICBib29sIGNvbXBsZXRlID0gIWZlcnJvcihmcCk7CiAgaWYgKCFjb21wbGV0ZSkgUExPR0UoInJlYWQgYSBtYXBzIHN0cmVhbSIpOwoKICBmcmVlKGxpbmUpOwoKICByZXR1cm4gY29tcGxldGU7Cn0KCi8qIElORk86IENvbGxlY3RzIGV2ZXJ5IGVudHJ5IGludG8gYSBmcmVzaCB0YWJsZSwgd2hpY2ggaXMgd2hhdCB0aGUgY2FsbGVycwogICAgICAgICB0aGF0IHdhbnQgYWxsIG9mIGl0IC0gdGhlIEVMRiByZWFkZXIgYW5kIHRoZSBob29rIHNjYW5uZXIgLSBuZWVkLiAqLwpzdHJ1Y3QgY29sbGVjdF9zdGF0ZSB7CiAgc3RydWN0IG1hcHNfaW5mbyAqaW5mbzsKICBzaXplX3QgY2FwYWNpdHk7CiAgYm9vbCBmYWlsZWQ7Cn07CgpzdGF0aWMgYm9vbCBjb2xsZWN0X21hcChjb25zdCBzdHJ1Y3QgbWFwX2VudHJ5ICptYXAsIHZvaWQgKnVzZXJkYXRhKSB7CiAgc3RydWN0IGNvbGxlY3Rfc3RhdGUgKnN0YXRlID0gdXNlcmRhdGE7CgogIGlmIChzdGF0ZS0+aW5mby0+bGVuZ3RoID49IHN0YXRlLT5jYXBhY2l0eSkgewogICAgc2l6ZV90IGNhcGFjaXR5ID0gc3RhdGUtPmNhcGFjaXR5ICogMjsKCiAgICBzdHJ1Y3QgbWFwX2VudHJ5ICpncm93biA9IHJlYWxsb2Moc3RhdGUtPmluZm8tPm1hcHMsIGNhcGFjaXR5ICogc2l6ZW9mKHN0cnVjdCBtYXBfZW50cnkpKTsKICAgIGlmIChncm93biA9PSBOVUxMKSB7CiAgICAgIFBMT0dFKCJyZWFsbG9jYXRlIChleHRlbmQ6ICV6dSAtPiAlenUpIG1lbW9yeSBmb3IgbWFwcyIsIHN0YXRlLT5jYXBhY2l0eSwgY2FwYWNpdHkpOwoKICAgICAgc3RhdGUtPmZhaWxlZCA9IHRydWU7CgogICAgICByZXR1cm4gZmFsc2U7CiAgICB9CgogICAgc3RhdGUtPmluZm8tPm1hcHMgPSBncm93bjsKICAgIHN0YXRlLT5jYXBhY2l0eSA9IGNhcGFjaXR5OwogIH0KCiAgY2hhciAqcGF0aCA9IHN0cmR1cChtYXAtPnBhdGgpOwogIGlmIChwYXRoID09IE5VTEwpIHsKICAgIFBMT0dFKCJhbGxvY2F0ZSBtZW1vcnkgZm9yIG1hcCBwYXRoIik7CgogICAgc3RhdGUtPmZhaWxlZCA9IHRydWU7CgogICAgcmV0dXJuIGZhbHNlOwogIH0KCiAgc3RhdGUtPmluZm8tPm1hcHNbc3RhdGUtPmluZm8tPmxlbmd0aF0gPSAqbWFwOwogIHN0YXRlLT5pbmZvLT5tYXBzW3N0YXRlLT5pbmZvLT5sZW5ndGhdLnBhdGggPSBwYXRoOwogIHN0YXRlLT5pbmZvLT5sZW5ndGgrKzsKCiAgcmV0dXJuIHRydWU7Cn0KCi8qIElORk86IFBhcnNlcyB0aGUgbGluZXMgb2YgYW4gYWxyZWFkeS1vcGVuIG1hcHMgc3RyZWFtIGludG8gYSBmcmVzaAogICAgICAgICBtYXBzX2luZm8uIFJldHVybnMgTlVMTCBvbiBmYWlsdXJlLiAqLwpzdGF0aWMgc3RydWN0IG1hcHNfaW5mbyAqcGFyc2VfbWFwc19zdHJlYW0oRklMRSAqZnApIHsKICBzdHJ1Y3QgbWFwc19pbmZvICppbmZvID0gY2FsbG9jKDEsIHNpemVvZihzdHJ1Y3QgbWFwc19pbmZvKSk7CiAgaWYgKGluZm8gPT0gTlVMTCkgewogICAgUExPR0UoImFsbG9jYXRlIG1lbW9yeSIpOwoKICAgIHJldHVybiBOVUxMOwogIH0KCiAgaW5mby0+bWFwcyA9IG1hbGxvYygyICogc2l6ZW9mKHN0cnVjdCBtYXBfZW50cnkpKTsKICBpZiAoaW5mby0+bWFwcyA9PSBOVUxMKSB7CiAgICBQTE9HRSgiYWxsb2NhdGUgbWVtb3J5IGZvciBtYXBzIik7CgogICAgZnJlZShpbmZvKTsKCiAgICByZXR1cm4gTlVMTDsKICB9CgogIHN0cnVjdCBjb2xsZWN0X3N0YXRlIHN0YXRlID0geyAuaW5mbyA9IGluZm8sIC5jYXBhY2l0eSA9IDIgfTsKCiAgYm9vbCB3YWxrZWQgPSB3YWxrX21hcHNfc3RyZWFtKGZwLCBjb2xsZWN0X21hcCwgJnN0YXRlKTsKICBpZiAoIXdhbGtlZCB8fCBzdGF0ZS5mYWlsZWQpIHsKICAgIGZyZWVfbWFwcyhpbmZvKTsKCiAgICByZXR1cm4gTlVMTDsKICB9CgogIGlmIChpbmZvLT5sZW5ndGggPT0gMCkgewogICAgTE9HRSgiRmFpbGVkIHRvIGZpbmQgYW55IG1hcHMiKTsKCiAgICBmcmVlX21hcHMoaW5mbyk7CgogICAgcmV0dXJuIE5VTEw7CiAgfQoKICBzdHJ1Y3QgbWFwX2VudHJ5ICp0bXBfbWFwcyA9IHJlYWxsb2MoaW5mby0+bWFwcywgaW5mby0+bGVuZ3RoICogc2l6ZW9mKHN0cnVjdCBtYXBfZW50cnkpKTsKICBpZiAodG1wX21hcHMgPT0gTlVMTCkKICAgIFBMT0dFKCJyZWFsbG9jYXRlIChyZWR1Y2U6ICV6dSAtPiAlenUpIG1lbW9yeSBmb3IgbWFwcyIsIHN0YXRlLmNhcGFjaXR5LCBpbmZvLT5sZW5ndGgpOwogIGVsc2UgaW5mby0+bWFwcyA9IHRtcF9tYXBzOwoKICByZXR1cm4gaW5mbzsKfQoKLyogSU5GTzogVGhlIG1hcHMgb2YgYSBwcm9jZXNzLCByZWFkIHRocm91Z2ggYSBjaGlsZCB0aGF0IG9wZW5zIHRoZW0sIHNvIHRoYXQKICAgICAgICAgdGhlIGFjY2VzcyB0aW1lIHRoZSByZWFkIGxlYXZlcyBiZWhpbmQgbGFuZHMgb24gdGhhdCBjaGlsZCdzIGZpbGUgYW5kCiAgICAgICAgIG5vdCBvbiB0aGUgb25lIHRoZSBhcHBsaWNhdGlvbiBjYW4gc3RhdC4gKi8KdHlwZWRlZiBib29sICgqbWFwc19zdHJlYW1fZm4pKEZJTEUgKmZwLCB2b2lkICp1c2VyZGF0YSk7CgovKiBJTkZPOiBPcGVuaW5nIC9wcm9jLy4uLi9tYXBzIGxlYWRzIHRvIGl0cyBhY2Nlc3MgdGltZSBiZWluZyB1cGRhdGVkLiBUaGlzCiAgICAgICAgICAgZnVuY3Rpb24gYnlwYXNzZXMgdGhpcyBieSByZWFkaW5nIHRoZSBtYXBzIGZyb20gYSBmb3JrZWQgcHJvY2VzcywKICAgICAgICAgICB3aGljaCBpcyB0aGUgc2FtZSBtZW1vcnkgdG9wb2xvZ3kgYW55d2F5LiBJdCBiYWNrcyBib3RoCiAgICAgICAgICAgcGFyc2VfbWFwc19zYWZlKCkgYW5kIHNjYW5fbWFwc19zYWZlKCksIHdoaWNoIGFyZSB3aGF0IGNhbGxlcnMKICAgICAgICAgICB3YW50aW5nIHRoYXQgcHJvcGVydHkgc2hvdWxkIHVzZS4KKi8Kc3RhdGljIGJvb2wgd2l0aF9tYXBzX3N0cmVhbShjb25zdCBjaGFyICpwaWQsIG1hcHNfc3RyZWFtX2ZuIGNhbGxiYWNrLCB2b2lkICp1c2VyZGF0YSkgewogIGludCBzb2NrZXRzWzJdOwogIGlmIChzb2NrZXRwYWlyKEFGX1VOSVgsIFNPQ0tfU1RSRUFNLCAwLCBzb2NrZXRzKSA8IDApIHsKICAgIExPR0UoIkZhaWxlZCB0byBjcmVhdGUgc29ja2V0IHBhaXIiKTsKCiAgICByZXR1cm4gZmFsc2U7CiAgfQoKICBpbnQgcHBpZCA9IGNsb25lKE5VTEwsIE5VTEwsIFNJR0NITEQsIE5VTEwpOwogIGlmIChwcGlkID09IC0xKSB7CiAgICBMT0dFKCJGYWlsZWQgdG8gY2xvbmUgcHJvY2VzcyIpOwoKICAgIGNsb3NlKHNvY2tldHNbMF0pOwogICAgY2xvc2Uoc29ja2V0c1sxXSk7CgogICAgcmV0dXJuIGZhbHNlOwogIH0KCiAgaWYgKHBwaWQgPT0gMCkgewogICAgY2xvc2Uoc29ja2V0c1swXSk7CgogICAgY2hhciBwYXRoWzY0XTsKICAgIHNucHJpbnRmKHBhdGgsIHNpemVvZihwYXRoKSwgIi9wcm9jLyVzL21hcHMiLCBwaWQpOwoKICAgIGludCBtYXBzX2ZpbGUgPSBvcGVuKHBhdGgsIE9fUkRPTkxZIHwgT19DTE9FWEVDKTsKICAgIGlmIChtYXBzX2ZpbGUgPCAwKSB7CiAgICAgIExPR0UoIkZhaWxlZCB0byBvcGVuICVzIiwgcGF0aCk7CgogICAgICB1aW50OF90IGNhbl9raWxsX215c2VsZiA9IDA7CiAgICAgIGlmIChURU1QX0ZBSUxVUkVfUkVUUlkod3JpdGUoc29ja2V0c1sxXSwgJmNhbl9raWxsX215c2VsZiwgc2l6ZW9mKGNhbl9raWxsX215c2VsZikpKSA8IDApIHsKICAgICAgICBMT0dFKCJGYWlsZWQgdG8gd3JpdGUgdG8gc29ja2V0Iik7CiAgICAgIH0KCiAgICAgIGdvdG8gc2Nhbl9jaGlsZHJlbl9mYWlsOwogICAgfQoKICAgIGlmICh3cml0ZV9mZChzb2NrZXRzWzFdLCBtYXBzX2ZpbGUpIDwgMCkgewogICAgICBMT0dFKCJGYWlsZWQgdG8gd3JpdGUgZmlsZSBkZXNjcmlwdG9yIHRvIHNvY2tldCIpOwoKICAgICAgZ290byBwb3N0X29wZW5fc2Nhbl9jaGlsZHJlbl9mYWlsOwogICAgfQoKICAgIC8qIElORk86IFdhaXQgZm9yIHRoZSBwYXJlbnQgcHJvY2VzcyB0byBmaW5pc2ggcmVhZGluZyAqLwogICAgdWludDhfdCBjYW5fa2lsbF9teXNlbGYgPSAxOwogICAgaWYgKFRFTVBfRkFJTFVSRV9SRVRSWShyZWFkKHNvY2tldHNbMV0sICZjYW5fa2lsbF9teXNlbGYsIHNpemVvZihjYW5fa2lsbF9teXNlbGYpKSkgPCAwKSB7CiAgICAgIExPR0UoIkZhaWxlZCB0byByZWFkIGZyb20gc29ja2V0Iik7CgogICAgICBnb3RvIHBvc3Rfb3Blbl9zY2FuX2NoaWxkcmVuX2ZhaWw7CiAgICB9CgogICAgY2xvc2UobWFwc19maWxlKTsKICAgIGNsb3NlKHNvY2tldHNbMV0pOwoKICAgIF9leGl0KEVYSVRfU1VDQ0VTUyk7CgogICAgcG9zdF9vcGVuX3NjYW5fY2hpbGRyZW5fZmFpbDoKICAgICAgY2xvc2UobWFwc19maWxlKTsKICAgIHNjYW5fY2hpbGRyZW5fZmFpbDoKICAgICAgY2xvc2Uoc29ja2V0c1sxXSk7CgogICAgICBfZXhpdChFWElUX0ZBSUxVUkUpOwogIH0KCiAgY2xvc2Uoc29ja2V0c1sxXSk7CgogIGludCBmZCA9IHJlYWRfZmQoc29ja2V0c1swXSk7CiAgaWYgKGZkIDwgMCkgewogICAgTE9HRSgiRmFpbGVkIHRvIHJlYWQgZmlsZSBkZXNjcmlwdG9yIGZyb20gc29ja2V0Iik7CgogICAgY2xvc2Uoc29ja2V0c1swXSk7CgogICAgLyogSU5GTzogVGhlIGNoaWxkIGlzIGJsb2NrZWQgb24gdGhlIGNhbi1raWxsIGJ5dGU7IGNsb3NpbmcgdGhlIHNvY2tldAogICAgICAgICAgICAgbWFrZXMgaXRzIHJlYWQgZmFpbCBhbmQgaXQgZXhpdHMsIHNvIHJlYXAgaXQgaGVyZSBvciBpdCBzdGF5cyBhCiAgICAgICAgICAgICB6b21iaWUgdW5kZXIgdGhlIGxvbmctbGl2ZWQgbW9uaXRvci4gKi8KICAgIHdhaXRwaWQocHBpZCwgTlVMTCwgMCk7CgogICAgcmV0dXJuIGZhbHNlOwogIH0KCiAgRklMRSAqZnAgPSBmZG9wZW4oZmQsICJyIik7CiAgaWYgKGZwID09IE5VTEwpIHsKICAgIExPR0UoIkZhaWxlZCB0byBvcGVuIGZpbGUgZGVzY3JpcHRvciBhcyBGSUxFIik7CgogICAgY2xvc2UoZmQpOwogICAgY2xvc2Uoc29ja2V0c1swXSk7CgogICAgLyogSU5GTzogU2FtZSBhcyBhYm92ZTogdGhlIGNoaWxkIG5ldmVyIGdldHMgaXRzIGNhbi1raWxsIGJ5dGUgb24gdGhpcwogICAgICAgICAgICAgcGF0aCwgc28gdGhlIGNsb3NlZCBzb2NrZXQgbGV0cyBpdCBleGl0IGFuZCB0aGlzIHJlYXBzIGl0LiAqLwogICAgd2FpdHBpZChwcGlkLCBOVUxMLCAwKTsKCiAgICByZXR1cm4gZmFsc2U7CiAgfQoKICBib29sIG9rID0gY2FsbGJhY2soZnAsIHVzZXJkYXRhKTsKCiAgLyogSU5GTzogTm90aWZ5IHRoZSBjaGlsZHJlbiBwcm9jZXNzIHRoYXQgd2UgYXJlIGRvbmUgKi8KICB1aW50OF90IGNhbl9raWxsX2l0c2VsZiA9IDE7CiAgaWYgKFRFTVBfRkFJTFVSRV9SRVRSWSh3cml0ZShzb2NrZXRzWzBdLCAmY2FuX2tpbGxfaXRzZWxmLCBzaXplb2YoY2FuX2tpbGxfaXRzZWxmKSkpIDwgMCkgewogICAgTE9HRSgiRmFpbGVkIHRvIHdyaXRlIHRvIHNvY2tldCIpOwogIH0KCiAgZmNsb3NlKGZwKTsKICBjbG9zZShzb2NrZXRzWzBdKTsKCiAgLyogSU5GTzogVGhpcyB3YWl0cGlkIGVuc3VyZXMgdGhhdCB3ZSBvbmx5IHJlc3VtZSBjb2RlIGV4ZWN1dGlvbiBvbmNlIHRoZSBjaGlsZCBkaWVzLAogICAgICAgICAgICBvciB0aGUgY2hpbGQgcHJvY2VzcyB3aWxsIGJlY29tZSB6b21iaWUgYXMgc2hvd24gaW4gL3Byb2MvPGNoaWxkX3BpZD4vc3RhdHVzICovCiAgd2FpdHBpZChwcGlkLCBOVUxMLCAwKTsKCiAgcmV0dXJuIG9rOwp9CgpzdGF0aWMgYm9vbCBjb2xsZWN0X21hcHMoRklMRSAqZnAsIHZvaWQgKnVzZXJkYXRhKSB7CiAgc3RydWN0IG1hcHNfaW5mbyAqKm91dCA9IHVzZXJkYXRhOwoKICAqb3V0ID0gcGFyc2VfbWFwc19zdHJlYW0oZnApOwoKICByZXR1cm4gKm91dCAhPSBOVUxMOwp9CgpzdHJ1Y3QgbWFwc19pbmZvICpwYXJzZV9tYXBzX3NhZmUoY29uc3QgY2hhciAqcGlkKSB7CiAgc3RydWN0IG1hcHNfaW5mbyAqaW5mbyA9IE5VTEw7CgogIGlmICghd2l0aF9tYXBzX3N0cmVhbShwaWQsIGNvbGxlY3RfbWFwcywgJmluZm8pKSByZXR1cm4gTlVMTDsKCiAgcmV0dXJuIGluZm87Cn0KCnN0cnVjdCBzY2FuX3N0YXRlIHsKICBtYXBzX3Zpc2l0b3IgdmlzaXQ7CiAgdm9pZCAqdXNlcmRhdGE7Cn07CgpzdGF0aWMgYm9vbCB3YWxrX21hcHMoRklMRSAqZnAsIHZvaWQgKnVzZXJkYXRhKSB7CiAgc3RydWN0IHNjYW5fc3RhdGUgKnN0YXRlID0gdXNlcmRhdGE7CgogIHJldHVybiB3YWxrX21hcHNfc3RyZWFtKGZwLCBzdGF0ZS0+dmlzaXQsIHN0YXRlLT51c2VyZGF0YSk7Cn0KCmJvb2wgc2Nhbl9tYXBzX3NhZmUoY29uc3QgY2hhciAqcGlkLCBtYXBzX3Zpc2l0b3IgdmlzaXQsIHZvaWQgKnVzZXJkYXRhKSB7CiAgc3RydWN0IHNjYW5fc3RhdGUgc3RhdGUgPSB7IC52aXNpdCA9IHZpc2l0LCAudXNlcmRhdGEgPSB1c2VyZGF0YSB9OwoKICByZXR1cm4gd2l0aF9tYXBzX3N0cmVhbShwaWQsIHdhbGtfbWFwcywgJnN0YXRlKTsKfQoKLyogSU5GTzogVGhlIHBsYWluIHJlYWQ6IGl0IHVwZGF0ZXMgdGhlIG1hcHMgYWNjZXNzIHRpbWUsIHdoaWNoIGEgcHJvY2VzcyB0aGF0CiAgICAgICAgICAgc3RhdCgpcyB0aGUgZmlsZSBhZnRlcndhcmRzIGNhbiBub3RpY2UuIENhbGxlcnMgdGhhdCBuZWVkIHRoZSByZWFkCiAgICAgICAgICAgdG8gc3RheSBpbnZpc2libGUgdXNlIHBhcnNlX21hcHNfc2FmZSgpIGluc3RlYWQsIHdoaWNoIGlzIHRoaXMgc2FtZQogICAgICAgICAgIHBhcnNlciBmZWQgYnkgd2l0aF9tYXBzX3N0cmVhbSgpLiAqLwpzdHJ1Y3QgbWFwc19pbmZvICpwYXJzZV9tYXBzKGNvbnN0IGNoYXIgKnBpZCkgewogIC8qIElORk86IFRoZSBjaGFyYWN0ZXIgbGltaXQgZm9yIGEgMzItYml0IFBJRCBpcyAxMCAqLwogIGNoYXIgcGF0aFsoc2l6ZW9mKCIvcHJvYy8vbWFwcyIpIC0gMSkgKyAxMCArIDFdOwogIHNucHJpbnRmKHBhdGgsIHNpemVvZihwYXRoKSwgIi9wcm9jLyVzL21hcHMiLCBwaWQpOwoKICBGSUxFICpmcCA9IGZvcGVuKHBhdGgsICJyIik7CiAgaWYgKGZwID09IE5VTEwpIHsKICAgIFBMT0dFKCJGYWlsZWQgdG8gb3BlbiAlcyIsIHBhdGgpOwoKICAgIHJldHVybiBOVUxMOwogIH0KCiAgc3RydWN0IG1hcHNfaW5mbyAqaW5mbyA9IHBhcnNlX21hcHNfc3RyZWFtKGZwKTsKCiAgZmNsb3NlKGZwKTsKCiAgcmV0dXJuIGluZm87Cn0KCnZvaWQgZnJlZV9tYXBzKHN0cnVjdCBtYXBzX2luZm8gKm1hcHMpIHsKICBmb3IgKHNpemVfdCBpID0gMDsgaSA8IG1hcHMtPmxlbmd0aDsgaSsrKSB7CiAgICBmcmVlKG1hcHMtPm1hcHNbaV0ucGF0aCk7CiAgfQoKICBmcmVlKG1hcHMtPm1hcHMpOwogIGZyZWUobWFwcyk7Cn0K
+#include <stdio.h>
+#include <stdlib.h>
+#include <inttypes.h>
+#include <sched.h>
+#include <sys/mman.h>
+#include <sys/socket.h>
+#include <sys/sysmacros.h>
+#include <sys/utsname.h>
+#include <sys/wait.h>
+#include <ctype.h>
+#include <fcntl.h>
+
+#include <unistd.h>
+
+#include "logging.h"
+#include "socket_utils.h"
+
+#include "misc.h"
+
+int parse_int(const char *str) {
+  int val = 0;
+
+  char *c = (char *)str;
+  while (*c) {
+    if (*c > '9' || *c < '0')
+      return -1;
+
+    val = val * 10 + *c - '0';
+    c++;
+  }
+
+  return val;
+}
+
+struct kernel_version parse_kversion(void) {
+  struct utsname uts;
+  if (uname(&uts) == -1) {
+    PLOGE("uname");
+
+    return (struct kernel_version) { 0 };
+  }
+
+  struct kernel_version version;
+  if (sscanf(uts.release, "%hhu.%u.%u", &version.major, &version.minor, &version.patch) != 3) {
+    LOGE("Failed to parse kernel version");
+
+    return (struct kernel_version) { 0 };
+  }
+
+  return version;
+}
+
+/* INFO: One line of a maps stream into an entry. The path points into the
+         line, which stays the caller's to keep alive - the entry is only
+         valid for as long as that buffer is. */
+static bool parse_maps_line(char *line, struct map_entry *entry) {
+  /* INFO: strcspn leaves the content intact when the last maps line has no
+            trailing newline, which strlen - 1 would corrupt. */
+  line[strcspn(line, "\n")] = '\0';
+
+  uintptr_t start, end, offset;
+  unsigned int dev_major, dev_minor;
+  ino_t inode;
+  char perms[5] = { 0 };
+  int path_off;
+
+  if (sscanf(line, "%" PRIxPTR "-%" PRIxPTR " %4s %" PRIxPTR " %x:%x %lu %n",
+             &start, &end, perms, &offset, &dev_major, &dev_minor, &inode, &path_off) != 7) {
+    return false;
+  }
+
+  int perms_bit = 0;
+  if (perms[0] == 'r') perms_bit |= PROT_READ;
+  if (perms[1] == 'w') perms_bit |= PROT_WRITE;
+  if (perms[2] == 'x') perms_bit |= PROT_EXEC;
+
+  while (isspace((unsigned char)line[path_off]))
+    path_off++;
+
+  *entry = (struct map_entry) {
+    .start = start,
+    .end = end,
+    .perms = perms_bit,
+    .is_private = (perms[3] == 'p'),
+    .offset = offset,
+    .dev = makedev(dev_major, dev_minor),
+    .inode = inode,
+    .path = line + path_off
+  };
+
+  return true;
+}
+
+/* INFO: getline instead of a fixed buffer: maps lines with long paths used to
+           be split mid-line, fail the sscanf and silently drop their mapping. */
+static bool walk_maps_stream(FILE *fp, maps_visitor visit, void *userdata) {
+  char *line = NULL;
+  size_t line_capacity = 0;
+
+  while (getline(&line, &line_capacity, fp) != -1) {
+    struct map_entry entry;
+
+    if (!parse_maps_line(line, &entry)) continue;
+
+    if (!visit(&entry, userdata)) break;
+  }
+
+  /* INFO: A stream that ends early leaves a partial listing behind, which is
+            worse than none at all: the caller would take it for the whole
+            map. */
+  bool complete = !ferror(fp);
+  if (!complete) PLOGE("read a maps stream");
+
+  free(line);
+
+  return complete;
+}
+
+/* INFO: Collects every entry into a fresh table, which is what the callers
+         that want all of it - the ELF reader and the hook scanner - need. */
+struct collect_state {
+  struct maps_info *info;
+  size_t capacity;
+  bool failed;
+};
+
+static bool collect_map(const struct map_entry *map, void *userdata) {
+  struct collect_state *state = userdata;
+
+  if (state->info->length >= state->capacity) {
+    size_t capacity = state->capacity * 2;
+
+    struct map_entry *grown = realloc(state->info->maps, capacity * sizeof(struct map_entry));
+    if (grown == NULL) {
+      PLOGE("reallocate (extend: %zu -> %zu) memory for maps", state->capacity, capacity);
+
+      state->failed = true;
+
+      return false;
+    }
+
+    state->info->maps = grown;
+    state->capacity = capacity;
+  }
+
+  char *path = strdup(map->path);
+  if (path == NULL) {
+    PLOGE("allocate memory for map path");
+
+    state->failed = true;
+
+    return false;
+  }
+
+  state->info->maps[state->info->length] = *map;
+  state->info->maps[state->info->length].path = path;
+  state->info->length++;
+
+  return true;
+}
+
+/* INFO: Parses the lines of an already-open maps stream into a fresh
+         maps_info. Returns NULL on failure. */
+static struct maps_info *parse_maps_stream(FILE *fp) {
+  struct maps_info *info = calloc(1, sizeof(struct maps_info));
+  if (info == NULL) {
+    PLOGE("allocate memory");
+
+    return NULL;
+  }
+
+  info->maps = malloc(2 * sizeof(struct map_entry));
+  if (info->maps == NULL) {
+    PLOGE("allocate memory for maps");
+
+    free(info);
+
+    return NULL;
+  }
+
+  struct collect_state state = { .info = info, .capacity = 2 };
+
+  bool walked = walk_maps_stream(fp, collect_map, &state);
+  if (!walked || state.failed) {
+    free_maps(info);
+
+    return NULL;
+  }
+
+  if (info->length == 0) {
+    LOGE("Failed to find any maps");
+
+    free_maps(info);
+
+    return NULL;
+  }
+
+  struct map_entry *tmp_maps = realloc(info->maps, info->length * sizeof(struct map_entry));
+  if (tmp_maps == NULL)
+    PLOGE("reallocate (reduce: %zu -> %zu) memory for maps", state.capacity, info->length);
+  else info->maps = tmp_maps;
+
+  return info;
+}
+
+/* INFO: The maps of a process, read through a child that opens them, so that
+         the access time the read leaves behind lands on that child's file and
+         not on the one the application can stat. */
+typedef bool (*maps_stream_fn)(FILE *fp, void *userdata);
+
+/* INFO: Opening /proc/.../maps leads to its access time being updated. This
+           function bypasses this by reading the maps from a forked process,
+           which is the same memory topology anyway. It backs both
+           parse_maps_safe() and scan_maps_safe(), which are what callers
+           wanting that property should use.
+*/
+static bool with_maps_stream(const char *pid, maps_stream_fn callback, void *userdata) {
+  int sockets[2];
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) < 0) {
+    LOGE("Failed to create socket pair");
+
+    return false;
+  }
+
+  int ppid = clone(NULL, NULL, SIGCHLD, NULL);
+  if (ppid == -1) {
+    LOGE("Failed to clone process");
+
+    close(sockets[0]);
+    close(sockets[1]);
+
+    return false;
+  }
+
+  if (ppid == 0) {
+    close(sockets[0]);
+
+    char path[64];
+    snprintf(path, sizeof(path), "/proc/%s/maps", pid);
+
+    int maps_file = open(path, O_RDONLY | O_CLOEXEC);
+    if (maps_file < 0) {
+      LOGE("Failed to open %s", path);
+
+      uint8_t can_kill_myself = 0;
+      if (TEMP_FAILURE_RETRY(write(sockets[1], &can_kill_myself, sizeof(can_kill_myself))) < 0) {
+        LOGE("Failed to write to socket");
+      }
+
+      goto scan_children_fail;
+    }
+
+    if (write_fd(sockets[1], maps_file) < 0) {
+      LOGE("Failed to write file descriptor to socket");
+
+      goto post_open_scan_children_fail;
+    }
+
+    /* INFO: Wait for the parent process to finish reading */
+    uint8_t can_kill_myself = 1;
+    if (TEMP_FAILURE_RETRY(read(sockets[1], &can_kill_myself, sizeof(can_kill_myself))) < 0) {
+      LOGE("Failed to read from socket");
+
+      goto post_open_scan_children_fail;
+    }
+
+    close(maps_file);
+    close(sockets[1]);
+
+    _exit(EXIT_SUCCESS);
+
+    post_open_scan_children_fail:
+      close(maps_file);
+    scan_children_fail:
+      close(sockets[1]);
+
+      _exit(EXIT_FAILURE);
+  }
+
+  close(sockets[1]);
+
+  int fd = read_fd(sockets[0]);
+  if (fd < 0) {
+    LOGE("Failed to read file descriptor from socket");
+
+    close(sockets[0]);
+
+    /* INFO: The child is blocked on the can-kill byte; closing the socket
+             makes its read fail and it exits, so reap it here or it stays a
+             zombie under the long-lived monitor. */
+    waitpid(ppid, NULL, 0);
+
+    return false;
+  }
+
+  FILE *fp = fdopen(fd, "r");
+  if (fp == NULL) {
+    LOGE("Failed to open file descriptor as FILE");
+
+    close(fd);
+    close(sockets[0]);
+
+    /* INFO: Same as above: the child never gets its can-kill byte on this
+             path, so the closed socket lets it exit and this reaps it. */
+    waitpid(ppid, NULL, 0);
+
+    return false;
+  }
+
+  bool ok = callback(fp, userdata);
+
+  /* INFO: Notify the children process that we are done */
+  uint8_t can_kill_itself = 1;
+  if (TEMP_FAILURE_RETRY(write(sockets[0], &can_kill_itself, sizeof(can_kill_itself))) < 0) {
+    LOGE("Failed to write to socket");
+  }
+
+  fclose(fp);
+  close(sockets[0]);
+
+  /* INFO: This waitpid ensures that we only resume code execution once the child dies,
+            or the child process will become zombie as shown in /proc/<child_pid>/status */
+  waitpid(ppid, NULL, 0);
+
+  return ok;
+}
+
+static bool collect_maps(FILE *fp, void *userdata) {
+  struct maps_info **out = userdata;
+
+  *out = parse_maps_stream(fp);
+
+  return *out != NULL;
+}
+
+struct maps_info *parse_maps_safe(const char *pid) {
+  struct maps_info *info = NULL;
+
+  if (!with_maps_stream(pid, collect_maps, &info)) return NULL;
+
+  return info;
+}
+
+struct scan_state {
+  maps_visitor visit;
+  void *userdata;
+};
+
+static bool walk_maps(FILE *fp, void *userdata) {
+  struct scan_state *state = userdata;
+
+  return walk_maps_stream(fp, state->visit, state->userdata);
+}
+
+bool scan_maps_safe(const char *pid, maps_visitor visit, void *userdata) {
+  struct scan_state state = { .visit = visit, .userdata = userdata };
+
+  return with_maps_stream(pid, walk_maps, &state);
+}
+
+/* INFO: The plain read: it updates the maps access time, which a process that
+           stat()s the file afterwards can notice. Callers that need the read
+           to stay invisible use parse_maps_safe() instead, which is this same
+           parser fed by with_maps_stream(). */
+struct maps_info *parse_maps(const char *pid) {
+  /* INFO: The character limit for a 32-bit PID is 10 */
+  char path[(sizeof("/proc//maps") - 1) + 10 + 1];
+  snprintf(path, sizeof(path), "/proc/%s/maps", pid);
+
+  FILE *fp = fopen(path, "r");
+  if (fp == NULL) {
+    PLOGE("Failed to open %s", path);
+
+    return NULL;
+  }
+
+  struct maps_info *info = parse_maps_stream(fp);
+
+  fclose(fp);
+
+  return info;
+}
+
+void free_maps(struct maps_info *maps) {
+  for (size_t i = 0; i < maps->length; i++) {
+    free(maps->maps[i].path);
+  }
+
+  free(maps->maps);
+  free(maps);
+}

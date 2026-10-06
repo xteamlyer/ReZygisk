@@ -1,1 +1,306 @@
-I2lmbmRlZiBNT0RVTEVfSAojZGVmaW5lIE1PRFVMRV9ICgojaW5jbHVkZSA8c3RyaW5nLmg+CgojaW5jbHVkZSA8am5pLmg+CgojaW5jbHVkZSA8Y3NvbG9hZGVyLmg+CgojaW5jbHVkZSAibG9nZ2luZy5oIgoKI2RlZmluZSBSRVpZR0lTS19BUElfVkVSU0lPTiA1CgovKiBJTkZPOiBQbGFpbiBtYWNyb3MgcmF0aGVyIHRoYW4gYSB0eXBlZCBlbnVtOiAxdSA8PCAzMSBkb2VzIG5vdCBmaXQgYW4gaW50LAogICAgICAgICBhbmQgYSBmaXhlZCB1bmRlcmx5aW5nIHR5cGUgaXMgYSBDMjMgZXh0ZW5zaW9uLiAqLwojZGVmaW5lIFBST0NFU1NfR1JBTlRFRF9ST09UICgxdSA8PCAwKQojZGVmaW5lIFBST0NFU1NfT05fREVOWUxJU1QgKDF1IDw8IDEpCgojZGVmaW5lIFBST0NFU1NfWk5fUFJFU0VOVCAoMXUgPDwgMikKI2RlZmluZSBQUk9DRVNTX0lTX01BTkFHRVIgKDF1IDw8IDI3KQojZGVmaW5lIFBST0NFU1NfUk9PVF9JU19BUEFUQ0ggKDF1IDw8IDI4KQojZGVmaW5lIFBST0NFU1NfUk9PVF9JU19LU1UgKDF1IDw8IDI5KQojZGVmaW5lIFBST0NFU1NfSVNfRklSU1RfU1RBUlRFRCAoMXUgPDwgMzEpCgovKiBJTkZPOiBQUklWQVRFX01BU0sgc3RyaXBzIGV2ZXJ5dGhpbmcgYSBaeWdpc2sgbW9kdWxlIG11c3Qgbm90IHNlZSBmcm9tCiAgICAgICAgIHRoZSBmbGFncyB0aGUgQVBJIGhhbmRzIG91dC4gKi8KI2RlZmluZSBQUklWQVRFX01BU0sgKFBST0NFU1NfSVNfRklSU1RfU1RBUlRFRCB8IFBST0NFU1NfWk5fUFJFU0VOVCkKCnN0cnVjdCBhcHBfc3BlY2lhbGl6ZV9hcmdzX3YxIHsKICBqaW50ICp1aWQ7CiAgamludCAqZ2lkOwogIGppbnRBcnJheSAqZ2lkczsKICBqaW50ICpydW50aW1lX2ZsYWdzOwogIGppbnQgKm1vdW50X2V4dGVybmFsOwogIGpzdHJpbmcgKnNlX2luZm87CiAganN0cmluZyAqbmljZV9uYW1lOwogIGpzdHJpbmcgKmluc3RydWN0aW9uX3NldDsKICBqc3RyaW5nICphcHBfZGF0YV9kaXI7CgogIGpib29sZWFuICppc19jaGlsZF96eWdvdGU7CiAgamJvb2xlYW4gKmlzX3RvcF9hcHA7CiAgam9iamVjdEFycmF5ICpwa2dfZGF0YV9pbmZvX2xpc3Q7CiAgam9iamVjdEFycmF5ICp3aGl0ZWxpc3RlZF9kYXRhX2luZm9fbGlzdDsKICBqYm9vbGVhbiAqbW91bnRfZGF0YV9kaXJzOwogIGpib29sZWFuICptb3VudF9zdG9yYWdlX2RpcnM7Cn07CgpzdHJ1Y3QgYXBwX3NwZWNpYWxpemVfYXJnc192NCB7CiAgamludCAqdWlkOwogIGppbnQgKmdpZDsKICBqaW50QXJyYXkgKmdpZHM7CiAgamludCAqcnVudGltZV9mbGFnczsKICBqb2JqZWN0QXJyYXkgKnJsaW1pdHM7CiAgamludCAqbW91bnRfZXh0ZXJuYWw7CiAganN0cmluZyAqc2VfaW5mbzsKICBqc3RyaW5nICpuaWNlX25hbWU7CiAganN0cmluZyAqaW5zdHJ1Y3Rpb25fc2V0OwogIGpzdHJpbmcgKmFwcF9kYXRhX2RpcjsKCiAgamludEFycmF5ICpmZHNfdG9faWdub3JlOwogIGpib29sZWFuICppc19jaGlsZF96eWdvdGU7CiAgamJvb2xlYW4gKmlzX3RvcF9hcHA7CiAgam9iamVjdEFycmF5ICpwa2dfZGF0YV9pbmZvX2xpc3Q7CiAgam9iamVjdEFycmF5ICp3aGl0ZWxpc3RlZF9kYXRhX2luZm9fbGlzdDsKICBqYm9vbGVhbiAqbW91bnRfZGF0YV9kaXJzOwogIGpib29sZWFuICptb3VudF9zdG9yYWdlX2RpcnM7Cn07CgpzdHJ1Y3QgYXBwX3NwZWNpYWxpemVfYXJnc192NSB7CiAgamludCAqdWlkOwogIGppbnQgKmdpZDsKICBqaW50QXJyYXkgKmdpZHM7CiAgamludCAqcnVudGltZV9mbGFnczsKICBqb2JqZWN0QXJyYXkgKnJsaW1pdHM7CiAgamludCAqbW91bnRfZXh0ZXJuYWw7CiAganN0cmluZyAqc2VfaW5mbzsKICBqc3RyaW5nICpuaWNlX25hbWU7CiAganN0cmluZyAqaW5zdHJ1Y3Rpb25fc2V0OwogIGpzdHJpbmcgKmFwcF9kYXRhX2RpcjsKCiAgamludEFycmF5ICpmZHNfdG9faWdub3JlOwogIGpib29sZWFuICppc19jaGlsZF96eWdvdGU7CiAgamJvb2xlYW4gKmlzX3RvcF9hcHA7CiAgam9iamVjdEFycmF5ICpwa2dfZGF0YV9pbmZvX2xpc3Q7CiAgam9iamVjdEFycmF5ICp3aGl0ZWxpc3RlZF9kYXRhX2luZm9fbGlzdDsKICBqYm9vbGVhbiAqbW91bnRfZGF0YV9kaXJzOwogIGpib29sZWFuICptb3VudF9zdG9yYWdlX2RpcnM7CgogIGpib29sZWFuICptb3VudF9zeXNwcm9wX292ZXJyaWRlczsKfTsKCnN0cnVjdCBzZXJ2ZXJfc3BlY2lhbGl6ZV9hcmdzX3YxIHsKICBqaW50ICp1aWQ7CiAgamludCAqZ2lkOwogIGppbnRBcnJheSAqZ2lkczsKICBqaW50ICpydW50aW1lX2ZsYWdzOwogIGpsb25nICpwZXJtaXR0ZWRfY2FwYWJpbGl0aWVzOwogIGpsb25nICplZmZlY3RpdmVfY2FwYWJpbGl0aWVzOwp9OwoKZW51bSByZXp5Z2lza19vcHRpb25zIHsKICAvKiBJTkZPOiBGb3JjZSBWZXhaeWdpc2sgdG8gdW1vdW50IHRoZSByb290IHJlbGF0ZWQgbW91bnRzIG9uIHRoaXMgcHJvY2Vzcy4gVGhpcyBvcHRpb24KICAgICAgICAgICAgIHdpbGwgb25seSB0YWtlIGVmZmVjdCBpZiBzZXQgaW4gcHJlLi4uU3BlY2lhbGl6ZSwgYXMgVmV4WnlnaXNrIHVtb3VudHMgYXQKICAgICAgICAgICAgIHRoYXQgcG9pbnQuCgogICAgICAgICAgIFZleFp5Z2lzayBVbW91bnQgU3lzdGVtIHdpbGwgbm90IHVtb3VudCBhbGwgcm9vdCByZWxhdGVkIG1vdW50cywgcmVhZCBWZXhaeWdpc2tkCiAgICAgICAgICAgICB1bW91bnRfcm9vdCBmdW5jdGlvbiBpbiB1dGlscy5jIGZpbGUgdG8gdW5kZXJzdGFuZCBob3cgaXQgc2VsZWN0cyB0aGUgb25lcwogICAgICAgICAgICAgdG8gdW1vdW50LgogICovCiAgRk9SQ0VfREVOWUxJU1RfVU5NT1VOVCA9IDAsCgogIC8qIElORk86IE9uY2Ugc2V0LCBWZXhaeWdpc2sgd2lsbCBkbGNsb3NlIHlvdXIgbGlicmFyeSBmcm9tIHRoZSBwcm9jZXNzLCB0aGlzIGlzIGFzc3VyZWQgdG8KICAgICAgICAgICAgIGhhcHBlbiBhZnRlciBwb3N0Li4uU3BlY2lhbGl6ZSwgYnV0IG5vdCBhdCBhIHNwZWNpZmljIG1vbWVudCBkdWUgdG8gZGlmZmVyZW50CiAgICAgICAgICAgICBpbXBsZW1lbnRhdGlvbnMuCgogICAgICAgICAgIFlvdSBzaG91bGQgbm90IHVzZSB0aGlzIG9wdGlvbiBpZiB5b3UgbGVhdmUgcmVmZXJlbmNlcyBpbiB0aGUgcHJvY2VzcyBzdWNoIGFzIGhvb2tzLAogICAgICAgICAgICAgd2hpY2ggd2lsbCB0cnkgdG8gZXhlY3V0ZSB1bmluaXRpYWxpemVkIG1lbW9yeS4KICAqLwogIERMQ0xPU0VfTU9EVUxFX0xJQlJBUlkgPSAxCn07CgpzdHJ1Y3QgcmV6eWdpc2tfYWJpIHsKICBsb25nIGFwaV92ZXJzaW9uOwogIHZvaWQgKmltcGw7CgogIHZvaWQgKCpwcmVfYXBwX3NwZWNpYWxpemUpKHZvaWQgKiwgdm9pZCAqKTsKICB2b2lkICgqcG9zdF9hcHBfc3BlY2lhbGl6ZSkodm9pZCAqLCBjb25zdCB2b2lkICopOwogIHZvaWQgKCpwcmVfc2VydmVyX3NwZWNpYWxpemUpKHZvaWQgKiwgdm9pZCAqKTsKICB2b2lkICgqcG9zdF9zZXJ2ZXJfc3BlY2lhbGl6ZSkodm9pZCAqLCBjb25zdCB2b2lkICopOwp9OwoKc3RydWN0IHJlenlnaXNrX2FwaSB7CiAgdm9pZCAqaW1wbDsKICBib29sICgqcmVnaXN0ZXJfbW9kdWxlKShzdHJ1Y3QgcmV6eWdpc2tfYXBpICosIHN0cnVjdCByZXp5Z2lza19hYmkgY29uc3QgKik7CgogIHZvaWQgKCpob29rX2puaV9uYXRpdmVfbWV0aG9kcykoSk5JRW52ICosIGNvbnN0IGNoYXIgKiwgSk5JTmF0aXZlTWV0aG9kICosIGludCk7CiAgdW5pb24gewogICAgdm9pZCAoKnBsdF9ob29rX3JlZ2lzdGVyKShjb25zdCBjaGFyICosIGNvbnN0IGNoYXIgKiwgdm9pZCAqLCB2b2lkICoqKTsgICAgLyogSU5GTzogdjMgYW5kIGJlbG93ICovCiAgICB2b2lkICgqcGx0X2hvb2tfcmVnaXN0ZXJfdjQpKGRldl90LCBpbm9fdCwgY29uc3QgY2hhciAqLCB2b2lkICosIHZvaWQgKiopOyAvKiBJTkZPOiB2NCAqLwogIH07CiAgdW5pb24gewogICAgdm9pZCAoKnBsdF9ob29rX2V4Y2x1ZGUpKGNvbnN0IGNoYXIgKiwgY29uc3QgY2hhciAqKTsgLyogSU5GTzogdjMgYW5kIGJlbG93ICovCiAgICB2b2lkICgqZXhlbXB0X2ZkKShpbnQpOyAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAvKiBJTkZPOiB2NCAqLwogIH07CgogIGJvb2wgKCpwbHRfaG9va19jb21taXQpKCk7CiAgaW50ICgqY29ubmVjdF9jb21wYW5pb24pKHZvaWQgKik7CiAgdm9pZCAoKnNldF9vcHRpb24pKHZvaWQgKiwgZW51bSByZXp5Z2lza19vcHRpb25zIG9wdCk7CiAgaW50ICgqZ2V0X21vZHVsZV9kaXIpKHZvaWQgKik7CiAgdWludDMyX3QgKCpnZXRfZmxhZ3MpKCk7Cn07CgpzdHJ1Y3QgcmV6eWdpc2tfbW9kdWxlIHsKICBzdHJ1Y3QgcmV6eWdpc2tfYWJpIGFiaTsKICBzdHJ1Y3QgcmV6eWdpc2tfYXBpIGFwaTsKCiAgc3RydWN0IGNzb2xvYWRlciBsaWI7CiAgdm9pZCAoKnp5Z2lza19tb2R1bGVfZW50cnkpKHZvaWQgKiwgdm9pZCAqKTsKCiAgYm9vbCB1bmxvYWQ7Cn07CgovKgogICAgSU5GTzogV2hhdCBmb2xsb3dzIGFyZSBmdW5jdGlvbiBkZWZpbml0aW9ucyB0byBiZSBpbmNsdWRlZCB3aGVyZXZlciBuZWNlc3NhcnkuCiAgICAgICAgICAgIEFzIGEgcmVtaW5kZXIgZm9yIGJlc3QgQyBwcmFjdGljZXMsIGEgZnVuY3Rpb24gYm9keSBzaG91bGQgbm90IGJlIGluIGEgaGVhZGVyCiAgICAgICAgICAgIHNpbmNlIHRoZXkgbGVhZCB0byBPRFIgdmlvbGF0aW9ucywgcmVzdWx0aW5nIGluIFVCIHNpbmNlIHRoZSBjb21waWxlZCBjb2RlICpjYW4qIGhhdmUgZHVwbGljYXRlIGRlZmludGlvbnMuCiAgICAgICAgICAgIFRoZXJlZm9yZSwgd2UgaGF2ZSBvbmx5IE9ORSBvZiB0d28gY2hvaWNlczoKICAgICAgICAgICAgICAxLiBQdXQgdGhlIGZ1bmN0aW9uIGRlY2xhcmF0aW9ucyBoZXJlIGFuZCB0aGVpciByZXNwZWN0aXZlIGRlZmluaXRpb25zIGluIGEgc2VwYXJhdGUgLmMgZmlsZTsKICAgICAgICAgICAgICAyLiBJbmxpbmUgdGhlc2UgZnVuY3Rpb24gZGVmaW5pdGlvbnMgaW4gdGhlIGhlYWRlciBzbyBhcyB0byBhbGxvdyBtdWx0aXBsZSBkZWZpbml0aW9ucy4KICAgICAgICAgIERvaW5nIG90aGVyd2lzZSwgY2xhbmctdGlkeSB0aHJvd3MgJ2RlZmluaXRpb25zLWluLWhlYWRlcnMnIHdhcm5pbmcuCgogICAgU09VUkNFUzoKICAgICAtIGh0dHBzOi8vY2xhbmcubGx2bS5vcmcvZXh0cmEvY2xhbmctdGlkeS9jaGVja3MvbWlzYy9kZWZpbml0aW9ucy1pbi1oZWFkZXJzLmh0bWwKCiAgICBOT1RFOiBUaGUgb3JpZ2luYWwgWnlnaXNrIEFQSSBleHBlY3RzIGV2ZXJ5IG1vZHVsZSB0byBpbXBsZW1lbnQgYWxsIG9mIHRoZQogICAgICAgICAgc3BlY2lhbGl6ZSBjYWxsYmFja3MuIE1hZ2lzaydzIFp5Z2lzayBkZXJlZmVyZW5jZXMgdGhlbSB3aXRob3V0IGEgTlVMTAogICAgICAgICAgY2hlY2ssIHNvIGVhY2ggd3JhcHBlciBiZWxvdyBza2lwcyB0aGUgbW9kdWxlIHJhdGhlciB0aGFuIGNhbGxpbmcgaW50bwogICAgICAgICAgYSBtaXNzaW5nIGVudHJ5IHBvaW50LgoqLwpzdGF0aWMgaW5saW5lIHZvaWQgcnpfbW9kdWxlX2NhbGxfb25fbG9hZChzdHJ1Y3QgcmV6eWdpc2tfbW9kdWxlICptLCB2b2lkICplbnYpIHsKICBtLT56eWdpc2tfbW9kdWxlX2VudHJ5KCh2b2lkICopJm0tPmFwaSwgZW52KTsKfQoKc3RhdGljIGlubGluZSB2b2lkIHJ6X21vZHVsZV9jYWxsX3ByZV9hcHBfc3BlY2lhbGl6ZShzdHJ1Y3QgcmV6eWdpc2tfbW9kdWxlICptLCBzdHJ1Y3QgYXBwX3NwZWNpYWxpemVfYXJnc192NSAqYXJncykgewogIGlmICghbS0+YWJpLnByZV9hcHBfc3BlY2lhbGl6ZSkgewogICAgLyogTk9URTogU2VlIHRoZSBoZWFkZXIgYmxvY2sgYWJvdmUgb24gTWFnaXNrJ3MgbWlzc2luZyBjYWxsYmFjayBjaGVjay4gKi8KICAgIExPR1coIk1vZHVsZSBbJXNdIGRvZXNuJ3QgaGF2ZSBwcmVfYXBwX3NwZWNpYWxpemUuIFNraXBwaW5nIGl0LiIsIG0tPmxpYi5pbWctPmVsZik7CgogICAgcmV0dXJuOwogIH0KCiAgc3dpdGNoIChtLT5hYmkuYXBpX3ZlcnNpb24pIHsKICAgIGNhc2UgMToKICAgIGNhc2UgMjogewogICAgICBzdHJ1Y3QgYXBwX3NwZWNpYWxpemVfYXJnc192MSB2ZXJzaW9uZWRfYXJncyA9IHsKICAgICAgICAudWlkID0gYXJncy0+dWlkLAogICAgICAgIC5naWQgPSBhcmdzLT5naWQsCiAgICAgICAgLmdpZHMgPSBhcmdzLT5naWRzLAogICAgICAgIC5ydW50aW1lX2ZsYWdzID0gYXJncy0+cnVudGltZV9mbGFncywKICAgICAgICAubW91bnRfZXh0ZXJuYWwgPSBhcmdzLT5tb3VudF9leHRlcm5hbCwKICAgICAgICAuc2VfaW5mbyA9IGFyZ3MtPnNlX2luZm8sCiAgICAgICAgLm5pY2VfbmFtZSA9IGFyZ3MtPm5pY2VfbmFtZSwKICAgICAgICAuaW5zdHJ1Y3Rpb25fc2V0ID0gYXJncy0+aW5zdHJ1Y3Rpb25fc2V0LAogICAgICAgIC5hcHBfZGF0YV9kaXIgPSBhcmdzLT5hcHBfZGF0YV9kaXIsCiAgICAgICAgLmlzX2NoaWxkX3p5Z290ZSA9IGFyZ3MtPmlzX2NoaWxkX3p5Z290ZSwKICAgICAgICAuaXNfdG9wX2FwcCA9IGFyZ3MtPmlzX3RvcF9hcHAsCiAgICAgICAgLnBrZ19kYXRhX2luZm9fbGlzdCA9IGFyZ3MtPnBrZ19kYXRhX2luZm9fbGlzdCwKICAgICAgICAud2hpdGVsaXN0ZWRfZGF0YV9pbmZvX2xpc3QgPSBhcmdzLT53aGl0ZWxpc3RlZF9kYXRhX2luZm9fbGlzdCwKICAgICAgICAubW91bnRfZGF0YV9kaXJzID0gYXJncy0+bW91bnRfZGF0YV9kaXJzLAogICAgICAgIC5tb3VudF9zdG9yYWdlX2RpcnMgPSBhcmdzLT5tb3VudF9zdG9yYWdlX2RpcnMKICAgICAgfTsKCiAgICAgIG0tPmFiaS5wcmVfYXBwX3NwZWNpYWxpemUobS0+YWJpLmltcGwsICZ2ZXJzaW9uZWRfYXJncyk7CgogICAgICBicmVhazsKICAgIH0KICAgIGNhc2UgMzoKICAgIGNhc2UgNDogewogICAgICBzdHJ1Y3QgYXBwX3NwZWNpYWxpemVfYXJnc192NCB2ZXJzaW9uZWRfYXJnczsKICAgICAgbWVtY3B5KCZ2ZXJzaW9uZWRfYXJncywgYXJncywgc2l6ZW9mKHN0cnVjdCBhcHBfc3BlY2lhbGl6ZV9hcmdzX3Y0KSk7CgogICAgICBtLT5hYmkucHJlX2FwcF9zcGVjaWFsaXplKG0tPmFiaS5pbXBsLCAmdmVyc2lvbmVkX2FyZ3MpOwoKICAgICAgYnJlYWs7CiAgICB9CiAgICBjYXNlIDU6IHsKICAgICAgbS0+YWJpLnByZV9hcHBfc3BlY2lhbGl6ZShtLT5hYmkuaW1wbCwgYXJncyk7CgogICAgICBicmVhazsKICAgIH0KICB9Cn0KCnN0YXRpYyBpbmxpbmUgdm9pZCByel9tb2R1bGVfY2FsbF9wb3N0X2FwcF9zcGVjaWFsaXplKHN0cnVjdCByZXp5Z2lza19tb2R1bGUgKm0sIGNvbnN0IHN0cnVjdCBhcHBfc3BlY2lhbGl6ZV9hcmdzX3Y1ICphcmdzKSB7CiAgaWYgKCFtLT5hYmkucG9zdF9hcHBfc3BlY2lhbGl6ZSkgewogICAgLyogTk9URTogU2VlIHRoZSBoZWFkZXIgYmxvY2sgYWJvdmUgb24gTWFnaXNrJ3MgbWlzc2luZyBjYWxsYmFjayBjaGVjay4gKi8KICAgIExPR1coIk1vZHVsZSBbJXNdIGRvZXNuJ3QgaGF2ZSBwb3N0X2FwcF9zcGVjaWFsaXplLiBTa2lwcGluZyBpdC4iLCBtLT5saWIuaW1nLT5lbGYpOwoKICAgIHJldHVybjsKICB9CgogIHN3aXRjaCAobS0+YWJpLmFwaV92ZXJzaW9uKSB7CiAgICBjYXNlIDE6CiAgICBjYXNlIDI6IHsKICAgICAgc3RydWN0IGFwcF9zcGVjaWFsaXplX2FyZ3NfdjEgdmVyc2lvbmVkX2FyZ3MgPSB7CiAgICAgICAgLnVpZCA9IGFyZ3MtPnVpZCwKICAgICAgICAuZ2lkID0gYXJncy0+Z2lkLAogICAgICAgIC5naWRzID0gYXJncy0+Z2lkcywKICAgICAgICAucnVudGltZV9mbGFncyA9IGFyZ3MtPnJ1bnRpbWVfZmxhZ3MsCiAgICAgICAgLm1vdW50X2V4dGVybmFsID0gYXJncy0+bW91bnRfZXh0ZXJuYWwsCiAgICAgICAgLnNlX2luZm8gPSBhcmdzLT5zZV9pbmZvLAogICAgICAgIC5uaWNlX25hbWUgPSBhcmdzLT5uaWNlX25hbWUsCiAgICAgICAgLmluc3RydWN0aW9uX3NldCA9IGFyZ3MtPmluc3RydWN0aW9uX3NldCwKICAgICAgICAuYXBwX2RhdGFfZGlyID0gYXJncy0+YXBwX2RhdGFfZGlyLAogICAgICAgIC5pc19jaGlsZF96eWdvdGUgPSBhcmdzLT5pc19jaGlsZF96eWdvdGUsCiAgICAgICAgLmlzX3RvcF9hcHAgPSBhcmdzLT5pc190b3BfYXBwLAogICAgICAgIC5wa2dfZGF0YV9pbmZvX2xpc3QgPSBhcmdzLT5wa2dfZGF0YV9pbmZvX2xpc3QsCiAgICAgICAgLndoaXRlbGlzdGVkX2RhdGFfaW5mb19saXN0ID0gYXJncy0+d2hpdGVsaXN0ZWRfZGF0YV9pbmZvX2xpc3QsCiAgICAgICAgLm1vdW50X2RhdGFfZGlycyA9IGFyZ3MtPm1vdW50X2RhdGFfZGlycywKICAgICAgICAubW91bnRfc3RvcmFnZV9kaXJzID0gYXJncy0+bW91bnRfc3RvcmFnZV9kaXJzCiAgICAgIH07CgogICAgICBtLT5hYmkucG9zdF9hcHBfc3BlY2lhbGl6ZShtLT5hYmkuaW1wbCwgJnZlcnNpb25lZF9hcmdzKTsKCiAgICAgIGJyZWFrOwogICAgfQogICAgY2FzZSAzOgogICAgY2FzZSA0OiB7CiAgICAgIHN0cnVjdCBhcHBfc3BlY2lhbGl6ZV9hcmdzX3Y0IHZlcnNpb25lZF9hcmdzOwogICAgICBtZW1jcHkoJnZlcnNpb25lZF9hcmdzLCBhcmdzLCBzaXplb2Yoc3RydWN0IGFwcF9zcGVjaWFsaXplX2FyZ3NfdjQpKTsKCiAgICAgIG0tPmFiaS5wb3N0X2FwcF9zcGVjaWFsaXplKG0tPmFiaS5pbXBsLCAmdmVyc2lvbmVkX2FyZ3MpOwoKICAgICAgYnJlYWs7CiAgICB9CiAgICBjYXNlIDU6IHsKICAgICAgbS0+YWJpLnBvc3RfYXBwX3NwZWNpYWxpemUobS0+YWJpLmltcGwsIGFyZ3MpOwoKICAgICAgYnJlYWs7CiAgICB9CiAgfQp9CgpzdGF0aWMgaW5saW5lIHZvaWQgcnpfbW9kdWxlX2NhbGxfcHJlX3NlcnZlcl9zcGVjaWFsaXplKHN0cnVjdCByZXp5Z2lza19tb2R1bGUgKm0sIHN0cnVjdCBzZXJ2ZXJfc3BlY2lhbGl6ZV9hcmdzX3YxICphcmdzKSB7CiAgaWYgKCFtLT5hYmkucHJlX3NlcnZlcl9zcGVjaWFsaXplKSB7CiAgICAvKiBOT1RFOiBTZWUgdGhlIGhlYWRlciBibG9jayBhYm92ZSBvbiBNYWdpc2sncyBtaXNzaW5nIGNhbGxiYWNrIGNoZWNrLiAqLwogICAgTE9HVygiTW9kdWxlIFslc10gZG9lc24ndCBoYXZlIHByZV9zZXJ2ZXJfc3BlY2lhbGl6ZS4gU2tpcHBpbmcgaXQuIiwgbS0+bGliLmltZy0+ZWxmKTsKCiAgICByZXR1cm47CiAgfQoKICBtLT5hYmkucHJlX3NlcnZlcl9zcGVjaWFsaXplKG0tPmFiaS5pbXBsLCBhcmdzKTsKfQoKc3RhdGljIGlubGluZSB2b2lkIHJ6X21vZHVsZV9jYWxsX3Bvc3Rfc2VydmVyX3NwZWNpYWxpemUoc3RydWN0IHJlenlnaXNrX21vZHVsZSAqbSwgY29uc3Qgc3RydWN0IHNlcnZlcl9zcGVjaWFsaXplX2FyZ3NfdjEgKmFyZ3MpIHsKICBpZiAoIW0tPmFiaS5wb3N0X3NlcnZlcl9zcGVjaWFsaXplKSB7CiAgICAvKiBOT1RFOiBTZWUgdGhlIGhlYWRlciBibG9jayBhYm92ZSBvbiBNYWdpc2sncyBtaXNzaW5nIGNhbGxiYWNrIGNoZWNrLiAqLwogICAgTE9HVygiTW9kdWxlIFslc10gZG9lc24ndCBoYXZlIHBvc3Rfc2VydmVyX3NwZWNpYWxpemUuIFNraXBwaW5nIGl0LiIsIG0tPmxpYi5pbWctPmVsZik7CgogICAgcmV0dXJuOwogIH0KCiAgbS0+YWJpLnBvc3Rfc2VydmVyX3NwZWNpYWxpemUobS0+YWJpLmltcGwsIGFyZ3MpOwp9CgojZW5kaWYgLyogTU9EVUxFX0ggKi8K
+#ifndef MODULE_H
+#define MODULE_H
+
+#include <string.h>
+
+#include <jni.h>
+
+#include <csoloader.h>
+
+#include "logging.h"
+
+#define REZYGISK_API_VERSION 5
+
+/* INFO: Plain macros rather than a typed enum: 1u << 31 does not fit an int,
+         and a fixed underlying type is a C23 extension. */
+#define PROCESS_GRANTED_ROOT (1u << 0)
+#define PROCESS_ON_DENYLIST (1u << 1)
+
+#define PROCESS_ZN_PRESENT (1u << 2)
+#define PROCESS_IS_MANAGER (1u << 27)
+#define PROCESS_ROOT_IS_APATCH (1u << 28)
+#define PROCESS_ROOT_IS_KSU (1u << 29)
+#define PROCESS_IS_FIRST_STARTED (1u << 31)
+
+/* INFO: PRIVATE_MASK strips everything a Zygisk module must not see from
+         the flags the API hands out. */
+#define PRIVATE_MASK (PROCESS_IS_FIRST_STARTED | PROCESS_ZN_PRESENT)
+
+struct app_specialize_args_v1 {
+  jint *uid;
+  jint *gid;
+  jintArray *gids;
+  jint *runtime_flags;
+  jint *mount_external;
+  jstring *se_info;
+  jstring *nice_name;
+  jstring *instruction_set;
+  jstring *app_data_dir;
+
+  jboolean *is_child_zygote;
+  jboolean *is_top_app;
+  jobjectArray *pkg_data_info_list;
+  jobjectArray *whitelisted_data_info_list;
+  jboolean *mount_data_dirs;
+  jboolean *mount_storage_dirs;
+};
+
+struct app_specialize_args_v4 {
+  jint *uid;
+  jint *gid;
+  jintArray *gids;
+  jint *runtime_flags;
+  jobjectArray *rlimits;
+  jint *mount_external;
+  jstring *se_info;
+  jstring *nice_name;
+  jstring *instruction_set;
+  jstring *app_data_dir;
+
+  jintArray *fds_to_ignore;
+  jboolean *is_child_zygote;
+  jboolean *is_top_app;
+  jobjectArray *pkg_data_info_list;
+  jobjectArray *whitelisted_data_info_list;
+  jboolean *mount_data_dirs;
+  jboolean *mount_storage_dirs;
+};
+
+struct app_specialize_args_v5 {
+  jint *uid;
+  jint *gid;
+  jintArray *gids;
+  jint *runtime_flags;
+  jobjectArray *rlimits;
+  jint *mount_external;
+  jstring *se_info;
+  jstring *nice_name;
+  jstring *instruction_set;
+  jstring *app_data_dir;
+
+  jintArray *fds_to_ignore;
+  jboolean *is_child_zygote;
+  jboolean *is_top_app;
+  jobjectArray *pkg_data_info_list;
+  jobjectArray *whitelisted_data_info_list;
+  jboolean *mount_data_dirs;
+  jboolean *mount_storage_dirs;
+
+  jboolean *mount_sysprop_overrides;
+};
+
+struct server_specialize_args_v1 {
+  jint *uid;
+  jint *gid;
+  jintArray *gids;
+  jint *runtime_flags;
+  jlong *permitted_capabilities;
+  jlong *effective_capabilities;
+};
+
+enum rezygisk_options {
+  /* INFO: Force VexZygisk to umount the root related mounts on this process. This option
+             will only take effect if set in pre...Specialize, as VexZygisk umounts at
+             that point.
+
+           VexZygisk Umount System will not umount all root related mounts, read VexZygiskd
+             umount_root function in utils.c file to understand how it selects the ones
+             to umount.
+  */
+  FORCE_DENYLIST_UNMOUNT = 0,
+
+  /* INFO: Once set, VexZygisk will dlclose your library from the process, this is assured to
+             happen after post...Specialize, but not at a specific moment due to different
+             implementations.
+
+           You should not use this option if you leave references in the process such as hooks,
+             which will try to execute uninitialized memory.
+  */
+  DLCLOSE_MODULE_LIBRARY = 1
+};
+
+struct rezygisk_abi {
+  long api_version;
+  void *impl;
+
+  void (*pre_app_specialize)(void *, void *);
+  void (*post_app_specialize)(void *, const void *);
+  void (*pre_server_specialize)(void *, void *);
+  void (*post_server_specialize)(void *, const void *);
+};
+
+struct rezygisk_api {
+  void *impl;
+  bool (*register_module)(struct rezygisk_api *, struct rezygisk_abi const *);
+
+  void (*hook_jni_native_methods)(JNIEnv *, const char *, JNINativeMethod *, int);
+  union {
+    void (*plt_hook_register)(const char *, const char *, void *, void **);    /* INFO: v3 and below */
+    void (*plt_hook_register_v4)(dev_t, ino_t, const char *, void *, void **); /* INFO: v4 */
+  };
+  union {
+    void (*plt_hook_exclude)(const char *, const char *); /* INFO: v3 and below */
+    void (*exempt_fd)(int);                               /* INFO: v4 */
+  };
+
+  bool (*plt_hook_commit)();
+  int (*connect_companion)(void *);
+  void (*set_option)(void *, enum rezygisk_options opt);
+  int (*get_module_dir)(void *);
+  uint32_t (*get_flags)();
+};
+
+struct rezygisk_module {
+  struct rezygisk_abi abi;
+  struct rezygisk_api api;
+
+  struct csoloader lib;
+  void (*zygisk_module_entry)(void *, void *);
+
+  bool unload;
+};
+
+/*
+    INFO: What follows are function definitions to be included wherever necessary.
+            As a reminder for best C practices, a function body should not be in a header
+            since they lead to ODR violations, resulting in UB since the compiled code *can* have duplicate defintions.
+            Therefore, we have only ONE of two choices:
+              1. Put the function declarations here and their respective definitions in a separate .c file;
+              2. Inline these function definitions in the header so as to allow multiple definitions.
+          Doing otherwise, clang-tidy throws 'definitions-in-headers' warning.
+
+    SOURCES:
+     - https://clang.llvm.org/extra/clang-tidy/checks/misc/definitions-in-headers.html
+
+    NOTE: The original Zygisk API expects every module to implement all of the
+          specialize callbacks. Magisk's Zygisk dereferences them without a NULL
+          check, so each wrapper below skips the module rather than calling into
+          a missing entry point.
+*/
+static inline void rz_module_call_on_load(struct rezygisk_module *m, void *env) {
+  m->zygisk_module_entry((void *)&m->api, env);
+}
+
+static inline void rz_module_call_pre_app_specialize(struct rezygisk_module *m, struct app_specialize_args_v5 *args) {
+  if (!m->abi.pre_app_specialize) {
+    /* NOTE: See the header block above on Magisk's missing callback check. */
+    LOGW("Module [%s] doesn't have pre_app_specialize. Skipping it.", m->lib.img->elf);
+
+    return;
+  }
+
+  switch (m->abi.api_version) {
+    case 1:
+    case 2: {
+      struct app_specialize_args_v1 versioned_args = {
+        .uid = args->uid,
+        .gid = args->gid,
+        .gids = args->gids,
+        .runtime_flags = args->runtime_flags,
+        .mount_external = args->mount_external,
+        .se_info = args->se_info,
+        .nice_name = args->nice_name,
+        .instruction_set = args->instruction_set,
+        .app_data_dir = args->app_data_dir,
+        .is_child_zygote = args->is_child_zygote,
+        .is_top_app = args->is_top_app,
+        .pkg_data_info_list = args->pkg_data_info_list,
+        .whitelisted_data_info_list = args->whitelisted_data_info_list,
+        .mount_data_dirs = args->mount_data_dirs,
+        .mount_storage_dirs = args->mount_storage_dirs
+      };
+
+      m->abi.pre_app_specialize(m->abi.impl, &versioned_args);
+
+      break;
+    }
+    case 3:
+    case 4: {
+      struct app_specialize_args_v4 versioned_args;
+      memcpy(&versioned_args, args, sizeof(struct app_specialize_args_v4));
+
+      m->abi.pre_app_specialize(m->abi.impl, &versioned_args);
+
+      break;
+    }
+    case 5: {
+      m->abi.pre_app_specialize(m->abi.impl, args);
+
+      break;
+    }
+  }
+}
+
+static inline void rz_module_call_post_app_specialize(struct rezygisk_module *m, const struct app_specialize_args_v5 *args) {
+  if (!m->abi.post_app_specialize) {
+    /* NOTE: See the header block above on Magisk's missing callback check. */
+    LOGW("Module [%s] doesn't have post_app_specialize. Skipping it.", m->lib.img->elf);
+
+    return;
+  }
+
+  switch (m->abi.api_version) {
+    case 1:
+    case 2: {
+      struct app_specialize_args_v1 versioned_args = {
+        .uid = args->uid,
+        .gid = args->gid,
+        .gids = args->gids,
+        .runtime_flags = args->runtime_flags,
+        .mount_external = args->mount_external,
+        .se_info = args->se_info,
+        .nice_name = args->nice_name,
+        .instruction_set = args->instruction_set,
+        .app_data_dir = args->app_data_dir,
+        .is_child_zygote = args->is_child_zygote,
+        .is_top_app = args->is_top_app,
+        .pkg_data_info_list = args->pkg_data_info_list,
+        .whitelisted_data_info_list = args->whitelisted_data_info_list,
+        .mount_data_dirs = args->mount_data_dirs,
+        .mount_storage_dirs = args->mount_storage_dirs
+      };
+
+      m->abi.post_app_specialize(m->abi.impl, &versioned_args);
+
+      break;
+    }
+    case 3:
+    case 4: {
+      struct app_specialize_args_v4 versioned_args;
+      memcpy(&versioned_args, args, sizeof(struct app_specialize_args_v4));
+
+      m->abi.post_app_specialize(m->abi.impl, &versioned_args);
+
+      break;
+    }
+    case 5: {
+      m->abi.post_app_specialize(m->abi.impl, args);
+
+      break;
+    }
+  }
+}
+
+static inline void rz_module_call_pre_server_specialize(struct rezygisk_module *m, struct server_specialize_args_v1 *args) {
+  if (!m->abi.pre_server_specialize) {
+    /* NOTE: See the header block above on Magisk's missing callback check. */
+    LOGW("Module [%s] doesn't have pre_server_specialize. Skipping it.", m->lib.img->elf);
+
+    return;
+  }
+
+  m->abi.pre_server_specialize(m->abi.impl, args);
+}
+
+static inline void rz_module_call_post_server_specialize(struct rezygisk_module *m, const struct server_specialize_args_v1 *args) {
+  if (!m->abi.post_server_specialize) {
+    /* NOTE: See the header block above on Magisk's missing callback check. */
+    LOGW("Module [%s] doesn't have post_server_specialize. Skipping it.", m->lib.img->elf);
+
+    return;
+  }
+
+  m->abi.post_server_specialize(m->abi.impl, args);
+}
+
+#endif /* MODULE_H */

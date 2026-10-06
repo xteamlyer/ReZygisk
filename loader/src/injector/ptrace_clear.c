@@ -1,1 +1,105 @@
-I2luY2x1ZGUgPHN0ZGlvLmg+CiNpbmNsdWRlIDxzdGRib29sLmg+CiNpbmNsdWRlIDxzdHJpbmcuaD4KCiNpbmNsdWRlIDxmY250bC5oPgojaW5jbHVkZSA8c3lzL3N5c2NhbGwuaD4KCiNpbmNsdWRlIDxsaW51eC9maWx0ZXIuaD4KI2luY2x1ZGUgPGxpbnV4L3NlY2NvbXAuaD4KI2luY2x1ZGUgPHN5cy9wcmN0bC5oPgojaW5jbHVkZSA8dW5pc3RkLmg+CgojaW5jbHVkZSAibG9nZ2luZy5oIgoKI2luY2x1ZGUgInB0cmFjZV9jbGVhci5oIgoKc3RhdGljIGJvb2wgc2VjY29tcF9maWx0ZXJzX3Zpc2libGUoKSB7CiAgRklMRSAqc3RhdHVzX2ZpbGUgPSBmb3BlbigiL3Byb2Mvc2VsZi9zdGF0dXMiLCAiciIpOwogIGlmICghc3RhdHVzX2ZpbGUpIHsKICAgIFBMT0dFKCJvcGVuIC9wcm9jL3NlbGYvc3RhdHVzIik7CgogICAgcmV0dXJuIHRydWU7CiAgfQoKICBjaGFyIGxpbmVbMjU2XTsKICB3aGlsZSAoZmdldHMobGluZSwgc2l6ZW9mKGxpbmUpLCBzdGF0dXNfZmlsZSkpIHsKICAgIGlmIChzdHJuY21wKGxpbmUsICJTZWNjb21wX2ZpbHRlcnM6Iiwgc3RybGVuKCJTZWNjb21wX2ZpbHRlcnM6IikpICE9IDApIGNvbnRpbnVlOwoKICAgIGZjbG9zZShzdGF0dXNfZmlsZSk7CgogICAgcmV0dXJuIHRydWU7CiAgfQoKICBmY2xvc2Uoc3RhdHVzX2ZpbGUpOwoKICByZXR1cm4gZmFsc2U7Cn0KCnZvaWQgcGVyZm9ybV9wdHJhY2VfbWVzc2FnZV9jbGVhcigpIHsKICAvKiBJTkZPOiBTaW5jZSBrZXJuZWwgNS4xMCwgU2VjY29tcCBmaWx0ZXJzIGFyZSB2aXNpYmxlLCBtYWtpbmcgaGlkaW5nIHZpYSBzZWNjb21wIGV2ZW50IHVudXNhYmxlICovCiAgaWYgKHNlY2NvbXBfZmlsdGVyc192aXNpYmxlKCkpIHsKICAgIExPR0QoIlNlY2NvbXAgZmlsdGVycyBhcmUgdmlzaWJsZSwgc2tpcHBpbmcgdXNpbmcgaGlkaW5nIHZpYSBzZWNjb21wIGV2ZW50Iik7CgogICAgcmV0dXJuOwogIH0KCiAgaW50IHJuZF9mZCA9IG9wZW4oIi9kZXYvdXJhbmRvbSIsIE9fUkRPTkxZKTsKICBpZiAocm5kX2ZkID09IC0xKSB7CiAgICBQTE9HRSgib3BlbiAvZGV2L3VyYW5kb20iKTsKCiAgICByZXR1cm47CiAgfQoKICB1aW50MzJfdCBhcmdzWzRdID0geyAwIH07CiAgaWYgKHJlYWQocm5kX2ZkLCAmYXJncywgc2l6ZW9mKGFyZ3MpKSAhPSBzaXplb2YoYXJncykpIHsKICAgIFBMT0dFKCJyZWFkIC9kZXYvdXJhbmRvbSIpOwoKICAgIGNsb3NlKHJuZF9mZCk7CgogICAgcmV0dXJuOwogIH0KCiAgY2xvc2Uocm5kX2ZkKTsKCiAgYXJnc1swXSB8PSAweDEwMDAwOwoKICAvKiBJTkZPOiBUcmFjZXMgb25seSBleGl0X2dyb3VwIGNhbGxlZCB3aXRoIHRoaXMgcHJvY2VzcydzIHJhbmRvbSBjb29raWUgaW4KICAgICAgICAgICBhbGwgZm91ciBhcmd1bWVudCByZWdpc3RlcnMsIGFuZCBsZXRzIGV2ZXJ5dGhpbmcgZWxzZSB0aHJvdWdoLiAqLwogIHN0cnVjdCBzb2NrX2ZpbHRlciBmaWx0ZXJbXSA9IHsKICAgIEJQRl9TVE1UKEJQRl9MRCB8IEJQRl9XIHwgQlBGX0FCUywgb2Zmc2V0b2Yoc3RydWN0IHNlY2NvbXBfZGF0YSwgbnIpKSwKICAgIEJQRl9KVU1QKEJQRl9KTVAgfCBCUEZfSkVRIHwgQlBGX0ssIF9fTlJfZXhpdF9ncm91cCwgMCwgOSksCgogICAgQlBGX1NUTVQoQlBGX0xEIHwgQlBGX1cgfCBCUEZfQUJTLCBvZmZzZXRvZihzdHJ1Y3Qgc2VjY29tcF9kYXRhLCBhcmdzWzBdKSksCiAgICBCUEZfSlVNUChCUEZfSk1QIHwgQlBGX0pFUSB8IEJQRl9LLCBhcmdzWzBdLCAwLCA3KSwKCiAgICBCUEZfU1RNVChCUEZfTEQgfCBCUEZfVyB8IEJQRl9BQlMsIG9mZnNldG9mKHN0cnVjdCBzZWNjb21wX2RhdGEsIGFyZ3NbMV0pKSwKICAgIEJQRl9KVU1QKEJQRl9KTVAgfCBCUEZfSkVRIHwgQlBGX0ssIGFyZ3NbMV0sIDAsIDUpLAoKICAgIEJQRl9TVE1UKEJQRl9MRCB8IEJQRl9XIHwgQlBGX0FCUywgb2Zmc2V0b2Yoc3RydWN0IHNlY2NvbXBfZGF0YSwgYXJnc1syXSkpLAogICAgQlBGX0pVTVAoQlBGX0pNUCB8IEJQRl9KRVEgfCBCUEZfSywgYXJnc1syXSwgMCwgMyksCgogICAgQlBGX1NUTVQoQlBGX0xEIHwgQlBGX1cgfCBCUEZfQUJTLCBvZmZzZXRvZihzdHJ1Y3Qgc2VjY29tcF9kYXRhLCBhcmdzWzNdKSksCiAgICBCUEZfSlVNUChCUEZfSk1QIHwgQlBGX0pFUSB8IEJQRl9LLCBhcmdzWzNdLCAwLCAxKSwKCiAgICAvKiBJTkZPOiBBbGwgbWF0Y2g6IHJldHVybiBUUkFDRSA9PiB3aWxsIHRyaWdnZXIgUFRSQUNFX0VWRU5UX1NFQ0NPTVAgKi8KICAgIEJQRl9TVE1UKEJQRl9SRVQgfCBCUEZfSywgU0VDQ09NUF9SRVRfVFJBQ0UpLAoKICAgIC8qIElORk86IERlZmF1bHQ6IGFsbG93ICovCiAgICBCUEZfU1RNVChCUEZfUkVUIHwgQlBGX0ssIFNFQ0NPTVBfUkVUX0FMTE9XKSwKICB9OwoKICBzdHJ1Y3Qgc29ja19mcHJvZyBwcm9nID0gewogICAgLmxlbiA9ICh1bnNpZ25lZCBzaG9ydCkoc2l6ZW9mKGZpbHRlcikvc2l6ZW9mKGZpbHRlclswXSkpLAogICAgLmZpbHRlciA9IGZpbHRlciwKICB9OwoKICBpZiAocHJjdGwoUFJfU0VUX1NFQ0NPTVAsIFNFQ0NPTVBfTU9ERV9GSUxURVIsICZwcm9nKSkgewogICAgUExPR0UoInByY3RsKFNFQ0NPTVApIik7CgogICAgcmV0dXJuOwogIH0KCiAgLyogSU5GTzogVGhpcyB3aWxsIHRyaWdnZXIgYSBwdHJhY2UgZXZlbnQsIHN5c2NhbGwgd2lsbCBub3QgZXhlY3V0ZSBkdWUgdG8gdHJhY2VlX3NraXBfc3lzY2FsbCAqLwogIHN5c2NhbGwoX19OUl9leGl0X2dyb3VwLCBhcmdzWzBdLCBhcmdzWzFdLCBhcmdzWzJdLCBhcmdzWzNdKTsKfQo=
+#include <stdio.h>
+#include <stdbool.h>
+#include <string.h>
+
+#include <fcntl.h>
+#include <sys/syscall.h>
+
+#include <linux/filter.h>
+#include <linux/seccomp.h>
+#include <sys/prctl.h>
+#include <unistd.h>
+
+#include "logging.h"
+
+#include "ptrace_clear.h"
+
+static bool seccomp_filters_visible() {
+  FILE *status_file = fopen("/proc/self/status", "r");
+  if (!status_file) {
+    PLOGE("open /proc/self/status");
+
+    return true;
+  }
+
+  char line[256];
+  while (fgets(line, sizeof(line), status_file)) {
+    if (strncmp(line, "Seccomp_filters:", strlen("Seccomp_filters:")) != 0) continue;
+
+    fclose(status_file);
+
+    return true;
+  }
+
+  fclose(status_file);
+
+  return false;
+}
+
+void perform_ptrace_message_clear() {
+  /* INFO: Since kernel 5.10, Seccomp filters are visible, making hiding via seccomp event unusable */
+  if (seccomp_filters_visible()) {
+    LOGD("Seccomp filters are visible, skipping using hiding via seccomp event");
+
+    return;
+  }
+
+  int rnd_fd = open("/dev/urandom", O_RDONLY);
+  if (rnd_fd == -1) {
+    PLOGE("open /dev/urandom");
+
+    return;
+  }
+
+  uint32_t args[4] = { 0 };
+  if (read(rnd_fd, &args, sizeof(args)) != sizeof(args)) {
+    PLOGE("read /dev/urandom");
+
+    close(rnd_fd);
+
+    return;
+  }
+
+  close(rnd_fd);
+
+  args[0] |= 0x10000;
+
+  /* INFO: Traces only exit_group called with this process's random cookie in
+           all four argument registers, and lets everything else through. */
+  struct sock_filter filter[] = {
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_exit_group, 0, 9),
+
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[0])),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, args[0], 0, 7),
+
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[1])),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, args[1], 0, 5),
+
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[2])),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, args[2], 0, 3),
+
+    BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, args[3])),
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, args[3], 0, 1),
+
+    /* INFO: All match: return TRACE => will trigger PTRACE_EVENT_SECCOMP */
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRACE),
+
+    /* INFO: Default: allow */
+    BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+  };
+
+  struct sock_fprog prog = {
+    .len = (unsigned short)(sizeof(filter)/sizeof(filter[0])),
+    .filter = filter,
+  };
+
+  if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog)) {
+    PLOGE("prctl(SECCOMP)");
+
+    return;
+  }
+
+  /* INFO: This will trigger a ptrace event, syscall will not execute due to tracee_skip_syscall */
+  syscall(__NR_exit_group, args[0], args[1], args[2], args[3]);
+}

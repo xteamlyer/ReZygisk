@@ -1,1 +1,26 @@
-I2lmbmRlZiBDSEVDS19ICiNkZWZpbmUgQ0hFQ0tfSAoKLyogSU5GTzogVGhlIGFzc2VydGlvbiBwcmltaXRpdmUgdGhlIGhvc3QgdGVzdHMgc2hhcmUuIFRoZSBjb3VudGVyIGlzCiAgICAgICAgIHBlciB0ZXN0IGJpbmFyeSBvbiBwdXJwb3NlOiBlYWNoIG9mIHRoZW0gaXMgYSBzdGFuZGFsb25lIG1haW4oKSB0aGF0CiAgICAgICAgIHByaW50cyBhbmQgcmV0dXJucyBpdHMgb3duIHRvdGFsLCBzbyBhIHNoYXJlZCBkZWZpbml0aW9uIHdvdWxkIG5lZWQgYQogICAgICAgICB0cmFuc2xhdGlvbiB1bml0IG9mIGl0cyBvd24gdG8gbGluayBhZ2FpbnN0LgoKICAgICAgICAgX19GSUxFX18gYW5kIF9fTElORV9fIGFyZSBleHBhbmRlZCB3aGVyZSBDSEVDSyBpcyB1c2VkLCBzbyB0aGUKICAgICAgICAgcmVwb3J0ZWQgbG9jYXRpb24gaXMgdGhlIGZhaWxpbmcgYXNzZXJ0aW9uIHJhdGhlciB0aGFuIHRoaXMgaGVhZGVyLiAqLwoKI2luY2x1ZGUgPHN0ZGlvLmg+CgpzdGF0aWMgaW50IGdfZmFpbHVyZXMgPSAwOwoKI2RlZmluZSBDSEVDSyhjb25kaXRpb24sIC4uLikgICAgICAgICAgICAgICAgICAgICBcCiAgZG8geyAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgXAogICAgaWYgKCEoY29uZGl0aW9uKSkgeyAgICAgICAgICAgICAgICAgICAgICAgICAgIFwKICAgICAgZ19mYWlsdXJlcysrOyAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBcCiAgICAgIHByaW50ZigiRkFJTCAlczolZDogIiwgX19GSUxFX18sIF9fTElORV9fKTsgXAogICAgICBwcmludGYoX19WQV9BUkdTX18pOyAgICAgICAgICAgICAgICAgICAgICAgIFwKICAgICAgcHJpbnRmKCJcbiIpOyAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBcCiAgICB9ICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgXAogIH0gd2hpbGUgKDApCgojZW5kaWYgLyogQ0hFQ0tfSCAqLwo=
+#ifndef CHECK_H
+#define CHECK_H
+
+/* INFO: The assertion primitive the host tests share. The counter is
+         per test binary on purpose: each of them is a standalone main() that
+         prints and returns its own total, so a shared definition would need a
+         translation unit of its own to link against.
+
+         __FILE__ and __LINE__ are expanded where CHECK is used, so the
+         reported location is the failing assertion rather than this header. */
+
+#include <stdio.h>
+
+static int g_failures = 0;
+
+#define CHECK(condition, ...)                     \
+  do {                                            \
+    if (!(condition)) {                           \
+      g_failures++;                               \
+      printf("FAIL %s:%d: ", __FILE__, __LINE__); \
+      printf(__VA_ARGS__);                        \
+      printf("\n");                               \
+    }                                             \
+  } while (0)
+
+#endif /* CHECK_H */

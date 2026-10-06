@@ -1,1 +1,222 @@
-I2luY2x1ZGUgPHN0ZGxpYi5oPgojaW5jbHVkZSA8c3RyaW5nLmg+CiNpbmNsdWRlIDxlcnJuby5oPgoKI2luY2x1ZGUgPHVuaXN0ZC5oPgojaW5jbHVkZSA8c3lzL3NvY2tldC5oPgoKI2luY2x1ZGUgImxvZ2dpbmcuaCIKCiNpbmNsdWRlICJzb2NrZXRfdXRpbHMuaCIKCnNzaXplX3Qgd3JpdGVfbG9vcChpbnQgZmQsIGNvbnN0IHZvaWQgKmJ1Ziwgc2l6ZV90IGNvdW50KSB7CiAgc2l6ZV90IHdyaXR0ZW4gPSAwOwogIHdoaWxlICh3cml0dGVuIDwgY291bnQpIHsKICAgIHNzaXplX3QgcmV0ID0gVEVNUF9GQUlMVVJFX1JFVFJZKHdyaXRlKGZkLCAoY29uc3QgY2hhciAqKWJ1ZiArIHdyaXR0ZW4sIGNvdW50IC0gd3JpdHRlbikpOwogICAgaWYgKHJldCA9PSAtMSkgewogICAgICBpZiAoZXJybm8gPT0gRUFHQUlOKSB7CiAgICAgICAgTE9HVygiR290IEVBR0FJTiB3aGlsZSB3cml0aW5nIHRvIGZkICVkLCByZXRyeWluZy4uLlxuIiwgZmQpOwoKICAgICAgICB1c2xlZXAoMTAwMCk7CgogICAgICAgIGNvbnRpbnVlOwogICAgICB9CgogICAgICBQTE9HRSgid3JpdGUiKTsKCiAgICAgIHJldHVybiAtMTsKICAgIH0KCiAgICBpZiAocmV0ID09IDApIHJldHVybiB3cml0dGVuOwoKICAgIHdyaXR0ZW4gKz0gcmV0OwogIH0KCiAgcmV0dXJuIChzc2l6ZV90KXdyaXR0ZW47Cn0KCnNzaXplX3QgcmVhZF9sb29wX29mZnNldChpbnQgZmQsIHZvaWQgKmJ1Ziwgc2l6ZV90IGNvdW50LCBvZmZfdCBvZmZzZXQpIHsKICBzaXplX3QgcmVhZF9ieXRlcyA9IDA7CiAgd2hpbGUgKHJlYWRfYnl0ZXMgPCBjb3VudCkgewogICAgc3NpemVfdCByZXQ7CiAgICBpZiAob2Zmc2V0ID09IDApIHJldCA9IFRFTVBfRkFJTFVSRV9SRVRSWShyZWFkKGZkLCAoY2hhciAqKWJ1ZiArIHJlYWRfYnl0ZXMsIGNvdW50IC0gcmVhZF9ieXRlcykpOwogICAgZWxzZSByZXQgPSBURU1QX0ZBSUxVUkVfUkVUUlkocHJlYWQoZmQsIChjaGFyICopYnVmICsgcmVhZF9ieXRlcywgY291bnQgLSByZWFkX2J5dGVzLCBvZmZzZXQgKyByZWFkX2J5dGVzKSk7CiAgICBpZiAocmV0ID09IC0xKSB7CiAgICAgIGlmIChlcnJubyA9PSBFQUdBSU4pIHsKICAgICAgICBMT0dXKCJHb3QgRUFHQUlOIHdoaWxlIHJlYWRpbmcgZnJvbSBmZCAlZCwgcmV0cnlpbmcuLi5cbiIsIGZkKTsKCiAgICAgICAgdXNsZWVwKDEwMDApOwoKICAgICAgICBjb250aW51ZTsKICAgICAgfQoKICAgICAgUExPR0UoInJlYWQiKTsKCiAgICAgIHJldHVybiAtMTsKICAgIH0KCiAgICBpZiAocmV0ID09IDApIHJldHVybiByZWFkX2J5dGVzOwoKICAgIHJlYWRfYnl0ZXMgKz0gcmV0OwogIH0KCiAgcmV0dXJuIChzc2l6ZV90KXJlYWRfYnl0ZXM7Cn0KCnNzaXplX3QgcmVhZF9sb29wKGludCBmZCwgdm9pZCAqYnVmLCBzaXplX3QgY291bnQpIHsKICByZXR1cm4gcmVhZF9sb29wX29mZnNldChmZCwgYnVmLCBjb3VudCwgMCk7Cn0KCnNzaXplX3Qgd3JpdGVfZmQoaW50IGZkLCBpbnQgc2VuZGZkKSB7CiAgY2hhciBjbXNnYnVmW0NNU0dfU1BBQ0Uoc2l6ZW9mKGludCkpXTsKICBjaGFyIGJ1ZlsxXSA9IHsgMCB9OwoKICBzdHJ1Y3QgaW92ZWMgaW92ID0gewogICAgLmlvdl9iYXNlID0gYnVmLAogICAgLmlvdl9sZW4gPSAxCiAgfTsKCiAgc3RydWN0IG1zZ2hkciBtc2cgPSB7CiAgICAubXNnX2lvdiA9ICZpb3YsCiAgICAubXNnX2lvdmxlbiA9IDEsCiAgICAubXNnX2NvbnRyb2wgPSBjbXNnYnVmLAogICAgLm1zZ19jb250cm9sbGVuID0gc2l6ZW9mKGNtc2didWYpCiAgfTsKCiAgc3RydWN0IGNtc2doZHIgKmNtc2cgPSBDTVNHX0ZJUlNUSERSKCZtc2cpOwogIGNtc2ctPmNtc2dfbGVuID0gQ01TR19MRU4oc2l6ZW9mKGludCkpOwogIGNtc2ctPmNtc2dfbGV2ZWwgPSBTT0xfU09DS0VUOwogIGNtc2ctPmNtc2dfdHlwZSA9IFNDTV9SSUdIVFM7CgogIG1lbWNweShDTVNHX0RBVEEoY21zZyksICZzZW5kZmQsIHNpemVvZihpbnQpKTsKCiAgc3NpemVfdCByZXQgPSBzZW5kbXNnKGZkLCAmbXNnLCAwKTsKICBpZiAocmV0ID09IC0xKSB7CiAgICBQTE9HRSgic2VuZG1zZyIpOwoKICAgIHJldHVybiAtMTsKICB9CgogIHJldHVybiByZXQ7Cn0KCmludCByZWFkX2ZkKGludCBmZCkgewogIGNoYXIgY21zZ2J1ZltDTVNHX1NQQUNFKHNpemVvZihpbnQpKV07CgogIGNoYXIgYnVmWzFdID0geyAwIH07CgogIHN0cnVjdCBpb3ZlYyBpb3YgPSB7CiAgICAuaW92X2Jhc2UgPSBidWYsCiAgICAuaW92X2xlbiA9IHNpemVvZihidWYpCiAgfTsKCiAgc3RydWN0IG1zZ2hkciBtc2cgPSB7CiAgICAubXNnX2lvdiA9ICZpb3YsCiAgICAubXNnX2lvdmxlbiA9IDEsCiAgICAubXNnX2NvbnRyb2wgPSBjbXNnYnVmLAogICAgLm1zZ19jb250cm9sbGVuID0gc2l6ZW9mKGNtc2didWYpCiAgfTsKCiAgc3NpemVfdCByZXQgPSBURU1QX0ZBSUxVUkVfUkVUUlkocmVjdm1zZyhmZCwgJm1zZywgTVNHX1dBSVRBTEwpKTsKICBpZiAocmV0ID09IC0xKSB7CiAgICBQTE9HRSgicmVjdm1zZyIpOwoKICAgIHJldHVybiAtMTsKICB9CgogIHN0cnVjdCBjbXNnaGRyICpjbXNnOwogIGludCBzZW5kZmQgPSAtMTsKCiAgZm9yIChjbXNnID0gQ01TR19GSVJTVEhEUigmbXNnKTsgY21zZyAhPSBOVUxMOyBjbXNnID0gQ01TR19OWFRIRFIoJm1zZywgY21zZykpIHsKICAgIGlmIChjbXNnLT5jbXNnX2xldmVsICE9IFNPTF9TT0NLRVQgfHwgY21zZy0+Y21zZ190eXBlICE9IFNDTV9SSUdIVFMgfHwgY21zZy0+Y21zZ19sZW4gPCBDTVNHX0xFTihzaXplb2YoaW50KSkpIGNvbnRpbnVlOwoKICAgIG1lbWNweSgmc2VuZGZkLCBDTVNHX0RBVEEoY21zZyksIHNpemVvZihpbnQpKTsKCiAgICBicmVhazsKICB9CgogIGlmIChzZW5kZmQgPT0gLTEpIHsKICAgIExPR0UoIkZhaWxlZCB0byByZWNlaXZlIGZkIGluIHJlYWRfZmQ6IE5vIHZhbGlkIGZkIGZvdW5kIGluIGNvbnRyb2wgbWVzc2FnZSIpOwoKICAgIHJldHVybiAtMTsKICB9CgogIHJldHVybiBzZW5kZmQ7Cn0KCnNzaXplX3Qgd3JpdGVfc3RyaW5nKGludCBmZCwgY29uc3QgY2hhciAqc3RyKSB7CiAgc2l6ZV90IHN0cl9sZW4gPSBzdHJsZW4oc3RyKTsKICBzc2l6ZV90IHdyaXRlX2J5dGVzID0gd3JpdGVfbG9vcChmZCwgJnN0cl9sZW4sIHNpemVvZihzaXplX3QpKTsKICBpZiAod3JpdGVfYnl0ZXMgIT0gKHNzaXplX3Qpc2l6ZW9mKHNpemVfdCkpIHsKICAgIExPR0UoIkZhaWxlZCB0byB3cml0ZSBzdHJpbmcgbGVuZ3RoOiBOb3QgYWxsIGJ5dGVzIHdlcmUgd3JpdHRlbiAoJXpkICE9ICV6dSkuXG4iLCB3cml0ZV9ieXRlcywgc2l6ZW9mKHNpemVfdCkpOwoKICAgIHJldHVybiAtMTsKICB9CgogIHdyaXRlX2J5dGVzID0gd3JpdGVfbG9vcChmZCwgc3RyLCBzdHJfbGVuKTsKICBpZiAod3JpdGVfYnl0ZXMgIT0gKHNzaXplX3Qpc3RyX2xlbikgewogICAgTE9HRSgiRmFpbGVkIHRvIHdyaXRlIHN0cmluZzogUHJvbWlzZWQgYnl0ZXMgZG9lc24ndCBleGlzdCAoJXpkICE9ICV6dSkuXG4iLCB3cml0ZV9ieXRlcywgc3RyX2xlbik7CgogICAgcmV0dXJuIC0xOwogIH0KCiAgcmV0dXJuIHdyaXRlX2J5dGVzOwp9CgpjaGFyICpyZWFkX3N0cmluZyhpbnQgZmQpIHsKICBzaXplX3Qgc3RyX2xlbiA9IDA7CiAgc3NpemVfdCByZWFkX2J5dGVzID0gcmVhZF9sb29wKGZkLCAmc3RyX2xlbiwgc2l6ZW9mKHNpemVfdCkpOwogIGlmIChyZWFkX2J5dGVzICE9IChzc2l6ZV90KXNpemVvZihzaXplX3QpKSB7CiAgICBMT0dFKCJGYWlsZWQgdG8gcmVhZCBzdHJpbmcgbGVuZ3RoOiBOb3QgYWxsIGJ5dGVzIHdlcmUgcmVhZCAoJXpkICE9ICV6dSkuXG4iLCByZWFkX2J5dGVzLCBzaXplb2Yoc2l6ZV90KSk7CgogICAgcmV0dXJuIE5VTEw7CiAgfQoKICAvKiBJTkZPOiBBIGxlbmd0aCBpcyBvbmx5IHNhbmUgdXAgdG8gYSBwYXRoJ3Mgd29ydGggb2YgYnl0ZXM7IGFueXRoaW5nCiAgICAgICAgICAgIGJleW9uZCBpdCBpcyBhIGRlc3luY2hyb25pc2VkIHN0cmVhbSwgYW5kIHRydXN0aW5nIGl0IHdvdWxkIGxldAogICAgICAgICAgICB0aGUgYWxsb2NhdGlvbiBncm93IHdpdGhvdXQgYm91bmQuICovCiAgaWYgKHN0cl9sZW4gPiAoc2l6ZV90KSgxdSA8PCAyMCkpIHsKICAgIExPR0UoIkZhaWxlZCB0byByZWFkIHN0cmluZzogTGVuZ3RoICV6dSBpcyBvdXQgb2YgYm91bmRzLlxuIiwgc3RyX2xlbik7CgogICAgcmV0dXJuIE5VTEw7CiAgfQoKICBjaGFyICpidWYgPSBtYWxsb2Moc3RyX2xlbiArIDEpOwogIGlmIChidWYgPT0gTlVMTCkgewogICAgUExPR0UoImFsbG9jYXRlIG1lbW9yeSBmb3Igc3RyaW5nIik7CgogICAgcmV0dXJuIE5VTEw7CiAgfQoKICByZWFkX2J5dGVzID0gcmVhZF9sb29wKGZkLCBidWYsIHN0cl9sZW4pOwogIGlmIChyZWFkX2J5dGVzICE9IChzc2l6ZV90KXN0cl9sZW4pIHsKICAgIExPR0UoIkZhaWxlZCB0byByZWFkIHN0cmluZzogUHJvbWlzZWQgYnl0ZXMgZG9lc24ndCBleGlzdCAoJXpkICE9ICV6dSkuXG4iLCByZWFkX2J5dGVzLCBzdHJfbGVuKTsKCiAgICBmcmVlKGJ1Zik7CgogICAgcmV0dXJuIE5VTEw7CiAgfQoKICBidWZbc3RyX2xlbl0gPSAnXDAnOwoKICByZXR1cm4gYnVmOwp9CgojZGVmaW5lIHdyaXRlX2Z1bmModHlwZSkgICAgICAgICAgICAgICAgICAgICAgIFwKICBzc2l6ZV90IHdyaXRlXyMjIHR5cGUoaW50IGZkLCB0eXBlIHZhbCkgeyAgICBcCiAgICByZXR1cm4gd3JpdGVfbG9vcChmZCwgJnZhbCwgc2l6ZW9mKHR5cGUpKTsgXAogIH0KCiNkZWZpbmUgcmVhZF9mdW5jKHR5cGUpICAgICAgICAgICAgICAgICAgICAgIFwKICBzc2l6ZV90IHJlYWRfIyMgdHlwZShpbnQgZmQsIHR5cGUgKnZhbCkgeyAgXAogICAgcmV0dXJuIHJlYWRfbG9vcChmZCwgdmFsLCBzaXplb2YodHlwZSkpOyBcCiAgfQoKd3JpdGVfZnVuYyh1aW50OF90KQpyZWFkX2Z1bmModWludDhfdCkKCndyaXRlX2Z1bmModWludDMyX3QpCnJlYWRfZnVuYyh1aW50MzJfdCkKCndyaXRlX2Z1bmMoc2l6ZV90KQpyZWFkX2Z1bmMoc2l6ZV90KQo=
+#include <stdlib.h>
+#include <string.h>
+#include <errno.h>
+
+#include <unistd.h>
+#include <sys/socket.h>
+
+#include "logging.h"
+
+#include "socket_utils.h"
+
+ssize_t write_loop(int fd, const void *buf, size_t count) {
+  size_t written = 0;
+  while (written < count) {
+    ssize_t ret = TEMP_FAILURE_RETRY(write(fd, (const char *)buf + written, count - written));
+    if (ret == -1) {
+      if (errno == EAGAIN) {
+        LOGW("Got EAGAIN while writing to fd %d, retrying...\n", fd);
+
+        usleep(1000);
+
+        continue;
+      }
+
+      PLOGE("write");
+
+      return -1;
+    }
+
+    if (ret == 0) return written;
+
+    written += ret;
+  }
+
+  return (ssize_t)written;
+}
+
+ssize_t read_loop_offset(int fd, void *buf, size_t count, off_t offset) {
+  size_t read_bytes = 0;
+  while (read_bytes < count) {
+    ssize_t ret;
+    if (offset == 0) ret = TEMP_FAILURE_RETRY(read(fd, (char *)buf + read_bytes, count - read_bytes));
+    else ret = TEMP_FAILURE_RETRY(pread(fd, (char *)buf + read_bytes, count - read_bytes, offset + read_bytes));
+    if (ret == -1) {
+      if (errno == EAGAIN) {
+        LOGW("Got EAGAIN while reading from fd %d, retrying...\n", fd);
+
+        usleep(1000);
+
+        continue;
+      }
+
+      PLOGE("read");
+
+      return -1;
+    }
+
+    if (ret == 0) return read_bytes;
+
+    read_bytes += ret;
+  }
+
+  return (ssize_t)read_bytes;
+}
+
+ssize_t read_loop(int fd, void *buf, size_t count) {
+  return read_loop_offset(fd, buf, count, 0);
+}
+
+ssize_t write_fd(int fd, int sendfd) {
+  char cmsgbuf[CMSG_SPACE(sizeof(int))];
+  char buf[1] = { 0 };
+
+  struct iovec iov = {
+    .iov_base = buf,
+    .iov_len = 1
+  };
+
+  struct msghdr msg = {
+    .msg_iov = &iov,
+    .msg_iovlen = 1,
+    .msg_control = cmsgbuf,
+    .msg_controllen = sizeof(cmsgbuf)
+  };
+
+  struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+  cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+  cmsg->cmsg_level = SOL_SOCKET;
+  cmsg->cmsg_type = SCM_RIGHTS;
+
+  memcpy(CMSG_DATA(cmsg), &sendfd, sizeof(int));
+
+  ssize_t ret = sendmsg(fd, &msg, 0);
+  if (ret == -1) {
+    PLOGE("sendmsg");
+
+    return -1;
+  }
+
+  return ret;
+}
+
+int read_fd(int fd) {
+  char cmsgbuf[CMSG_SPACE(sizeof(int))];
+
+  char buf[1] = { 0 };
+
+  struct iovec iov = {
+    .iov_base = buf,
+    .iov_len = sizeof(buf)
+  };
+
+  struct msghdr msg = {
+    .msg_iov = &iov,
+    .msg_iovlen = 1,
+    .msg_control = cmsgbuf,
+    .msg_controllen = sizeof(cmsgbuf)
+  };
+
+  ssize_t ret = TEMP_FAILURE_RETRY(recvmsg(fd, &msg, MSG_WAITALL));
+  if (ret == -1) {
+    PLOGE("recvmsg");
+
+    return -1;
+  }
+
+  struct cmsghdr *cmsg;
+  int sendfd = -1;
+
+  for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+    if (cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS || cmsg->cmsg_len < CMSG_LEN(sizeof(int))) continue;
+
+    memcpy(&sendfd, CMSG_DATA(cmsg), sizeof(int));
+
+    break;
+  }
+
+  if (sendfd == -1) {
+    LOGE("Failed to receive fd in read_fd: No valid fd found in control message");
+
+    return -1;
+  }
+
+  return sendfd;
+}
+
+ssize_t write_string(int fd, const char *str) {
+  size_t str_len = strlen(str);
+  ssize_t write_bytes = write_loop(fd, &str_len, sizeof(size_t));
+  if (write_bytes != (ssize_t)sizeof(size_t)) {
+    LOGE("Failed to write string length: Not all bytes were written (%zd != %zu).\n", write_bytes, sizeof(size_t));
+
+    return -1;
+  }
+
+  write_bytes = write_loop(fd, str, str_len);
+  if (write_bytes != (ssize_t)str_len) {
+    LOGE("Failed to write string: Promised bytes doesn't exist (%zd != %zu).\n", write_bytes, str_len);
+
+    return -1;
+  }
+
+  return write_bytes;
+}
+
+char *read_string(int fd) {
+  size_t str_len = 0;
+  ssize_t read_bytes = read_loop(fd, &str_len, sizeof(size_t));
+  if (read_bytes != (ssize_t)sizeof(size_t)) {
+    LOGE("Failed to read string length: Not all bytes were read (%zd != %zu).\n", read_bytes, sizeof(size_t));
+
+    return NULL;
+  }
+
+  /* INFO: A length is only sane up to a path's worth of bytes; anything
+            beyond it is a desynchronised stream, and trusting it would let
+            the allocation grow without bound. */
+  if (str_len > (size_t)(1u << 20)) {
+    LOGE("Failed to read string: Length %zu is out of bounds.\n", str_len);
+
+    return NULL;
+  }
+
+  char *buf = malloc(str_len + 1);
+  if (buf == NULL) {
+    PLOGE("allocate memory for string");
+
+    return NULL;
+  }
+
+  read_bytes = read_loop(fd, buf, str_len);
+  if (read_bytes != (ssize_t)str_len) {
+    LOGE("Failed to read string: Promised bytes doesn't exist (%zd != %zu).\n", read_bytes, str_len);
+
+    free(buf);
+
+    return NULL;
+  }
+
+  buf[str_len] = '\0';
+
+  return buf;
+}
+
+#define write_func(type)                       \
+  ssize_t write_## type(int fd, type val) {    \
+    return write_loop(fd, &val, sizeof(type)); \
+  }
+
+#define read_func(type)                      \
+  ssize_t read_## type(int fd, type *val) {  \
+    return read_loop(fd, val, sizeof(type)); \
+  }
+
+write_func(uint8_t)
+read_func(uint8_t)
+
+write_func(uint32_t)
+read_func(uint32_t)
+
+write_func(size_t)
+read_func(size_t)

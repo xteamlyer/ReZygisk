@@ -1,1 +1,73 @@
-I2lmbmRlZiBFTEZfVVRJTF9ICiNkZWZpbmUgRUxGX1VUSUxfSAoKI2luY2x1ZGUgPHN0ZGJvb2wuaD4KCiNpbmNsdWRlIDxsaW5rLmg+CiNpbmNsdWRlIDxzeXMvdHlwZXMuaD4KCiNkZWZpbmUgU0hUX0dOVV9IQVNIIDB4NmZmZmZmZjYKCi8qIElORk86IGJpb25pYydzIDxlbGYuaD4gcHJvdmlkZXMgRUxGX1NUX1RZUEUsIGdsaWJjIGRvZXMgbm90LiBLZXB0IGd1YXJkZWQgc28KICAgICAgICAgdGhlIGhvc3Qtc2lkZSB0ZXN0cyBjYW4gY29tcGlsZSB0aGUgc2FtZSBzb3VyY2Ugd2l0aCBlaXRoZXIgbGliYy4gKi8KI2lmbmRlZiBFTEZfU1RfVFlQRQogICNkZWZpbmUgRUxGX1NUX1RZUEUoaW5mbykgKChpbmZvKSAmIDB4ZikKI2VuZGlmCgp0eXBlZGVmIHN0cnVjdCB7CiAgY2hhciAqZWxmOwogIHZvaWQgKmJhc2U7CiAgRWxmVyhFaGRyKSAqaGVhZGVyOwogIHNpemVfdCBzaXplOwogIG9mZl90IGJpYXM7CiAgRWxmVyhTaGRyKSAqc2VjdGlvbl9oZWFkZXI7CgogIEVsZlcoU2hkcikgKmR5bnN5bTsKICBFbGZXKE9mZikgZHluc3ltX29mZnNldDsKICBFbGZXKFN5bSkgKmR5bnN5bV9zdGFydDsKICBFbGZXKFNoZHIpICpzdHJ0YWI7CiAgRWxmVyhPZmYpIHN5bXN0cl9vZmZzZXQ7CiAgdm9pZCAqc3RydGFiX3N0YXJ0OwoKICB1aW50MzJfdCBuYnVja2V0XzsKICB1aW50MzJfdCAqYnVja2V0XzsKICB1aW50MzJfdCAqY2hhaW5fOwoKICB1aW50MzJfdCBnbnVfbmJ1Y2tldF87CiAgdWludDMyX3QgZ251X3N5bW5keF87CiAgdWludDMyX3QgZ251X2Jsb29tX3NpemVfOwogIHVpbnQzMl90IGdudV9zaGlmdDJfOwogIHVpbnRwdHJfdCAqZ251X2Jsb29tX2ZpbHRlcl87CiAgdWludDMyX3QgKmdudV9idWNrZXRfOwogIHVpbnQzMl90ICpnbnVfY2hhaW5fOwoKICBFbGZXKFNoZHIpICpzeW10YWI7CiAgRWxmVyhPZmYpIHN5bXRhYl9vZmZzZXQ7CiAgc2l6ZV90IHN5bXRhYl9zaXplOwogIHNpemVfdCBzeW10YWJfY291bnQ7CiAgRWxmVyhTeW0pICpzeW10YWJfc3RhcnQ7CiAgRWxmVyhPZmYpIHN5bXN0cl9vZmZzZXRfZm9yX3N5bXRhYjsKCiAgLyogSU5GTzogTWluaS1kZWJ1ZyBpbmZvICguZ251X2RlYnVnZGF0YSk6IGFuIExaTUEtY29tcHJlc3NlZCBFTEYgaG9sZGluZyBhCiAgICAgICAgICAgIGZ1bGwgLnN5bXRhYiBmb3Igb3RoZXJ3aXNlIHN0cmlwcGVkIHN5c3RlbSBsaWJyYXJpZXMuICovCiAgdWludDhfdCAqZGVidWdkYXRhOwogIEVsZlcoU3ltKSAqZGRfc3ltdGFiX3N0YXJ0OwogIHNpemVfdCBkZF9zeW10YWJfY291bnQ7CiAgY29uc3QgY2hhciAqZGRfc3RydGFiOwogIHNpemVfdCBkZF9zdHJ0YWJfc2l6ZTsKCiAgRWxmVyhTeW0pICoqc3ltdGFic187CiAgc2l6ZV90IHN5bXRhYnNfY291bnRfOwp9IEVsZkltZzsKCnZvaWQgRWxmSW1nX2Rlc3Ryb3koRWxmSW1nICppbWcpOwoKRWxmSW1nICpFbGZJbWdfY3JlYXRlKGNvbnN0IGNoYXIgKmVsZiwgdm9pZCAqYmFzZSk7Cgpib29sIEVsZkltZ19sb2FkX3N5bWJvbHMoRWxmSW1nICppbWcpOwoKY29uc3QgY2hhciAqZ2V0U3ltYk5hbWUoRWxmSW1nICppbWcsIEVsZlcoU3ltKSAqc3ltKTsKCkVsZlcoQWRkcikgZ2V0U3ltYkFkZHJlc3MoRWxmSW1nICppbWcsIGNvbnN0IGNoYXIgKm5hbWUpOwoKI2VuZGlmIC8qIEVMRl9VVElMX0ggKi8K
+#ifndef ELF_UTIL_H
+#define ELF_UTIL_H
+
+#include <stdbool.h>
+
+#include <link.h>
+#include <sys/types.h>
+
+#define SHT_GNU_HASH 0x6ffffff6
+
+/* INFO: bionic's <elf.h> provides ELF_ST_TYPE, glibc does not. Kept guarded so
+         the host-side tests can compile the same source with either libc. */
+#ifndef ELF_ST_TYPE
+  #define ELF_ST_TYPE(info) ((info) & 0xf)
+#endif
+
+typedef struct {
+  char *elf;
+  void *base;
+  ElfW(Ehdr) *header;
+  size_t size;
+  off_t bias;
+  ElfW(Shdr) *section_header;
+
+  ElfW(Shdr) *dynsym;
+  ElfW(Off) dynsym_offset;
+  ElfW(Sym) *dynsym_start;
+  ElfW(Shdr) *strtab;
+  ElfW(Off) symstr_offset;
+  void *strtab_start;
+
+  uint32_t nbucket_;
+  uint32_t *bucket_;
+  uint32_t *chain_;
+
+  uint32_t gnu_nbucket_;
+  uint32_t gnu_symndx_;
+  uint32_t gnu_bloom_size_;
+  uint32_t gnu_shift2_;
+  uintptr_t *gnu_bloom_filter_;
+  uint32_t *gnu_bucket_;
+  uint32_t *gnu_chain_;
+
+  ElfW(Shdr) *symtab;
+  ElfW(Off) symtab_offset;
+  size_t symtab_size;
+  size_t symtab_count;
+  ElfW(Sym) *symtab_start;
+  ElfW(Off) symstr_offset_for_symtab;
+
+  /* INFO: Mini-debug info (.gnu_debugdata): an LZMA-compressed ELF holding a
+            full .symtab for otherwise stripped system libraries. */
+  uint8_t *debugdata;
+  ElfW(Sym) *dd_symtab_start;
+  size_t dd_symtab_count;
+  const char *dd_strtab;
+  size_t dd_strtab_size;
+
+  ElfW(Sym) **symtabs_;
+  size_t symtabs_count_;
+} ElfImg;
+
+void ElfImg_destroy(ElfImg *img);
+
+ElfImg *ElfImg_create(const char *elf, void *base);
+
+bool ElfImg_load_symbols(ElfImg *img);
+
+const char *getSymbName(ElfImg *img, ElfW(Sym) *sym);
+
+ElfW(Addr) getSymbAddress(ElfImg *img, const char *name);
+
+#endif /* ELF_UTIL_H */

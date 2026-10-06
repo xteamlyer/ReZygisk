@@ -1,1 +1,189 @@
-bmFtZTogVHJ1c3RlZCBDSQoKb246CiAgcHVzaDoKICAgIGJyYW5jaGVzOiBbIG1haW4gXQoKam9iczoKICB0ZXN0OgogICAgbmFtZTogSG9zdCB1bml0IHRlc3RzCiAgICAjIElORk86IFNhbWUgcGlubmVkIGltYWdlIGFzIGV2ZXJ5IG90aGVyIGpvYiBoZXJlLCBzbyB0aGUgc3VpdGUgcnVucyBvbiB0aGUKICAgICMgICAgICAgT1MgcmVsZWFzZSBtYWluIHdpbGwganVkZ2UgaXQgYnksIG5vdCBvbiB3aGVyZXZlciAtbGF0ZXN0IHBvaW50cy4KICAgIHJ1bnMtb246IHVidW50dS0yNi4wNAogICAgc3RlcHM6CiAgICAgIC0gbmFtZTogQ2hlY2tvdXQKICAgICAgICAjIElORk86IEluLXRyZWUgc291cmNlcyBvbmx5ICh0aGUgRUxGIHJlYWRlciwgdGhlIG1vdW50aW5mbyBhbmQgQVBhdGNoCiAgICAgICAgIyAgICAgICBwYXJzZXJzKTogbm8gc3VibW9kdWxlcywgbm8gaGlzdG9yeS4gS2VlcGluZyB0aGlzIGpvYiBzZXBhcmF0ZQogICAgICAgICMgICAgICAgbGV0cyBhIGJyb2tlbiB0ZXN0IGZhaWwgZmFzdCB3aXRob3V0IGNvc3RpbmcgdGhlIGFyY2hpdmVzLgogICAgICAgIHVzZXM6IGFjdGlvbnMvY2hlY2tvdXRAdjcKICAgICAgICB3aXRoOgogICAgICAgICAgZmV0Y2gtZGVwdGg6IDEKCiAgICAgIC0gbmFtZTogSG9zdCB1bml0IHRlc3RzCiAgICAgICAgIyBJTkZPOiBTaGFyZWQgd2l0aCB0aGUgVW50cnVzdGVkIENJIHRocm91Z2ggdGVzdHMvaG9zdC9ydW4uc2gsIHNvIGEKICAgICAgICAjICAgICAgIHB1bGwgcmVxdWVzdCBpcyBqdWRnZWQgYnkgdGhlIHZlcnkgc2FtZSBjb21tYW5kcyB0aGF0IHJ1biBoZXJlCiAgICAgICAgIyAgICAgICBhZnRlciB0aGUgbWVyZ2UuCiAgICAgICAgcnVuOiBiYXNoIHRlc3RzL2hvc3QvcnVuLnNoCgogIGJ1aWxkOgogICAgIyBJTkZPOiBTYW1lIHBpbm5lZCBpbWFnZSBhcyBjaS55bWwgLSBzZWUgdGhlcmUgZm9yIHdoeSBub3QgLWxhdGVzdC4KICAgIHJ1bnMtb246IHVidW50dS0yNi4wNAogICAgc3RlcHM6CiAgICAgIC0gbmFtZTogQ2hlY2tvdXQKICAgICAgICB1c2VzOiBhY3Rpb25zL2NoZWNrb3V0QHY3CiAgICAgICAgd2l0aDoKICAgICAgICAgIHN1Ym1vZHVsZXM6ICJyZWN1cnNpdmUiCiAgICAgICAgICBmZXRjaC1kZXB0aDogMAoKICAgICAgLSBuYW1lOiBTZXR1cCBrZXlzCiAgICAgICAgZW52OgogICAgICAgICAgcHJpdmF0ZV9rZXk6ICR7eyBzZWNyZXRzLk9SR19QUklWQVRFX0tFWSB9fQogICAgICAgICAgcHVibGljX2tleTogJHt7IHNlY3JldHMuT1JHX1BVQkxJQ19LRVkgfX0KICAgICAgICBydW46IHwKICAgICAgICAgIGlmIFsgLXogIiRwcml2YXRlX2tleSIgXSB8fCBbIC16ICIkcHVibGljX2tleSIgXTsgdGhlbgogICAgICAgICAgICBlY2hvICJQcml2YXRlIG9yIHB1YmxpYyBrZXkgaXMgbm90IHNldC4iCiAgICAgICAgICBlbHNlCiAgICAgICAgICAgIGVjaG8gIiRwcml2YXRlX2tleSIgfCBiYXNlNjQgLWQgPiBtb2R1bGUvcHJpdmF0ZV9rZXkKICAgICAgICAgICAgZWNobyAiJHB1YmxpY19rZXkiIHwgYmFzZTY0IC1kID4gbW9kdWxlL3B1YmxpY19rZXkKICAgICAgICAgIGZpCgogICAgICAtIG5hbWU6IFNldHVwIE5ES19QQVRICiAgICAgICAgcnVuOiBlY2hvICJOREtfUEFUSD0kQU5EUk9JRF9OREtfTEFURVNUX0hPTUUiID4+ICRHSVRIVUJfRU5WCgogICAgICAtIG5hbWU6IEJ1aWxkCiAgICAgICAgcnVuOiB8CiAgICAgICAgICBtYWtlIGFsbCAtaiQobnByb2MpCiAgICAgICAgICBtYWtlIGFwYXRjaCAtaiQobnByb2MpCiAgICAgICAgICBtYWtlIGFwYXRjaC1kZWJ1ZyAtaiQobnByb2MpCgogICAgICAtIG5hbWU6IEJpbmFyeSBzaXplIGJ1ZGdldAogICAgICAgIHJ1bjogcHl0aG9uMyBzY3JpcHRzL2NpX3NpemVfYnVkZ2V0LnB5IGJ1aWxkIGJ1aWxkLWFwYXRjaAoKICAgICAgLSBuYW1lOiBHZW5lcmF0ZSB1cGRhdGUuanNvbgogICAgICAgIHJ1bjogfAogICAgICAgICAgcHl0aG9uMyBzY3JpcHRzL21ha2VfdXBkYXRlX2pzb24ucHkgLS10cmVlIGJ1aWxkIC0tb3V0cHV0IGJ1aWxkL291dC91cGRhdGUuanNvbiAtLXBhdHRlcm4gIlZleFp5Z2lzay12Ki1yZWxlYXNlLnppcCIKICAgICAgICAgIHB5dGhvbjMgc2NyaXB0cy9tYWtlX3VwZGF0ZV9qc29uLnB5IC0tdHJlZSBidWlsZC1hcGF0Y2ggLS1vdXRwdXQgYnVpbGQtYXBhdGNoL291dC91cGRhdGUtYXBhdGNoLmpzb24gLS1wYXR0ZXJuICJWZXhaeWdpc2stQVBhdGNoLXYqLXJlbGVhc2UuemlwIgoKICAgICAgLSBuYW1lOiBVcGxvYWQgdXBkYXRlLmpzb24KICAgICAgICB1c2VzOiBhY3Rpb25zL3VwbG9hZC1hcnRpZmFjdEB2NwogICAgICAgIHdpdGg6CiAgICAgICAgICBuYW1lOiB1cGRhdGUuanNvbgogICAgICAgICAgcGF0aDogImJ1aWxkL291dC91cGRhdGUuanNvbiIKICAgICAgICAgIGFyY2hpdmU6IGZhbHNlCgogICAgICAtIG5hbWU6IFVwbG9hZCBBUGF0Y2ggdXBkYXRlLmpzb24KICAgICAgICB1c2VzOiBhY3Rpb25zL3VwbG9hZC1hcnRpZmFjdEB2NwogICAgICAgIHdpdGg6CiAgICAgICAgICBuYW1lOiB1cGRhdGUtYXBhdGNoLmpzb24KICAgICAgICAgIHBhdGg6ICJidWlsZC1hcGF0Y2gvb3V0L3VwZGF0ZS1hcGF0Y2guanNvbiIKICAgICAgICAgIGFyY2hpdmU6IGZhbHNlCgogICAgICAtIG5hbWU6IFVwbG9hZCByZWxlYXNlCiAgICAgICAgdXNlczogYWN0aW9ucy91cGxvYWQtYXJ0aWZhY3RAdjcKICAgICAgICB3aXRoOgogICAgICAgICAgcGF0aDogImJ1aWxkL291dC9WZXhaeWdpc2stdiotcmVsZWFzZS56aXAiCiAgICAgICAgICBhcmNoaXZlOiBmYWxzZQoKICAgICAgLSBuYW1lOiBVcGxvYWQgQVBhdGNoIHJlbGVhc2UKICAgICAgICB1c2VzOiBhY3Rpb25zL3VwbG9hZC1hcnRpZmFjdEB2NwogICAgICAgIHdpdGg6CiAgICAgICAgICBwYXRoOiAiYnVpbGQtYXBhdGNoL291dC9WZXhaeWdpc2stQVBhdGNoLXYqLXJlbGVhc2UuemlwIgogICAgICAgICAgYXJjaGl2ZTogZmFsc2UKCiAgICAgIC0gbmFtZTogVXBsb2FkIGRlYnVnCiAgICAgICAgdXNlczogYWN0aW9ucy91cGxvYWQtYXJ0aWZhY3RAdjcKICAgICAgICB3aXRoOgogICAgICAgICAgcGF0aDogImJ1aWxkL291dC9WZXhaeWdpc2stdiotZGVidWcuemlwIgogICAgICAgICAgYXJjaGl2ZTogZmFsc2UKCiAgICAgIC0gbmFtZTogVXBsb2FkIEFQYXRjaCBkZWJ1ZwogICAgICAgIHVzZXM6IGFjdGlvbnMvdXBsb2FkLWFydGlmYWN0QHY3CiAgICAgICAgd2l0aDoKICAgICAgICAgIHBhdGg6ICJidWlsZC1hcGF0Y2gvb3V0L1ZleFp5Z2lzay1BUGF0Y2gtdiotZGVidWcuemlwIgogICAgICAgICAgYXJjaGl2ZTogZmFsc2UKCiAgICAgIC0gbmFtZTogUHVibGlzaCBhcnRpZmFjdHMgdG8gVGVsZWdyYW0KICAgICAgICBlbnY6CiAgICAgICAgICBUR19CT1RfVE9LRU46ICR7eyBzZWNyZXRzLlRHX0JPVF9UT0tFTiB9fQogICAgICAgICAgVEdfQ0hBVF9JRDogJHt7IHNlY3JldHMuVEdfQ0hBVF9JRCB9fQogICAgICAgICAgVEdfVEhSRUFEX0lEOiAke3sgc2VjcmV0cy5UR19USFJFQURfSUQgfX0KICAgICAgICAgIENPTU1JVF9TSEE6ICR7eyBnaXRodWIuc2hhIH19CiAgICAgICAgICBSVU5fTlVNQkVSOiAke3sgZ2l0aHViLnJ1bl9udW1iZXIgfX0KICAgICAgICAgIFJVTl9VUkw6ICR7eyBnaXRodWIuc2VydmVyX3VybCB9fS8ke3sgZ2l0aHViLnJlcG9zaXRvcnkgfX0vYWN0aW9ucy9ydW5zLyR7eyBnaXRodWIucnVuX2lkIH19CiAgICAgICAgcnVuOiB8CiAgICAgICAgICBzZXQgLWV1byBwaXBlZmFpbAoKICAgICAgICAgICMgSU5GTzogVGhlIGJvdCBleGlzdHMgb25seSBvbmNlIGl0cyBzZWNyZXRzIGRvOyB1bnRpbCB0aGVuIHRoaXMgaXMKICAgICAgICAgICMgICAgICAgYSB3YXJuaW5nIGFuZCB0aGUgYXJ0aWZhY3RzIHN0YXkgb24gdGhlIHJ1biBwYWdlIGFsb25lLgogICAgICAgICAgaWYgWyAteiAiJFRHX0JPVF9UT0tFTiIgXSB8fCBbIC16ICIkVEdfQ0hBVF9JRCIgXTsgdGhlbgogICAgICAgICAgICBlY2hvICI6Ondhcm5pbmc6OlRlbGVncmFtIHNlY3JldHMgbm90IGNvbmZpZ3VyZWQsIHNraXBwaW5nIHB1Ymxpc2giCiAgICAgICAgICAgIGV4aXQgMAogICAgICAgICAgZmkKCiAgICAgICAgICB6aXBzPSQobHMgYnVpbGQvb3V0L1ZleFp5Z2lzay12Ki1yZWxlYXNlLnppcCBidWlsZC9vdXQvVmV4WnlnaXNrLXYqLWRlYnVnLnppcCBcCiAgICAgICAgICAgICAgICAgICAgIGJ1aWxkLWFwYXRjaC9vdXQvVmV4WnlnaXNrLUFQYXRjaC12Ki1yZWxlYXNlLnppcCBcCiAgICAgICAgICAgICAgICAgICAgIGJ1aWxkLWFwYXRjaC9vdXQvVmV4WnlnaXNrLUFQYXRjaC12Ki1kZWJ1Zy56aXAgMj4vZGV2L251bGwgfHwgdHJ1ZSkKICAgICAgICAgIGlmIFsgLXogIiR6aXBzIiBdOyB0aGVuCiAgICAgICAgICAgIGVjaG8gIjo6ZXJyb3I6Ok5vIGJ1aWxkIHppcHMgZm91bmQgaW4gYnVpbGQvb3V0IGFuZCBidWlsZC1hcGF0Y2gvb3V0IgogICAgICAgICAgICBleGl0IDEKICAgICAgICAgIGZpCgogICAgICAgICAgZXNjYXBlX2h0bWwoKSB7CiAgICAgICAgICAgIHNlZCAtZSAncy8mL1wmYW1wOy9nJyAtZSAncy88L1wmbHQ7L2cnIC1lICdzLz4vXCZndDsvZycKICAgICAgICAgIH0KCiAgICAgICAgICBDT01NSVRfVVJMPSIkR0lUSFVCX1NFUlZFUl9VUkwvJEdJVEhVQl9SRVBPU0lUT1JZL2NvbW1pdC8kQ09NTUlUX1NIQSIKCiAgICAgICAgICAjIElORk86IFRoZSBjb21taXQgbWVzc2FnZSBxdW90ZWQgd2hvbGUsIHRoZSB3YXkgdGhlIGNoYW5uZWwgc2hvd3MKICAgICAgICAgICMgICAgICAgaXQsIGN1dCBieSBjaGFyYWN0ZXJzIChub3QgYnl0ZXMpIGFuZCBmYXIgZW5vdWdoIGFoZWFkIG9mCiAgICAgICAgICAjICAgICAgIFRlbGVncmFtJ3MgMTAyNC1jaGFyYWN0ZXIgY2FwdGlvbiBsaW1pdCB0aGF0IHRoZSBlc2NhcGluZwogICAgICAgICAgIyAgICAgICBvZiB0aGUgdGV4dCBiZWxvdyBjYW5ub3QgcHVzaCB0aGUgY2FwdGlvbiBvdmVyIGl0LgogICAgICAgICAgbWVzc2FnZT0kKGdpdCBsb2cgLTEgLS1wcmV0dHk9JUIgIiRDT01NSVRfU0hBIiBcCiAgICAgICAgICAgIHwgcHl0aG9uMyAtYyAiaW1wb3J0IHN5czsgc3lzLnN0ZG91dC53cml0ZShzeXMuc3RkaW4ucmVhZCgpLnN0cmlwKClbOjYwMF0pIiBcCiAgICAgICAgICAgIHwgZXNjYXBlX2h0bWwpCgogICAgICAgICAgZWNobyAicHVibGlzaGluZyBmcm9tICQocHdkKSIKICAgICAgICAgIGxzIC1sYSBidWlsZC9vdXQvIGJ1aWxkLWFwYXRjaC9vdXQvCgogICAgICAgICAgIyBJTkZPOiBFdmVyeSB6aXAgb2YgdGhlIGJ1aWxkIHRyYXZlbHMgYXMgT05FIG1lZGlhIGdyb3VwIC0gYSBzaW5nbGUKICAgICAgICAgICMgICAgICAgbWVzc2FnZSwgb25lIGNhcHRpb24gb24gaXRzIGZpcnN0IGl0ZW0sIHRoZSBzaGFwZSBhIGNoYW5uZWwKICAgICAgICAgICMgICAgICAgcmVhZGVyIGV4cGVjdHMgYSBidWlsZCB0byBhcnJpdmUgaW4uCiAgICAgICAgICBjb3VudD0wCiAgICAgICAgICBkb2NfYXJncz0oKQogICAgICAgICAgZm9yIHppcCBpbiAkemlwczsgZG8KICAgICAgICAgICAgZG9jX2FyZ3MrPSgtRiAiZG9jJGNvdW50PUAkR0lUSFVCX1dPUktTUEFDRS8kemlwIikKICAgICAgICAgICAgY291bnQ9JCgoY291bnQgKyAxKSkKICAgICAgICAgIGRvbmUKCiAgICAgICAgICAjIElORk86IFRoZSBtZWRpYSBsaXN0IGlzIHdyaXR0ZW4gdG8gYSBmaWxlIGJ5IHRoZSBpbnRlcnByZXRlciBhbmQKICAgICAgICAgICMgICAgICAgaGFuZGVkIHRvIGN1cmwgd2l0aCB0aGUgInJlYWQgdGhlIHZhbHVlIGZyb20gdGhpcyBmaWxlIgogICAgICAgICAgIyAgICAgICBmb3JtLCBiZWNhdXNlIGFuIGlubGluZSBKU09OIGluIHRoZSBmb3JtIHZhbHVlIGRvZXMgbm90CiAgICAgICAgICAjICAgICAgIHN1cnZpdmUgdGhlIGZpZWxkIHBhcnNlciAtIFRlbGVncmFtIGFuc3dlcmVkIGV2ZXJ5IGlubGluZQogICAgICAgICAgIyAgICAgICBhdHRlbXB0IHdpdGggImNhbid0IHBhcnNlIG1lZGlhIEpTT04gb2JqZWN0Iiwgd2hpbGUgdGhlCiAgICAgICAgICAjICAgICAgIGlkZW50aWNhbCBKU09OIHRocm91Z2ggYSBmaWxlIHBhcnNlcyBhbmQgc2hpcHMuCiAgICAgICAgICBDQVBUSU9OPSI8Yj5WZXhaeWdpc2s8L2I+IiQnXG4nIlJ1bjogI2NpXyRSVU5fTlVNQkVSIiQnXG5cbiciPGJsb2NrcXVvdGU+JG1lc3NhZ2U8L2Jsb2NrcXVvdGU+IiQnXG5cbiciPGEgaHJlZj1cIiRDT01NSVRfVVJMXCI+Q29tbWl0PC9hPiIkJ1xuJyI8YSBocmVmPVwiJFJVTl9VUkxcIj5Xb3JrZmxvdyBydW48L2E+IiBcCiAgICAgICAgICAgIHB5dGhvbjMgLWMgJ2ltcG9ydCBqc29uLCBzeXMsIG9zOyBuID0gaW50KHN5cy5hcmd2WzFdKTsgbSA9IFt7InR5cGUiOiAiZG9jdW1lbnQiLCAibWVkaWEiOiAiYXR0YWNoOi8vZG9jJWQiICUgaX0gZm9yIGkgaW4gcmFuZ2UobildOyBtWy0xXVsiY2FwdGlvbiJdID0gb3MuZW52aXJvblsiQ0FQVElPTiJdOyBtWy0xXVsicGFyc2VfbW9kZSJdID0gIkhUTUwiOyBvcGVuKHN5cy5hcmd2WzJdLCAidyIpLndyaXRlKGpzb24uZHVtcHMobSkpJyAiJGNvdW50IiAiJEdJVEhVQl9XT1JLU1BBQ0UvdGdfbWVkaWEuanNvbiIKCiAgICAgICAgICBjdXJsX2FyZ3M9KC1zUyAtbyB0Z19yZXNwb25zZS5qc29uIC13ICcle2h0dHBfY29kZX0nCiAgICAgICAgICAgICAgICAgICAgIC0tZm9ybS1zdHJpbmcgImNoYXRfaWQ9JFRHX0NIQVRfSUQiCiAgICAgICAgICAgICAgICAgICAgIC1GICdtZWRpYT08dGdfbWVkaWEuanNvbicKICAgICAgICAgICAgICAgICAgICAgIiR7ZG9jX2FyZ3NbQF19IikKCiAgICAgICAgICBpZiBbIC1uICIkVEdfVEhSRUFEX0lEIiBdOyB0aGVuCiAgICAgICAgICAgIGN1cmxfYXJncys9KC0tZm9ybS1zdHJpbmcgIm1lc3NhZ2VfdGhyZWFkX2lkPSRUR19USFJFQURfSUQiKQogICAgICAgICAgZmkKCiAgICAgICAgICBjdXJsX2FyZ3MrPSgiaHR0cHM6Ly9hcGkudGVsZWdyYW0ub3JnL2JvdCRUR19CT1RfVE9LRU4vc2VuZE1lZGlhR3JvdXAiKQoKICAgICAgICAgICMgSU5GTzogQSBUZWxlZ3JhbSBoaWNjdXAgbXVzdCBub3QgZmFpbCBhIGJ1aWxkIHRoYXQgYWxyZWFkeQogICAgICAgICAgIyAgICAgICBwcm9kdWNlZCBpdHMgYXJ0aWZhY3RzOiB3YXJuIGFuZCBrZWVwIHRoZSBkZWxpdmVyeSB0byB0aGUKICAgICAgICAgICMgICAgICAgbmV4dCBydW4gaW5zdGVhZCBvZiBmYWlsaW5nIHRoZSBidWlsZCBvdmVyIGl0LgogICAgICAgICAgaHR0cD0kKGN1cmwgIiR7Y3VybF9hcmdzW0BdfSIgMj5jdXJsX2Vyci50eHQpIHx8IGh0dHA9ImN1cmwtZmFpbGVkIgoKICAgICAgICAgIGlmIFsgIiRodHRwIiAhPSAiMjAwIiBdOyB0aGVuCiAgICAgICAgICAgIGVjaG8gIjo6d2FybmluZzo6VGVsZWdyYW0gdXBsb2FkIGZhaWxlZCAoJGh0dHApIgogICAgICAgICAgICBbIC1zIGN1cmxfZXJyLnR4dCBdICYmIGVjaG8gIjo6d2FybmluZzo6Y3VybDogJChjYXQgY3VybF9lcnIudHh0KSIKICAgICAgICAgICAgWyAtcyB0Z19yZXNwb25zZS5qc29uIF0gJiYgZWNobyAiOjp3YXJuaW5nOjpUZWxlZ3JhbSBzYWlkOiAkKGhlYWQgLWMgNDAwIHRnX3Jlc3BvbnNlLmpzb24pIgogICAgICAgICAgZWxzZQogICAgICAgICAgICBlY2hvICJTZW50ICRjb3VudCB6aXBzIGFzIG9uZSBtZWRpYSBncm91cDogJChoZWFkIC1jIDE2MCB0Z19yZXNwb25zZS5qc29uKSIKICAgICAgICAgIGZpCg==
+name: Trusted CI
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Host unit tests
+    # INFO: Same pinned image as every other job here, so the suite runs on the
+    #       OS release main will judge it by, not on wherever -latest points.
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout
+        # INFO: In-tree sources only (the ELF reader, the mountinfo and APatch
+        #       parsers): no submodules, no history. Keeping this job separate
+        #       lets a broken test fail fast without costing the archives.
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Host unit tests
+        # INFO: Shared with the Untrusted CI through tests/host/run.sh, so a
+        #       pull request is judged by the very same commands that run here
+        #       after the merge.
+        run: bash tests/host/run.sh
+
+  build:
+    # INFO: Same pinned image as ci.yml - see there for why not -latest.
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: "recursive"
+          fetch-depth: 0
+
+      - name: Setup keys
+        env:
+          private_key: ${{ secrets.ORG_PRIVATE_KEY }}
+          public_key: ${{ secrets.ORG_PUBLIC_KEY }}
+        run: |
+          if [ -z "$private_key" ] || [ -z "$public_key" ]; then
+            echo "Private or public key is not set."
+          else
+            echo "$private_key" | base64 -d > module/private_key
+            echo "$public_key" | base64 -d > module/public_key
+          fi
+
+      - name: Setup NDK_PATH
+        run: echo "NDK_PATH=$ANDROID_NDK_LATEST_HOME" >> $GITHUB_ENV
+
+      - name: Build
+        run: |
+          make all -j$(nproc)
+          make apatch -j$(nproc)
+          make apatch-debug -j$(nproc)
+
+      - name: Binary size budget
+        run: python3 scripts/ci_size_budget.py build build-apatch
+
+      - name: Generate update.json
+        run: |
+          python3 scripts/make_update_json.py --tree build --output build/out/update.json --pattern "VexZygisk-v*-release.zip"
+          python3 scripts/make_update_json.py --tree build-apatch --output build-apatch/out/update-apatch.json --pattern "VexZygisk-APatch-v*-release.zip"
+
+      - name: Upload update.json
+        uses: actions/upload-artifact@v7
+        with:
+          name: update.json
+          path: "build/out/update.json"
+          archive: false
+
+      - name: Upload APatch update.json
+        uses: actions/upload-artifact@v7
+        with:
+          name: update-apatch.json
+          path: "build-apatch/out/update-apatch.json"
+          archive: false
+
+      - name: Upload release
+        uses: actions/upload-artifact@v7
+        with:
+          path: "build/out/VexZygisk-v*-release.zip"
+          archive: false
+
+      - name: Upload APatch release
+        uses: actions/upload-artifact@v7
+        with:
+          path: "build-apatch/out/VexZygisk-APatch-v*-release.zip"
+          archive: false
+
+      - name: Upload debug
+        uses: actions/upload-artifact@v7
+        with:
+          path: "build/out/VexZygisk-v*-debug.zip"
+          archive: false
+
+      - name: Upload APatch debug
+        uses: actions/upload-artifact@v7
+        with:
+          path: "build-apatch/out/VexZygisk-APatch-v*-debug.zip"
+          archive: false
+
+      - name: Publish artifacts to Telegram
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          # INFO: The bot exists only once its secrets do; until then this is
+          #       a warning and the artifacts stay on the run page alone.
+          if [ -z "$TG_BOT_TOKEN" ] || [ -z "$TG_CHAT_ID" ]; then
+            echo "::warning::Telegram secrets not configured, skipping publish"
+            exit 0
+          fi
+
+          zips=$(ls build/out/VexZygisk-v*-release.zip build/out/VexZygisk-v*-debug.zip \
+                     build-apatch/out/VexZygisk-APatch-v*-release.zip \
+                     build-apatch/out/VexZygisk-APatch-v*-debug.zip 2>/dev/null || true)
+          if [ -z "$zips" ]; then
+            echo "::error::No build zips found in build/out and build-apatch/out"
+            exit 1
+          fi
+
+          escape_html() {
+            sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+          }
+
+          COMMIT_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$COMMIT_SHA"
+
+          # INFO: The commit message quoted whole, the way the channel shows
+          #       it, cut by characters (not bytes) and far enough ahead of
+          #       Telegram's 1024-character caption limit that the escaping
+          #       of the text below cannot push the caption over it.
+          message=$(git log -1 --pretty=%B "$COMMIT_SHA" \
+            | python3 -c "import sys; sys.stdout.write(sys.stdin.read().strip()[:600])" \
+            | escape_html)
+
+          echo "publishing from $(pwd)"
+          ls -la build/out/ build-apatch/out/
+
+          # INFO: Every zip of the build travels as ONE media group - a single
+          #       message, one caption on its first item, the shape a channel
+          #       reader expects a build to arrive in.
+          count=0
+          doc_args=()
+          for zip in $zips; do
+            doc_args+=(-F "doc$count=@$GITHUB_WORKSPACE/$zip")
+            count=$((count + 1))
+          done
+
+          # INFO: The media list is written to a file by the interpreter and
+          #       handed to curl with the "read the value from this file"
+          #       form, because an inline JSON in the form value does not
+          #       survive the field parser - Telegram answered every inline
+          #       attempt with "can't parse media JSON object", while the
+          #       identical JSON through a file parses and ships.
+          CAPTION="<b>VexZygisk</b>"$'\n'"Run: #ci_$RUN_NUMBER"$'\n\n'"<blockquote>$message</blockquote>"$'\n\n'"<a href=\"$COMMIT_URL\">Commit</a>"$'\n'"<a href=\"$RUN_URL\">Workflow run</a>" \
+            python3 -c 'import json, sys, os; n = int(sys.argv[1]); m = [{"type": "document", "media": "attach://doc%d" % i} for i in range(n)]; m[-1]["caption"] = os.environ["CAPTION"]; m[-1]["parse_mode"] = "HTML"; open(sys.argv[2], "w").write(json.dumps(m))' "$count" "$GITHUB_WORKSPACE/tg_media.json"
+
+          curl_args=(-sS -o tg_response.json -w '%{http_code}'
+                     --form-string "chat_id=$TG_CHAT_ID"
+                     -F 'media=<tg_media.json'
+                     "${doc_args[@]}")
+
+          if [ -n "$TG_THREAD_ID" ]; then
+            curl_args+=(--form-string "message_thread_id=$TG_THREAD_ID")
+          fi
+
+          curl_args+=("https://api.telegram.org/bot$TG_BOT_TOKEN/sendMediaGroup")
+
+          # INFO: A Telegram hiccup must not fail a build that already
+          #       produced its artifacts: warn and keep the delivery to the
+          #       next run instead of failing the build over it.
+          http=$(curl "${curl_args[@]}" 2>curl_err.txt) || http="curl-failed"
+
+          if [ "$http" != "200" ]; then
+            echo "::warning::Telegram upload failed ($http)"
+            [ -s curl_err.txt ] && echo "::warning::curl: $(cat curl_err.txt)"
+            [ -s tg_response.json ] && echo "::warning::Telegram said: $(head -c 400 tg_response.json)"
+          else
+            echo "Sent $count zips as one media group: $(head -c 160 tg_response.json)"
+          fi
