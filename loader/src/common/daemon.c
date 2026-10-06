@@ -7,6 +7,7 @@
 
 #include <linux/un.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 
 #include "logging.h"
 #include "misc.h"
@@ -21,6 +22,25 @@
          passes the long one, because its daemon may be starting up in the same
          breath as its own exec and its module plan is loaded once for every
          app it will ever fork. Both values live in daemon.h. */
+/* INFO: Bounds how long a request may block on the daemon once connected. A
+         stalled or overloaded daemon would otherwise leave the caller - the
+         spawner collecting its one-shot boot plan, a zygote child mid-
+         specialize - hung forever on read(), since a plain blocking socket
+         has no deadline of its own. Cleared again wherever the socket stops
+         being ours: the companion protocols belong to the modules, and they
+         may legitimately block far longer than this budget. */
+#define REZYGISKD_IO_TIMEOUT_SEC 3
+
+static void set_socket_timeout(int fd, long seconds) {
+  struct timeval tv = {
+    .tv_sec = seconds,
+    .tv_usec = 0
+  };
+
+  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+  setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+}
+
 static int rezygiskd_connect(uint8_t retry, uint32_t retry_delay_us) {
   struct sockaddr_un addr = {
     .sun_family = AF_UNIX,
@@ -42,7 +62,11 @@ static int rezygiskd_connect(uint8_t retry, uint32_t retry_delay_us) {
       return -1;
     }
 
-    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != -1) return fd;
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != -1) {
+      set_socket_timeout(fd, REZYGISKD_IO_TIMEOUT_SEC);
+
+      return fd;
+    }
 
     PLOGE("connect (attempt %d of %d)", attempt + 1, retry + 1);
 
@@ -406,8 +430,14 @@ int rezygiskd_connect_companion(size_t index) {
   uint8_t res = 0;
   safe_read(read_uint8_t(fd, &res), "companion socket result", return -1);
 
-  if (res == 1) return fd;
-  else {
+  if (res == 1) {
+    /* INFO: Past this point the same socket is the module's companion
+              channel, and the module's protocol may block far longer than
+              our daemon handshake budget - hand it over unconstrained. */
+    set_socket_timeout(fd, 0);
+
+    return fd;
+  } else {
     close(fd);
 
     return -1;
