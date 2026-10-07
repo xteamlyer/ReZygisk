@@ -25,6 +25,7 @@ typedef struct {
   ElfW(Shdr) *dynsym;
   ElfW(Off) dynsym_offset;
   ElfW(Sym) *dynsym_start;
+  size_t dynsym_count;
   ElfW(Shdr) *strtab;
   ElfW(Off) symstr_offset;
   void *strtab_start;

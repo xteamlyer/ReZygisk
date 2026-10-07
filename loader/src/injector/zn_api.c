@@ -32,7 +32,11 @@ int zn_lsplt_commit_hook(void);
           process maps. Every call used to re-scan /proc/self/maps in full, but a
           still-loaded library resolves to the same identity each time, so lookups
           are cached. A base reused for a different file after a dlclose evicts
-          itself once the table fills. */
+          itself once the table fills.
+
+          The table is shared: pltHook() runs on whichever thread the module
+          calls from, and two of them resolving libraries at once would
+          otherwise interleave the memmove below with a lookup. */
 #define ZN_PLT_LOCATION_CACHE 16
 
 struct zn_plt_location {
@@ -41,18 +45,28 @@ struct zn_plt_location {
   ino_t inode;
 };
 
+static pthread_mutex_t zn_plt_locations_lock = PTHREAD_MUTEX_INITIALIZER;
+
 static struct zn_plt_location zn_plt_locations[ZN_PLT_LOCATION_CACHE];
 static size_t zn_plt_locations_len = 0;
 
 static bool get_lib_location_by_base(uintptr_t base_addr, dev_t *dev, ino_t *inode) {
+  bool cached = false;
+
+  pthread_mutex_lock(&zn_plt_locations_lock);
   for (size_t i = 0; i < zn_plt_locations_len; i++) {
     if (zn_plt_locations[i].base != base_addr) continue;
 
     *dev = zn_plt_locations[i].dev;
     *inode = zn_plt_locations[i].inode;
 
-    return true;
+    cached = true;
+
+    break;
   }
+  pthread_mutex_unlock(&zn_plt_locations_lock);
+
+  if (cached) return true;
 
   struct maps_info *maps = parse_maps_safe("self");
   if (maps == NULL) {
@@ -105,8 +119,14 @@ static bool get_lib_location_by_base(uintptr_t base_addr, dev_t *dev, ino_t *ino
     return false;
   }
 
-  /* INFO: Evict the oldest entry when the table is full, so a module that
-            hooks many libraries keeps the most recently touched ones. */
+  /* INFO: When the table is full the oldest entry is evicted, so a module hooking
+            many libraries keeps the ones it touched most recently. There is no
+            way to invalidate an entry on dlclose, so a base that a new library
+            lands on after the old one was unloaded can still resolve to the
+            previous identity; the table is small enough that this is cheaper to
+            accept than to re-scan on every call, as the reference does. */
+  pthread_mutex_lock(&zn_plt_locations_lock);
+
   if (zn_plt_locations_len == ZN_PLT_LOCATION_CACHE) {
     memmove(&zn_plt_locations[0], &zn_plt_locations[1],
             (ZN_PLT_LOCATION_CACHE - 1) * sizeof(struct zn_plt_location));
@@ -117,6 +137,8 @@ static bool get_lib_location_by_base(uintptr_t base_addr, dev_t *dev, ino_t *ino
   zn_plt_locations[zn_plt_locations_len].dev = *dev;
   zn_plt_locations[zn_plt_locations_len].inode = *inode;
   zn_plt_locations_len++;
+
+  pthread_mutex_unlock(&zn_plt_locations_lock);
 
   return true;
 }
@@ -271,12 +293,12 @@ static void *symbol_to_address(ElfImg *img, ElfW(Sym) *sym) {
   return (void *)((uintptr_t)img->base + sym->st_value - img->bias);
 }
 
-/* INFO: Lookup order mirrors Zygisk Next: an exact lookup prefers the dynamic
-           linker, which always yields the true runtime address of a loaded
-           exported symbol, then falls back to the parsed symbol tables (file
-           .symtab and the .gnu_debugdata mini-debug symbols) and finally to the
-           dynamic symbol tables of the file itself. Prefix lookups can only be
-           served from the parsed tables. */
+/* INFO: Lookup order mirrors Zygisk Next: the parsed symbol tables are walked
+           first - the file .symtab, then .dynsym, then the .gnu_debugdata
+           mini-debug symbols - and an exact lookup that finds nothing there
+           falls back to the hash tables of the dynamic symbol section. A prefix
+           request is only ever served from those tables, which is why .dynsym
+           has to be among them. */
 static void *zn_symbol_lookup(struct ZnSymbolResolver *resolver, const char *name, bool prefix, size_t *size) {
   if (resolver == NULL || name == NULL) return NULL;
 
@@ -294,9 +316,15 @@ static void *zn_symbol_lookup(struct ZnSymbolResolver *resolver, const char *nam
 
       if (prefix ? (strncmp(sym_name, name, name_len) != 0) : (strcmp(sym_name, name) != 0)) continue;
 
+      /* INFO: A match whose value converts to no address is not a hit the
+                module can use, so it does not end the search - and *size is
+                left alone rather than describing a symbol nobody can call. */
+      void *addr = symbol_to_address(img, sym);
+      if (addr == NULL) continue;
+
       if (size != NULL) *size = sym->st_size;
 
-      return symbol_to_address(img, sym);
+      return addr;
     }
   }
 
@@ -316,14 +344,56 @@ static void zn_for_each_symbols(struct ZnSymbolResolver *resolver, bool (*callba
   ElfImg *img = (ElfImg *)resolver;
   if (!ElfImg_load_symbols(img)) return;
 
+  /* INFO: The seen-set is keyed on the symbol name, which is what identifies a
+            symbol across tables. Now that the walk covers .symtab, .dynsym and
+            the mini-debug table, one function is routinely described by all
+            three; reporting it twice hands the module a second entry for an
+            address it was already asked to hook, which its own duplicate check
+            then refuses - so the repeat reads as a failure instead of as the
+            same symbol. The name stays valid for the walk: it points into the
+            mapped image or the decompressed mini-debug buffer. */
+  char **seen = NULL;
+  size_t seen_count = 0;
+  size_t seen_capacity = 0;
+
   for (size_t i = 0; i < img->symtabs_count_; i++) {
     ElfW(Sym) *sym = img->symtabs_[i];
 
     const char *name = getSymbName(img, sym);
     if (name == NULL || name[0] == '\0') continue;
 
-    if (!callback(name, symbol_to_address(img, sym), sym->st_size, data)) break;
+    void *addr = symbol_to_address(img, sym);
+    if (addr == NULL) continue;
+
+    bool duplicate = false;
+    for (size_t j = 0; j < seen_count; j++) {
+      if (strcmp(seen[j], name) == 0) {
+        duplicate = true;
+
+        break;
+      }
+    }
+
+    if (duplicate) continue;
+
+    if (seen_count == seen_capacity) {
+      size_t capacity = seen_capacity == 0 ? 64 : seen_capacity * 2;
+
+      char **grown = (char **)realloc(seen, capacity * sizeof(char *));
+      if (grown == NULL) {
+        LOGE("Failed growing the duplicate filter, reporting %s anyway", name);
+      } else {
+        seen = grown;
+        seen_capacity = capacity;
+      }
+    }
+
+    if (seen_count < seen_capacity) seen[seen_count++] = (char *)name;
+
+    if (!callback(name, addr, sym->st_size, data)) break;
   }
+
+  free(seen);
 }
 
 /* INFO: The contract lets a resolver be requested by bare file name ("libc.so"
@@ -338,6 +408,10 @@ static char *get_lib_path_by_name(const char *name) {
   for (size_t i = 0; i < maps->length; i++) {
     struct map_entry *entry = &maps->maps[i];
     if (entry->path == NULL || entry->offset != 0) continue;
+
+    /* INFO: [heap], [stack] and the anon mappings are not files. Handing one
+              back as a path would only produce an open() that fails. */
+    if (entry->path[0] == '[') continue;
 
     const char *base = strrchr(entry->path, '/');
     base = base == NULL ? entry->path : base + 1;
