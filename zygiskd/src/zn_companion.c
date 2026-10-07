@@ -41,6 +41,14 @@ static struct ZygiskNextCompanionModule *load_companion_module(int library_fd) {
   return module;
 }
 
+/* INFO: Entry point of "zygiskd zn-companion <fd>". Forked from the daemon so the
+         companion inherits the daemon's SELinux domain rather than the restricted
+         one of the target that loaded the module. One process serves one library
+         for the daemon's lifetime; every connector gets a duplicate of the control
+         socket. Protocol: path and fd in, one readiness byte back, then
+         onCompanionLoaded once, then a command byte plus an fd per
+         connectCompanion - each handed to onModuleConnected on its own thread, so
+         one blocking connection cannot starve the others. */
 struct zn_client_thread_args {
   int fd;
   void (*on_module_connected)(int);
@@ -77,14 +85,6 @@ static void *zn_client_thread(void *arg) {
   return NULL;
 }
 
-/* INFO: Entry point of "zygiskd zn-companion <fd>". Forked from the daemon so the
-         companion inherits the daemon's SELinux domain rather than the restricted
-         one of the target that loaded the module. One process serves one library
-         for the daemon's lifetime; every connector gets a duplicate of the control
-         socket. Protocol: path and fd in, one readiness byte back, then
-         onCompanionLoaded once, then a command byte plus an fd per
-         connectCompanion - each handed to onModuleConnected on its own thread, so
-         one blocking connection cannot starve the others. */
 void zn_companion_entry(int fd) {
   LOGI("New Zygisk Next companion. Control fd: %d", fd);
 
@@ -177,6 +177,25 @@ void zn_companion_entry(int fd) {
 
     if (connection_fd < 0) {
       LOGE(" - Connection request without a file descriptor");
+
+      continue;
+    }
+
+    /* INFO: Acknowledged before the handling thread exists, so the loader's
+              read of this byte is evidence the companion really holds the
+              connection. A module that started talking straight away would
+              otherwise race a thread this process had not spawned yet. */
+    uint8_t ack = ZN_COMPANION_ACK;
+    ssize_t ack_written;
+
+    do {
+      ack_written = write(connection_fd, &ack, sizeof(ack));
+    } while (ack_written == -1 && errno == EINTR);
+
+    if (ack_written != (ssize_t)sizeof(ack)) {
+      LOGE(" - Failed acknowledging the module connection: %s", strerror(errno));
+
+      close(connection_fd);
 
       continue;
     }

@@ -1,4 +1,3 @@
-#include <ctype.h>
 #include <errno.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -8,14 +7,10 @@
 #include <dlfcn.h>
 
 #include <android/dlext.h>
-#include <dirent.h>
 #include <fcntl.h>
 #include <linux/limits.h>
-#include <linux/memfd.h>
-#include <sys/sendfile.h>
+#include <poll.h>
 #include <sys/socket.h>
-#include <sys/syscall.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
 #include "daemon.h"
@@ -24,13 +19,13 @@
 
 #include "zn_api.h"
 #include "zn_loader.h"
-#include "zn_targets.h"
 
 /* INFO: The command byte and the control buffer live in the shared protocol
          header: the daemon side runs the same loop off the same contract. */
 #include "zn_companion_protocol.h"
 
-#define ZN_MODULES_DIR "/data/adb/modules"
+/* INFO: Only the daemon opens module libraries now, so the loader never names
+         the modules directory itself. */
 #define ZN_MAX_MODULES 32
 
 struct zn_entry {
@@ -49,123 +44,11 @@ static void *loaded_libs[ZN_MAX_MODULES];
 static struct zn_entry loaded_entries[ZN_MAX_MODULES];
 static size_t loaded_libs_count = 0;
 
-/* INFO: ZN modules go through the system linker, as in Zygisk Next. dlopen() of a
-          path under /data/adb fails for most targets - the linker's namespace
-          "permitted path" check rejects non-system paths - and a plain fd is
-          rejected too, since bionic re-checks namespace accessibility for every fd
-          not on tmpfs. A memfd owned by this process sidesteps both. It is left
-          open on purpose: bionic does not take ownership of
-          ANDROID_DLEXT_USE_LIBRARY_FD descriptors and may keep reading it. */
-static void *dlopen_via_fd(const char *path, int flags) {
-  int fd = open(path, O_RDONLY | O_CLOEXEC);
-  if (fd < 0) {
-    LOGE("dlopen %s: cannot open: %s", path, strerror(errno));
-
-    return NULL;
-  }
-
-  int mem_fd = (int)syscall(SYS_memfd_create, ZYGISK_ZN_MEMFD_NAME, MFD_CLOEXEC);
-  if (mem_fd < 0) {
-    LOGE("dlopen %s: memfd_create failed: %s", path, strerror(errno));
-
-    close(fd);
-
-    return NULL;
-  }
-
-  /* INFO: Zero-copy where the kernel allows it: the source is a regular file
-            and the memfd a tmpfs one, which sendfile handles in-kernel. The
-            read/write loop stays as the fallback for filesystems that refuse
-            it. */
-  bool copied = true;
-  off_t offset = 0;
-
-  for (;;) {
-    ssize_t sent = sendfile(mem_fd, fd, &offset, 1 << 20);
-
-    if (sent == 0) break;
-
-    if (sent < 0) {
-      if (errno == EINTR) continue;
-
-      /* INFO: sendfile may have moved part of the file before failing, so
-              the memfd is emptied and both ends rewound before the byte loop
-              restarts the copy from scratch. */
-      if (ftruncate(mem_fd, 0) == -1 || lseek(mem_fd, 0, SEEK_SET) == -1 || lseek(fd, 0, SEEK_SET) == -1) {
-        copied = false;
-
-        break;
-      }
-
-      char buffer[65536];
-
-      for (;;) {
-        ssize_t got = TEMP_FAILURE_RETRY(read(fd, buffer, sizeof(buffer)));
-
-        if (got < 0) {
-          copied = false;
-
-          break;
-        }
-
-        if (got == 0) break;
-
-        const char *cursor = buffer;
-        size_t left = (size_t)got;
-
-        while (left > 0) {
-          ssize_t written = TEMP_FAILURE_RETRY(write(mem_fd, cursor, left));
-          if (written <= 0) {
-            copied = false;
-
-            break;
-          }
-
-          cursor += written;
-          left -= (size_t)written;
-        }
-
-        if (!copied) break;
-      }
-
-      break;
-    }
-  }
-
-  close(fd);
-
-  if (!copied) {
-    LOGE("dlopen %s: copy to memfd failed: %s", path, strerror(errno));
-
-    close(mem_fd);
-
-    return NULL;
-  }
-
-  android_dlextinfo info = { 0 };
-  info.flags = ANDROID_DLEXT_USE_LIBRARY_FD;
-  info.library_fd = mem_fd;
-
-  void *lib = android_dlopen_ext(path, flags, &info);
-  if (lib == NULL) {
-    LOGE("dlopen %s via memfd failed: %s", path, dlerror());
-
-    /* INFO: The memfd only has to stay open once the linker owns the
-              library — bionic may keep reading it for its lifetime, and it
-              does not take ownership of USE_LIBRARY_FD descriptors. A failed
-              dlopen leaves nothing behind that could read it, so closing
-              here is what keeps the failure paths leak-free. */
-    close(mem_fd);
-
-    return NULL;
-  }
-
-  return lib;
-}
-
-/* INFO: Same contract as dlopen_via_fd, but the memfd already exists: the
-         daemon created it on our behalf, which is the only mode that works for
-         a target that cannot read /data/adb itself. */
+/* INFO: The module library is loaded from a descriptor the daemon opened and
+         passed over SCM_RIGHTS. That indirection is the only mode that works
+         for a target which cannot read /data/adb itself, which is every
+         process outside the zygote's domain - the HyperOS spawner and the apps
+         it forks among them. */
 static void *dlopen_from_fd(int fd, const char *name, int flags) {
   android_dlextinfo info = { 0 };
   info.flags = ANDROID_DLEXT_USE_LIBRARY_FD;
@@ -206,213 +89,41 @@ static char *get_process_name(const char *process_path) {
   return (char *)(last_slash == NULL ? process_path : last_slash + 1);
 }
 
-/* INFO: A line is "<name=|path=><target> [companion] <library>" */
-static bool parse_line(const char *module_dir, const char *line, struct zn_entry *entry) {
-  const char *cursor = line;
-  char *tokens[8];
-  size_t token_count = 0;
+/* INFO: Asks the daemon to fork a companion for the module and hands its end
+         back, as the reference does.
 
-  while (*cursor != '\0' && token_count < 8) {
-    while (*cursor != '\0' && isspace((unsigned char)*cursor)) cursor++;
-    if (*cursor == '\0') break;
-
-    const char *start = cursor;
-    while (*cursor != '\0' && !isspace((unsigned char)*cursor)) cursor++;
-
-    size_t length = (size_t)(cursor - start);
-    tokens[token_count] = strndup(start, length);
-    if (tokens[token_count] == NULL) break;
-
-    token_count++;
-  }
-
-  if (token_count < 2) goto parse_line_cleanup;
-
-  if (strncmp(tokens[0], "name=", 5) == 0) {
-    entry->is_name = true;
-  } else if (strncmp(tokens[0], "path=", 5) == 0) {
-    entry->is_name = false;
-  } else {
-    goto parse_line_cleanup;
-  }
-
-  entry->target = strdup(tokens[0] + 5);
-  if (entry->target == NULL) goto parse_line_cleanup;
-
-  /* INFO: The library is always the last token, "companion" may sit anywhere
-           between the target and it. Scanning only that range keeps a module
-           named "companion" from being mistaken for the flag. */
-  for (size_t i = 1; i + 1 < token_count; i++) {
-    if (strcmp(tokens[i], "companion") == 0) entry->companion = true;
-  }
-
-  const char *library = tokens[token_count - 1];
-  if (library[0] == '/') {
-    entry->lib_path = strdup(library);
-  } else {
-    size_t size = strlen(module_dir) + strlen(library) + 2;
-    entry->lib_path = malloc(size);
-    if (entry->lib_path != NULL) snprintf(entry->lib_path, size, "%s/%s", module_dir, library);
-  }
-
-  parse_line_cleanup:
-    for (size_t i = 0; i < token_count; i++) {
-      free(tokens[i]);
-    }
-
-  return entry->target != NULL && entry->lib_path != NULL;
-}
-
-static bool matches_process(const struct zn_entry *entry, const char *process_path, const char *process_name) {
-  if (entry->is_name) {
-    if (zn_target_is_zygote_class(entry->target)) return zn_process_is_zygote_class(process_name);
-
-    return strcmp(process_name, entry->target) == 0;
-  }
-
-  return strcmp(process_path, entry->target) == 0;
-}
-
-/* INFO: Runs in the forked companion: loads the library again, announces itself
-         with onCompanionLoaded and then serves every connectCompanion() the
-         module performs. Each request carries one command byte plus the socket
-         to hand over through SCM_RIGHTS. */
-static void companion_main(const char *lib_path, int socket_fd) {
-  void *lib = dlopen_via_fd(lib_path, RTLD_NOW);
-  if (lib == NULL) {
-    LOGE("Failed loading the Zygisk Next companion library [%s]", lib_path);
-
-    return;
-  }
-
-  struct ZygiskNextCompanionModule *companion = (struct ZygiskNextCompanionModule *)dlsym(lib, "zn_companion_module");
-  if (companion == NULL || companion->onCompanionLoaded == NULL || companion->onModuleConnected == NULL) {
-    LOGE("The library [%s] does not export a usable zn_companion_module", lib_path);
-
-    return;
-  }
-
-  LOGD("Companion of [%s] is ready", lib_path);
-
-  companion->onCompanionLoaded();
-
-  while (true) {
-    uint8_t command = 0;
-    union zn_cmsg_buffer buffer;
-
-    struct iovec io;
-    io.iov_base = &command;
-    io.iov_len = sizeof(command);
-
-    struct msghdr message;
-    memset(&message, 0, sizeof(message));
-    message.msg_iov = &io;
-    message.msg_iovlen = 1;
-    message.msg_control = buffer.control;
-    message.msg_controllen = sizeof(buffer.control);
-
-    ssize_t received;
-    do {
-      received = recvmsg(socket_fd, &message, 0);
-    } while (received == -1 && errno == EINTR);
-
-    if (received <= 0) break;
-
-    /* INFO: The descriptor is taken out of the message before the command is
-             looked at: an unserved request still owns the fd it carried, and
-             dropping it here would leak one descriptor per request. */
-    int connection_fd = -1;
-    for (struct cmsghdr *header = CMSG_FIRSTHDR(&message); header != NULL; header = CMSG_NXTHDR(&message, header)) {
-      if (header->cmsg_level != SOL_SOCKET || header->cmsg_type != SCM_RIGHTS) continue;
-
-      memcpy(&connection_fd, CMSG_DATA(header), sizeof(connection_fd));
-
-      break;
-    }
-
-    if (command != ZN_COMPANION_CMD_CONNECT) {
-      if (connection_fd >= 0) close(connection_fd);
-
-      continue;
-    }
-
-    if (connection_fd < 0) continue;
-
-    companion->onModuleConnected(connection_fd);
-  }
-}
-
-/* INFO: Forks a companion for the module. The daemon is asked first because the
-         child then keeps its privileged SELinux domain; forking here is only a
-         fallback, and the child inherits this process's (possibly restricted)
-         domain. */
+         There used to be a second path here that forked the companion inside
+         the loader. It was dropped because it cannot stand in for the daemon
+         where it would matter: the child would inherit this process's domain,
+         which on the HyperOS spawner and in the apps it forks is a restricted
+         app domain, and a companion started there cannot read the module it is
+         meant to serve. The reference has no such path either - a module whose
+         companion cannot be reached gets no companion. */
 static int spawn_companion(const char *lib_path) {
-  int daemon_fd = rezygiskd_spawn_zn_companion(lib_path);
-  if (daemon_fd >= 0) return daemon_fd;
-
-  LOGW("VexZygiskd is unavailable, forking the companion of [%s] locally", lib_path);
-
-  int sockets[2];
-  if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sockets) != 0) {
-    LOGE("Failed creating the companion socket pair: %s", strerror(errno));
-
-    return -1;
-  }
-
-  pid_t pid = fork();
-  if (pid < 0) {
-    LOGE("Failed forking the companion process: %s", strerror(errno));
-
-    close(sockets[0]);
-    close(sockets[1]);
-
-    return -1;
-  }
-
-  if (pid == 0) {
-    close(sockets[0]);
-
-    companion_main(lib_path, sockets[1]);
-
-    close(sockets[1]);
-    _exit(0);
-  }
-
-  close(sockets[1]);
-
-  LOGD("Companion of [%s] running as pid %d", lib_path, pid);
-
-  return sockets[0];
+  return rezygiskd_spawn_zn_companion(lib_path);
 }
 
 /* INFO: Failure symmetry, reviewed: every branch that gives up after a
          successful dlopen releases the handle with dlclose and closes the
-         handed-over module_fd; a dlopen itself failing releases whatever it
-         created (see dlopen_from_fd / dlopen_via_fd). Past onModuleLoaded the
-         library is deliberately left loaded for the life of the process. */
+         handed-over module_fd. Past onModuleLoaded the library is
+         deliberately left loaded for the life of the process. */
 static bool load_entry(struct zn_entry *entry, void **lib_handle, int module_fd) {
-  void *lib = NULL;
+  /* INFO: Loaded from the descriptor the daemon opened, which is the only way
+           this works for a process that cannot read /data/adb itself. The
+           descriptor stays open for the life of the library; bionic does not
+           take ownership of a USE_LIBRARY_FD one.
 
-  if (module_fd >= 0) {
-    /* INFO: The daemon opened the file for us because this process cannot read
-             /data/adb/modules, so it is loaded through its memfd descriptor.
-             The descriptor stays open for the life of the library, bionic does
-             not take ownership of it. */
-    lib = dlopen_from_fd(module_fd, entry->lib_path, RTLD_NOW);
-    if (lib == NULL) {
-      LOGE("Failed loading the Zygisk Next library [%s] from its fd", entry->lib_path);
+           A caller with no descriptor must not fall back to opening the path:
+           the reference skips such an entry outright rather than reaching for
+           the filesystem, and the target it would read from is exactly the one
+           that has no business reading it. */
+  void *lib = dlopen_from_fd(module_fd, entry->lib_path, RTLD_NOW);
+  if (lib == NULL) {
+    LOGE("Failed loading the Zygisk Next library [%s] from its fd", entry->lib_path);
 
-      close(module_fd);
+    close(module_fd);
 
-      return false;
-    }
-  } else {
-    lib = dlopen_via_fd(entry->lib_path, RTLD_NOW);
-    if (lib == NULL) {
-      LOGE("Failed loading the Zygisk Next library [%s]", entry->lib_path);
-
-      return false;
-    }
+    return false;
   }
 
   struct ZygiskNextModule *module = (struct ZygiskNextModule *)dlsym(lib, "zn_module");
@@ -429,8 +140,12 @@ static bool load_entry(struct zn_entry *entry, void **lib_handle, int module_fd)
     return false;
   }
 
-  if (module->target_api_version < 1 || module->target_api_version > ZYGISK_NEXT_API_VERSION) {
-    LOGE("Unsupported Zygisk Next API version %d in [%s]", module->target_api_version, entry->lib_path);
+  /* INFO: Only the upper bound is a rejection: a module declaring a version
+            below 2 still loads and is served the table it would have reached,
+            exactly as NyaZygisk serves its oldest modules. */
+  if (module->target_api_version > ZYGISK_NEXT_API_VERSION) {
+    LOGW("The module [%s] targets Zygisk Next API version %d, only up to %d is supported",
+         entry->lib_path, module->target_api_version, ZYGISK_NEXT_API_VERSION);
 
     dlclose(lib);
     if (module_fd >= 0) close(module_fd);
@@ -514,6 +229,51 @@ int zn_companion_connect(void *handle) {
 
   close(sockets[1]);
 
+  /* INFO: The socket is only handed over once the companion acknowledges it, so
+            what the module receives is a connection the companion really holds.
+            Bounded, not blocking: a companion left over from an older build
+            never acknowledges, and hanging on it would turn a version skew into
+            a stuck connectCompanion instead of a socket that still works. */
+  struct pollfd waiting = { .fd = sockets[0], .events = POLLIN };
+
+  int ready;
+  do {
+    ready = poll(&waiting, 1, ZN_COMPANION_ACK_TIMEOUT_MS);
+  } while (ready == -1 && errno == EINTR);
+
+  if (ready > 0) {
+    uint8_t ack = 0;
+    ssize_t got;
+
+    do {
+      got = read(sockets[0], &ack, sizeof(ack));
+    } while (got == -1 && errno == EINTR);
+
+    if (got != (ssize_t)sizeof(ack)) {
+      LOGE("The companion did not acknowledge the connection (read returned %zd)", got);
+
+      close(sockets[0]);
+
+      return -1;
+    }
+
+    if (ack != ZN_COMPANION_ACK) {
+      LOGE("The companion answered with %u instead of an acknowledgement", (unsigned)ack);
+
+      close(sockets[0]);
+
+      return -1;
+    }
+  } else if (ready == 0) {
+    LOGW("The companion did not acknowledge within %d ms, using the connection anyway", ZN_COMPANION_ACK_TIMEOUT_MS);
+  } else {
+    LOGE("Failed waiting for the companion acknowledgement: %s", strerror(errno));
+
+    close(sockets[0]);
+
+    return -1;
+  }
+
   return sockets[0];
 }
 
@@ -528,71 +288,6 @@ static bool zn_already_loaded(const char *lib_path) {
   return false;
 }
 
-static void load_module_file(const char *module_dir, const char *file, const char *process_path, const char *process_name) {
-  FILE *fp = fopen(file, "re");
-  if (fp == NULL) return;
-
-  char *line = NULL;
-  size_t capacity = 0;
-  ssize_t length;
-
-  while ((length = getline(&line, &capacity, fp)) > 0) {
-    while (length > 0 && isspace((unsigned char)line[length - 1])) line[--length] = '\0';
-    if (length == 0) continue;
-
-    struct zn_entry entry = { .is_name = false, .companion = false, .target = NULL, .lib_path = NULL, .companion_fd = -1 };
-
-    if (!parse_line(module_dir, line, &entry)) {
-      free(entry.target);
-      free(entry.lib_path);
-
-      continue;
-    }
-
-    bool matched = matches_process(&entry, process_path, process_name);
-
-    LOGD("Zygisk Next module [%s] targeting %s: %s", entry.lib_path, entry.target, matched ? "loaded" : "skipped");
-
-    if (!matched || zn_already_loaded(entry.lib_path)) {
-      free(entry.target);
-      free(entry.lib_path);
-
-      continue;
-    }
-
-    if (loaded_libs_count >= ZN_MAX_MODULES) {
-      LOGW("Reached the limit of %d Zygisk Next modules, skipping [%s]", ZN_MAX_MODULES, entry.lib_path);
-
-      free(entry.target);
-      free(entry.lib_path);
-
-      continue;
-    }
-
-    /* INFO: The module receives this entry as its self handle, so it is moved
-             into the permanent array instead of being freed here. */
-    loaded_entries[loaded_libs_count] = entry;
-
-    if (load_entry(&loaded_entries[loaded_libs_count], &loaded_libs[loaded_libs_count], -1)) {
-      loaded_libs_count++;
-
-      continue;
-    }
-
-    /* INFO: The slot stays free for the next module, drop the copy so the
-             released strings are not left dangling in it. */
-    if (loaded_entries[loaded_libs_count].companion_fd >= 0) close(loaded_entries[loaded_libs_count].companion_fd);
-
-    memset(&loaded_entries[loaded_libs_count], 0, sizeof(loaded_entries[0]));
-
-    free(entry.target);
-    free(entry.lib_path);
-  }
-
-  free(line);
-  fclose(fp);
-}
-
 /* INFO: Loads the libraries the daemon resolved for this process. It is the
          only path that works for a target which cannot read /data/adb/modules,
          since the daemon opens every file on its behalf.
@@ -600,11 +295,11 @@ static void load_module_file(const char *module_dir, const char *file, const cha
          Returns false only when the daemon itself could not be reached, which
          is the one case where scanning the modules directly is worth trying.
          An empty answer is a valid answer and must not trigger the fallback. */
-static bool load_modules_from_daemon(const char *process_name, const char *process_path) {
+static bool load_modules_from_daemon(const char *process_name, const char *process_path, uint8_t connect_retry, uint32_t connect_delay_us) {
   struct zn_module_file *files = NULL;
   size_t files_len = 0;
 
-  if (!rezygiskd_read_zn_modules(process_name, process_path, &files, &files_len)) return false;
+  if (!rezygiskd_read_zn_modules(process_name, process_path, connect_retry, connect_delay_us, &files, &files_len)) return false;
 
   LOGD("Got %zu Zygisk Next module(s) from VexZygiskd", files_len);
 
@@ -679,42 +374,32 @@ static bool load_modules_from_daemon(const char *process_name, const char *proce
 
          This runs once in the zygote itself, and once more in every forked
          child with that child's own process name — without the second call,
-         per-application targets (name=com.foo) would never match anywhere. */
-static void zn_load_modules_for(const char *process_name, const char *process_path) {
-  if (load_modules_from_daemon(process_name, process_path)) return;
+         per-application targets (name=com.foo) would never match anywhere.
 
-  LOGW("VexZygiskd is unavailable, reading the Zygisk Next modules directly");
+         The direct scan below is a zygote-shaped safety net: reading /data/adb
+         takes permissions only the zygote's domain holds, so for every other
+         target - the HyperOS spawner above all - a race lost against the
+         daemon's own startup is unrecoverable. That is why a caller whose
+         load is one-shot for a whole process tree passes a connection window
+         measured in seconds, and why an ordinary one still keeps the short
+         spacing it can afford. */
+static void zn_load_modules_for(const char *process_name, const char *process_path, uint8_t connect_retry, uint32_t connect_delay_us) {
+  /* INFO: The daemon is the only source of the module plan, as in the reference.
+            There used to be a fallback here that walked /data/adb/modules itself
+            and matched zn_modules.txt on the spot. It is gone for two reasons:
+            it cannot work where it matters - the HyperOS spawner and the apps it
+            forks sit outside the zygote's domain and cannot read that tree, so
+            the retry window it was paired with existed precisely to cover a
+            case it could not rescue - and a loader that reads the tree can
+            disagree with the daemon about what is installed, which is worse than
+            loading nothing.
 
-  DIR *dir = opendir(ZN_MODULES_DIR);
-  if (dir == NULL) {
-    LOGE("Failed opening %s", ZN_MODULES_DIR);
-
-    return;
-  }
-
-  struct dirent *entry;
-  while ((entry = readdir(dir)) != NULL) {
-    if (entry->d_type != DT_DIR && entry->d_type != DT_UNKNOWN) continue;
-    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0 || strcmp(entry->d_name, "rezygisk") == 0) continue;
-
-    char module_dir[PATH_MAX];
-    snprintf(module_dir, PATH_MAX, "%s/%s", ZN_MODULES_DIR, entry->d_name);
-
-    char disabled[PATH_MAX];
-    snprintf(disabled, PATH_MAX, "%s/disable", module_dir);
-    if (access(disabled, F_OK) == 0) continue;
-
-    char zn_file[PATH_MAX];
-    snprintf(zn_file, PATH_MAX, "%s/zn_modules.txt", module_dir);
-    if (access(zn_file, F_OK) != 0) continue;
-
-    load_module_file(module_dir, zn_file, process_path, process_name);
-  }
-
-  closedir(dir);
+            A target that reaches here with the daemon down therefore loads no
+            module at all, which is the same answer the reference gives. */
+  (void) load_modules_from_daemon(process_name, process_path, connect_retry, connect_delay_us);
 }
 
-void zn_load_all_modules(void) {
+void zn_load_all_modules(uint8_t connect_retry, uint32_t connect_delay_us) {
   char *process_path = read_process_path();
   if (process_path == NULL) {
     LOGE("Failed resolving the current process path");
@@ -724,7 +409,7 @@ void zn_load_all_modules(void) {
 
   const char *process_name = get_process_name(process_path);
 
-  zn_load_modules_for(process_name, process_path);
+  zn_load_modules_for(process_name, process_path, connect_retry, connect_delay_us);
 
   free(process_path);
 }
@@ -739,7 +424,7 @@ void zn_load_modules_for_process(const char *process_name) {
     return;
   }
 
-  zn_load_modules_for(process_name, process_path);
+  zn_load_modules_for(process_name, process_path, 1, REZYGISKD_RETRY_DELAY_US);
 
   free(process_path);
 }

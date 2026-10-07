@@ -4,7 +4,6 @@
 #include <string.h>
 #include <time.h>
 #include <errno.h>
-#include <signal.h>
 
 #include <unistd.h>
 #include <sys/epoll.h>
@@ -27,8 +26,12 @@
 
 /* INFO: HyperOS's app spawner, the third process (besides the two zygotes)
          that forks application processes. Both ABI monitors match it, each
-         injecting its own bitness into its own bitness spawner. */
-#define HYOS_SPAWNER_NAME "/system_ext/bin/hyos_spawner"
+         injecting its own bitness into its own bitness spawner.
+
+         Matched by file name rather than by one fixed path: HyperOS has shipped
+         the binary from more than one directory across releases, so whichever
+         directory the running build uses has to be followed. */
+#define HYOS_SPAWNER_BASE_NAME "hyos_spawner"
 
 static bool update_status(const char *message);
 
@@ -463,18 +466,6 @@ void rezygiskd_listener_stop() {
 
 #define MAX_RETRY_COUNT 5
 
-/* INFO: Left behind by the module's post-fs-data.sh when it finds this monitor
-         already running, which only happens when the boot stages have just been
-         replayed around a session that stayed up.
-
-         That mark is the one thing that tells a soft reboot apart from a crash
-         on this side: both are a zygote that went away and came back. Counting
-         a soft reboot towards the crash-loop stop is what shuts injection off
-         on the third one in a row, and a single reboot costs more than one
-         count - every process matched here is /system/bin/app_process64, which
-         is also what the WebView zygote runs as, and the reboot restarts both. */
-#define SOFT_REBOOT_MARKER ZYGISK_TMP_PATH "/soft-reboot"
-
 static struct timespec last_zygote = {
   .tv_sec = 0,
   .tv_nsec = 0
@@ -484,20 +475,6 @@ static int count_zygote = 0;
 static bool should_stop_inject() {
   struct timespec now = {};
   clock_gettime(CLOCK_MONOTONIC, &now);
-
-  /* INFO: Consumed as it is read, so one replayed stage restarts the count
-            once. Done before the count is touched: this exec belongs to the
-            reboot, and must not also be read as the first restart of a new
-            crash loop. */
-  if (unlink(SOFT_REBOOT_MARKER) == 0) {
-    LOGI("The boot stages were replayed around this session, restarting the zygote count");
-
-    count_zygote = 0;
-    last_zygote = now;
-
-    return false;
-  }
-
   if (now.tv_sec - last_zygote.tv_sec < 30)
     count_zygote++;
   else
@@ -508,74 +485,16 @@ static bool should_stop_inject() {
   return count_zygote >= MAX_RETRY_COUNT;
 }
 
-/* INFO: How long a freshly forked daemon is given to bind its socket before the
-         socket's absence is read as "unreachable". Only exists so the zygote
-         and the spawner, which exec within milliseconds of each other on a
-         normal boot, cannot have the daemon that was just forked for them
-         mistaken for a stale one and killed. */
-#define DAEMON_SETTLE_SECONDS 5
-
-/* INFO: When the current daemon was forked, on the monotonic clock. */
-static struct timespec daemon_forked_at = {};
-
-/* INFO: A daemon is reachable through its socket, not through its pid: one that
-         is still alive but whose socket file has been removed cannot be
-         connected to at all, and answering "already running" for it disables
-         every module while the process sits there looking healthy.
-
-         That is not hypothetical. A soft reboot replays the boot stages, and
-         the module's post-fs-data.sh clears the directory holding these sockets
-         while a monitor and daemon from the previous session are still running.
-         The pid alone left that session permanently unreachable.
-
-         Only an outright missing file counts as "gone". Any other failure -
-         EACCES if the policy denies the check itself, ELOOP, a transient
-         ENOMEM - is answered as present on purpose, because reading it as
-         missing would kill a daemon that may be perfectly reachable, once per
-         process start, and the replacement would hit the same wall. */
-static bool daemon_socket_present() {
-  if (access(ZYGISK_CP_SOCKET, F_OK) == 0) return true;
-
-  return errno != ENOENT;
-}
-
 static bool ensure_daemon_created() {
-  pid_t stale_pid = -1;
-
   if (status.daemon_pid != -1) {
-    struct timespec now = {};
-    clock_gettime(CLOCK_MONOTONIC, &now);
+    LOGI("VexZygiskd%s already running", MONITOR_ABI);
 
-    if (now.tv_sec - daemon_forked_at.tv_sec < DAEMON_SETTLE_SECONDS || daemon_socket_present()) {
-      LOGD("VexZygiskd%s already running", MONITOR_ABI);
-
-      return status.daemon_running;
-    }
-
-    LOGW("VexZygiskd%s is alive but %s is gone, replacing it", MONITOR_ABI, ZYGISK_CP_SOCKET);
-
-    /* INFO: Recorded rather than killed on the spot. Killing here and forking
-              afterwards would let a failed fork leave nothing behind at all,
-              turning a transient failure - ENOMEM on a loaded device - into the
-              permanent "not running" answer below. The old daemon keeps its
-              socket until the replacement has taken the path over. */
-    stale_pid = status.daemon_pid;
-
-    status.daemon_pid = -1;
-    status.daemon_running = false;
+    return status.daemon_running;
   }
 
   pid_t pid = fork();
   if (pid < 0) {
     PLOGE("create VexZygiskd%s", MONITOR_ABI);
-
-    /* INFO: Put the daemon that was about to be replaced back as the current
-              one. It cannot be connected to, but neither can nothing, and the
-              next attempt is still free to replace it. */
-    if (stale_pid != -1) {
-      status.daemon_pid = stale_pid;
-      status.daemon_running = true;
-    }
 
     return false;
   }
@@ -590,20 +509,9 @@ static bool ensure_daemon_created() {
     exit(1);
   }
 
-  if (stale_pid != -1) {
-    /* INFO: The stale daemon is killed rather than abandoned: it holds a socket
-              nobody can reach any more, and leaving it behind would leak one
-              daemon per replacement. Its own exit is then reaped by the generic
-              child handling, which no longer matches it against the pid below,
-              and answers it as what it is - a process that already exited. */
-    kill(stale_pid, SIGKILL);
-  }
-
   status.supported = true;
   status.daemon_pid = pid;
   status.daemon_running = true;
-
-  clock_gettime(CLOCK_MONOTONIC, &daemon_forked_at);
 
   return true;
 }
@@ -615,52 +523,6 @@ static int sigchld_status;
 static pid_t *sigchld_process;
 static size_t sigchld_process_count = 0;
 
-/* INFO: Who holds init right now, or 0 when nobody does. Read out of
-         /proc/1/status instead of inferred, because it answers the only
-         question a failed seizure leaves open. */
-static pid_t init_tracer_pid() {
-  FILE *status = fopen("/proc/1/status", "re");
-  if (status == NULL) return 0;
-
-  char line[256];
-  pid_t tracer = 0;
-
-  while (fgets(line, sizeof(line), status) != NULL) {
-    if (sscanf(line, "TracerPid: %d", &tracer) == 1) break;
-  }
-
-  fclose(status);
-
-  return tracer;
-}
-
-/* INFO: Whether the process tracing init is one of ours. A second monitor
-         losing the race is a normal outcome of a soft reboot - the boot stages
-         replay and two of them can look at the same untraced init within
-         milliseconds - and it is worth saying nothing about. A seizure held by
-         anything else is the conflict the status line below exists to report.
-         The two are only told apart by looking at who is holding it. */
-static bool init_traced_by_monitor() {
-  pid_t tracer = init_tracer_pid();
-  if (tracer <= 0) return false;
-
-  char path[PATH_MAX];
-  snprintf(path, sizeof(path), "/proc/%d/comm", tracer);
-
-  FILE *comm = fopen(path, "re");
-  if (comm == NULL) return false;
-
-  char name[64] = { 0 };
-  /* INFO: The comm is capped at fifteen characters, which both monitor names
-            fit exactly; the prefix leaves the ABI out of it. */
-  bool matched = fgets(name, sizeof(name), comm) != NULL &&
-                 strncmp(name, "zygisk-ptrace", sizeof("zygisk-ptrace") - 1) == 0;
-
-  fclose(comm);
-
-  return matched;
-}
-
 static bool claim_init_tracer() {
   if (ptrace(PTRACE_SEIZE, 1, 0, PTRACE_O_TRACEFORK) == -1) {
     /* INFO: In cases where, for example, 2 VexZygisks were executed, the second
@@ -668,17 +530,9 @@ static bool claim_init_tracer() {
                In this case, we should just exit the second process to avoid
                conflicts. */
     if (errno == EPERM) {
-      if (init_traced_by_monitor()) {
-        /* INFO: Another monitor of ours holds init. Nothing is wrong, this
-                  process simply has nothing to do, and reporting it as a
-                  conflict would put a failure into the manager's status for a
-                  session that is working. */
-        LOGD("A VexZygisk monitor is already tracing init, leaving it to that one");
-      } else {
-        LOGW("Another process is already tracing init");
+      LOGW("Another process is already tracing init");
 
-        update_status("❌ Multiple Zygisks functioning");
-      }
+      update_status("❌ Multiple Zygisks functioning");
     } else {
       PLOGE("failed to seize init");
     }
@@ -712,13 +566,29 @@ bool sigchld_listener_init() {
   return true;
 }
 
+/* INFO: A path whose last component is the spawner's file name. The leading
+         slash is required so a longer name that merely ends with it (say
+         "xhyos_spawner") is not mistaken for the spawner. */
+static bool is_spawner_program(const char *program) {
+  static const char kBase[] = HYOS_SPAWNER_BASE_NAME;
+
+  size_t program_len = strlen(program);
+  size_t base_len = sizeof(kBase) - 1;
+
+  if (program_len <= base_len) return false;
+
+  const char *base = program + program_len - base_len;
+
+  return base[-1] == '/' && strcmp(base, kBase) == 0;
+}
+
 /* INFO: Which executable this monitor owns and how the tracer has to be told
          about it. False for anything left to another monitor. The tracer and
          the spawner flag describe the fork path's hand-off only, so a caller
          that just needs the ownership answer - the respawn below - passes NULL
          for both instead of keeping a second copy of the table. */
 static bool match_target(const char *program, const char **tracer, bool *is_spawner) {
-  bool program_is_spawner = strcmp(program, HYOS_SPAWNER_NAME) == 0;
+  bool program_is_spawner = is_spawner_program(program);
   if (strcmp(program, APP_PROCESS_NAME) != 0 && !program_is_spawner) return false;
 
   if (tracer != NULL) *tracer = "./bin/zygisk-ptrace" MONITOR_ABI;
@@ -1036,16 +906,6 @@ void sigchld_listener_callback() {
       }
 
       if (!known) {
-        /* INFO: A process that has already exited is not "newly attached": there
-                  is nothing left to set ptrace options on, and a slot taken here
-                  is never handed back. This is the path a replaced daemon takes -
-                  the branch above no longer matches it, because the pid it was
-                  recorded under already names the replacement. Letting it fall
-                  through would leak that slot and, once the kernel hands the pid
-                  to somebody else, make an unrelated process look like one that
-                  is already under trace. */
-        if (WIFEXITED(sigchld_status) || WIFSIGNALED(sigchld_status)) continue;
-
         LOGV("New process %d attached", pid);
 
         for (size_t i = 0; i < sigchld_process_count; i++) {
@@ -1096,32 +956,40 @@ void sigchld_listener_callback() {
 
             if (!match_target(program, &tracer, &is_spawner)) break;
 
-            /* INFO: Crash-loop accounting and daemon creation are zygote
-                     matters. The spawner has its own lifecycle and execs on
-                     its own schedule; counting those execs like zygote
-                     restarts would trip the crash-loop stop after a burst of
-                     app launches, and re-ensuring the daemon from here is
-                     what the zygote injection already did. */
-            if (!is_spawner) {
-              if (should_stop_inject()) {
-                LOGW("Zygote" MONITOR_ABI " restart too many times, stop injecting");
+            /* INFO: The crash-loop counter is about the zygote restarting. The
+                     spawner has its own lifecycle and execs on its own
+                     schedule, so counting those execs the same way would trip
+                     the crash-loop stop after a burst of app launches. */
+            if (!is_spawner && should_stop_inject()) {
+              LOGW("Zygote" MONITOR_ABI " restart too many times, stop injecting");
 
-                tracing_state = STOPPING;
-                monitor_stop_reason = "Zygote crashed";
-                ptrace(PTRACE_INTERRUPT, 1, 0, 0);
+              tracing_state = STOPPING;
+              monitor_stop_reason = "Zygote crashed";
+              ptrace(PTRACE_INTERRUPT, 1, 0, 0);
+
+              break;
+            }
+
+            /* INFO: Both targets need the daemon, and the spawner can exec
+                     before the zygote ever does, so creating it cannot be left
+                     to the zygote injection. A spawner with no daemon is
+                     skipped rather than fatal: this monitor's job is the
+                     zygote, and stopping here would take a healthy zygote down
+                     with it. */
+            if (!ensure_daemon_created()) {
+              if (is_spawner) {
+                LOGW("VexZygiskd%s not running, skipping hyos_spawner %d", MONITOR_ABI, pid);
 
                 break;
               }
 
-              if (!ensure_daemon_created()) {
-                LOGW("VexZygiskd%s not running, stop injecting", MONITOR_ABI);
+              LOGW("VexZygiskd%s not running, stop injecting", MONITOR_ABI);
 
-                tracing_state = STOPPING;
-                monitor_stop_reason = "VexZygiskd not running";
-                ptrace(PTRACE_INTERRUPT, 1, 0, 0);
+              tracing_state = STOPPING;
+              monitor_stop_reason = "VexZygiskd not running";
+              ptrace(PTRACE_INTERRUPT, 1, 0, 0);
 
-                break;
-              }
+              break;
             }
 
             LOGD("Stopping %d (program: %s, tracer: %s)", pid, program, tracer);
