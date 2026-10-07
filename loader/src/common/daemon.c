@@ -7,6 +7,7 @@
 
 #include <linux/un.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 
 #include "logging.h"
 #include "misc.h"
@@ -14,12 +15,33 @@
 
 #include "daemon.h"
 
-/* INFO: The socket either accepts at once or is refused outright, so a full
-         second only stalls the injection of every process while the daemon is
-         down. This is still long enough to ride out a daemon restart. */
-#define REZYGISKD_RETRY_DELAY_US 100000
+/* INFO: How long one unproductive connection attempt waits before the next is
+         a property of the caller, not of the socket: the daemon either accepts
+         at once or is refused outright. Ordinary callers keep the short
+         default, which still rides out a daemon restart; the HyperOS spawner
+         passes the long one, because its daemon may be starting up in the same
+         breath as its own exec and its module plan is loaded once for every
+         app it will ever fork. Both values live in daemon.h. */
+/* INFO: Bounds how long a request may block on the daemon once connected. A
+         stalled or overloaded daemon would otherwise leave the caller - the
+         spawner collecting its one-shot boot plan, a zygote child mid-
+         specialize - hung forever on read(), since a plain blocking socket
+         has no deadline of its own. Cleared again wherever the socket stops
+         being ours: the companion protocols belong to the modules, and they
+         may legitimately block far longer than this budget. */
+#define REZYGISKD_IO_TIMEOUT_SEC 3
 
-static int rezygiskd_connect(uint8_t retry) {
+static void set_socket_timeout(int fd, long seconds) {
+  struct timeval tv = {
+    .tv_sec = seconds,
+    .tv_usec = 0
+  };
+
+  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+  setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+}
+
+static int rezygiskd_connect(uint8_t retry, uint32_t retry_delay_us) {
   struct sockaddr_un addr = {
     .sun_family = AF_UNIX,
     .sun_path = { 0 }
@@ -40,7 +62,11 @@ static int rezygiskd_connect(uint8_t retry) {
       return -1;
     }
 
-    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != -1) return fd;
+    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != -1) {
+      set_socket_timeout(fd, REZYGISKD_IO_TIMEOUT_SEC);
+
+      return fd;
+    }
 
     PLOGE("connect (attempt %d of %d)", attempt + 1, retry + 1);
 
@@ -49,7 +75,7 @@ static int rezygiskd_connect(uint8_t retry) {
     /* INFO: Waiting is pointless once there is no attempt left to make. */
     if (attempt == retry) break;
 
-    usleep(REZYGISKD_RETRY_DELAY_US);
+    usleep(retry_delay_us);
   }
 
   return -1;
@@ -69,7 +95,7 @@ static int rezygiskd_connect(uint8_t retry) {
 #define safe_read(fn, name, ret_type)  safe_check(fn, "read " name, ret_type)
 
 bool rezygiskd_zygote_injected(void) {
-  int fd = rezygiskd_connect(5);
+  int fd = rezygiskd_connect(5, REZYGISKD_RETRY_DELAY_US);
   if (fd == -1) return false;
 
   safe_write(write_uint8_t(fd, (uint8_t)ZygoteInjected), "ZygoteInjected action", return false);
@@ -80,7 +106,7 @@ bool rezygiskd_zygote_injected(void) {
 }
 
 uint32_t rezygiskd_get_process_flags(uid_t uid, const char *const process) {
-  int fd = rezygiskd_connect(1);
+  int fd = rezygiskd_connect(1, REZYGISKD_RETRY_DELAY_US);
   if (fd == -1) return 0;
 
   safe_write(write_uint8_t(fd, (uint8_t)GetProcessFlags), "GetProcessFlags action", return 0);
@@ -96,7 +122,7 @@ uint32_t rezygiskd_get_process_flags(uid_t uid, const char *const process) {
 }
 
 void rezygiskd_get_info(struct rezygisk_info *info) {
-  int fd = rezygiskd_connect(1);
+  int fd = rezygiskd_connect(1, REZYGISKD_RETRY_DELAY_US);
   if (fd == -1) {
     info->running = false;
 
@@ -224,7 +250,7 @@ void free_rezygisk_info(struct rezygisk_info *info) {
 }
 
 bool rezygiskd_read_modules(struct zygisk_modules *modules) {
-  int fd = rezygiskd_connect(1);
+  int fd = rezygiskd_connect(1, REZYGISKD_RETRY_DELAY_US);
   if (fd == -1) return false;
 
   safe_write(write_uint8_t(fd, (uint8_t)ReadModules), "ReadModules action", return false);
@@ -275,13 +301,13 @@ void free_modules(struct zygisk_modules *modules) {
   modules->modules_count = 0;
 }
 
-bool rezygiskd_read_zn_modules(const char *process_name, const char *process_path, struct zn_module_file **out, size_t *out_len) {
+bool rezygiskd_read_zn_modules(const char *process_name, const char *process_path, uint8_t retry, uint32_t retry_delay_us, struct zn_module_file **out, size_t *out_len) {
   *out = NULL;
   *out_len = 0;
 
   size_t filled = 0;
 
-  int fd = rezygiskd_connect(1);
+  int fd = rezygiskd_connect(retry, retry_delay_us);
   if (fd == -1) return false;
 
   safe_write(write_uint8_t(fd, (uint8_t)ReadZnModules), "ReadZnModules action", return false);
@@ -372,7 +398,7 @@ void free_zn_module_files(struct zn_module_file *files, size_t len) {
 }
 
 int rezygiskd_spawn_zn_companion(const char *lib_path) {
-  int fd = rezygiskd_connect(1);
+  int fd = rezygiskd_connect(1, REZYGISKD_RETRY_DELAY_US);
   if (fd == -1) return -1;
 
   safe_write(write_uint8_t(fd, (uint8_t)SpawnZnCompanion), "SpawnZnCompanion action", return -1);
@@ -395,7 +421,7 @@ int rezygiskd_spawn_zn_companion(const char *lib_path) {
 }
 
 int rezygiskd_connect_companion(size_t index) {
-  int fd = rezygiskd_connect(1);
+  int fd = rezygiskd_connect(1, REZYGISKD_RETRY_DELAY_US);
   if (fd == -1) return -1;
 
   safe_write(write_uint8_t(fd, (uint8_t)RequestCompanionSocket), "RequestCompanionSocket action", return -1);
@@ -404,8 +430,14 @@ int rezygiskd_connect_companion(size_t index) {
   uint8_t res = 0;
   safe_read(read_uint8_t(fd, &res), "companion socket result", return -1);
 
-  if (res == 1) return fd;
-  else {
+  if (res == 1) {
+    /* INFO: Past this point the same socket is the module's companion
+              channel, and the module's protocol may block far longer than
+              our daemon handshake budget - hand it over unconstrained. */
+    set_socket_timeout(fd, 0);
+
+    return fd;
+  } else {
     close(fd);
 
     return -1;
@@ -413,7 +445,7 @@ int rezygiskd_connect_companion(size_t index) {
 }
 
 int rezygiskd_get_module_dir(size_t index) {
-  int fd = rezygiskd_connect(1);
+  int fd = rezygiskd_connect(1, REZYGISKD_RETRY_DELAY_US);
   if (fd == -1) return -1;
 
   safe_write(write_uint8_t(fd, (uint8_t)GetModuleDir), "GetModuleDir action", return -1);
@@ -427,7 +459,7 @@ int rezygiskd_get_module_dir(size_t index) {
 }
 
 void rezygiskd_zygote_restart(void) {
-  int fd = rezygiskd_connect(1);
+  int fd = rezygiskd_connect(1, REZYGISKD_RETRY_DELAY_US);
   if (fd == -1) return;
 
   safe_write(write_uint8_t(fd, (uint8_t)ZygoteRestart), "ZygoteRestart action", return);
@@ -436,7 +468,7 @@ void rezygiskd_zygote_restart(void) {
 }
 
 bool rezygiskd_update_mns(enum mount_namespace_state nms_state, char *buf, size_t buf_size) {
-  int fd = rezygiskd_connect(1);
+  int fd = rezygiskd_connect(1, REZYGISKD_RETRY_DELAY_US);
   if (fd == -1) return false;
 
   safe_write(write_uint8_t(fd, (uint8_t)UpdateMountNamespace), "UpdateMountNamespace action", return false);
@@ -465,7 +497,7 @@ bool rezygiskd_update_mns(enum mount_namespace_state nms_state, char *buf, size_
 }
 
 bool rezygiskd_remove_module(size_t index) {
-  int fd = rezygiskd_connect(1);
+  int fd = rezygiskd_connect(1, REZYGISKD_RETRY_DELAY_US);
   if (fd == -1) return false;
 
   safe_write(write_uint8_t(fd, (uint8_t)RemoveModule), "RemoveModule action", return false);

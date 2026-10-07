@@ -168,6 +168,7 @@ static bool parse_gnu_debugdata(ElfImg *img, const uint8_t *data, size_t size) {
 
     if (img->dd_symtab_start && img->dd_symtab_count > 0) {
       img->debugdata = out;
+      img->debugdata_size = out_size;
 
       LOGD("Loaded %zu mini-debug symbols from .gnu_debugdata of %s", img->dd_symtab_count, img->elf);
 
@@ -252,12 +253,34 @@ static bool _find_module_base(ElfImg *img) {
   return img->base != NULL;
 }
 
+/* INFO: One predicate for every table the linear scan walks, so the counting
+          pass below and the filling pass in _load_symtabs() cannot disagree on
+          which symbols exist.
+
+          SHN_UNDEF is excluded here as well as in the original file-symtab
+          filter: such a symbol is a declaration the linker never resolved, so
+          its st_value is 0 and turning it into an address would hand the caller
+          a NULL it would then call. */
+static bool zn_collectable_symbol(ElfW(Sym) *sym, size_t strtab_size) {
+  if (sym->st_name == 0 || sym->st_name >= strtab_size) return false;
+  if (sym->st_shndx == SHN_UNDEF) return false;
+
+  unsigned int st_type = ELF_ST_TYPE(sym->st_info);
+
+  return (st_type == STT_FUNC || st_type == STT_OBJECT) && sym->st_size > 0;
+}
+
 static size_t calculate_valid_symtabs_amount(ElfImg *img) {
   size_t count = 0;
 
+  /* INFO: .dynsym is counted next to .symtab and the mini-debug table, which is
+            what lets a prefix lookup or a forEach walk reach the exported
+            symbols of a stripped library at all - those keep .dynsym after
+            .symtab is gone. */
   bool has_file_symtab = img->symtab_start != NULL && img->symstr_offset_for_symtab != 0;
-  if (!has_file_symtab && img->dd_symtab_start == NULL) {
-    LOGE("No .symtab and no mini-debug symbols available, cannot count valid symbols");
+  bool has_dynsym = img->dynsym_start != NULL && img->strtab_start != NULL && img->strtab != NULL && img->strtab->sh_size > 0;
+  if (!has_file_symtab && !has_dynsym && img->dd_symtab_start == NULL) {
+    LOGE("No .symtab, no .dynsym and no mini-debug symbols available, cannot count valid symbols");
 
     return 0;
   }
@@ -268,20 +291,22 @@ static size_t calculate_valid_symtabs_amount(ElfImg *img) {
 
   if (has_file_symtab) for (ElfW(Off) i = 0; i < img->symtab_count; i++) {
     if (symtab_str_shdr && img->symtab_start[i].st_name >= symtab_str_shdr->sh_size) {
-      LOGW("Symbol %zu has invalid name offset %u (>= %zu), skipping", (size_t)i, img->symtab_start[i].st_name, (size_t)symtab_str_shdr->sh_size);
+      LOGW("Symbol %zu has invalid name offset %u (>= %zu), skipping", (size_t)i, img->symtab_start[i].st_name, symtab_str_shdr->sh_size);
 
       continue;
     }
 
-    unsigned int st_type = ELF_ST_TYPE(img->symtab_start[i].st_info);
-    if ((st_type == STT_FUNC || st_type == STT_OBJECT) && img->symtab_start[i].st_size > 0 && img->symtab_start[i].st_name != 0)
+    if (zn_collectable_symbol(&img->symtab_start[i], symtab_str_shdr != NULL ? symtab_str_shdr->sh_size : SIZE_MAX))
+      count++;
+  }
+
+  if (has_dynsym) for (size_t i = 0; i < img->dynsym_count; i++) {
+    if (zn_collectable_symbol(&img->dynsym_start[i], img->strtab->sh_size))
       count++;
   }
 
   if (img->dd_symtab_start) for (size_t i = 0; i < img->dd_symtab_count; i++) {
-    unsigned int st_type = ELF_ST_TYPE(img->dd_symtab_start[i].st_info);
-    if ((st_type == STT_FUNC || st_type == STT_OBJECT) && img->dd_symtab_start[i].st_size > 0 &&
-        img->dd_symtab_start[i].st_name != 0 && img->dd_symtab_start[i].st_name < img->dd_strtab_size)
+    if (zn_collectable_symbol(&img->dd_symtab_start[i], img->dd_strtab_size))
       count++;
   }
 
@@ -477,6 +502,9 @@ ElfImg *ElfImg_create(const char *elf, void *base) {
           dynsym_shdr = section_h;
           img->dynsym_offset = section_h->sh_offset;
           img->dynsym_start = offsetOf_Sym(img->header, img->dynsym_offset);
+          /* INFO: A zero sh_entsize would divide by zero below; such a section
+                    cannot be walked, so it counts as absent. */
+          img->dynsym_count = section_h->sh_entsize == 0 ? 0 : section_h->sh_size / section_h->sh_entsize;
 
           break;
         }
@@ -639,6 +667,20 @@ const char *getSymbName(ElfImg *img, ElfW(Sym) *sym) {
     return img->dd_strtab + sym->st_name;
   }
 
+  /* INFO: A .dynsym entry names itself through .dynstr, which is a different
+            string table from the one .symtab uses. Now that the linear scan
+            carries both, the table has to be picked by where the symbol came
+            from - reading a .dynsym name offset out of .symstr would resolve
+            to whatever string happens to sit at that offset. */
+  if (img->dynsym_start != NULL && img->dynsym_count > 0 &&
+      (uintptr_t)sym >= (uintptr_t)img->dynsym_start &&
+      (uintptr_t)sym < (uintptr_t)img->dynsym_start + img->dynsym_count * sizeof(ElfW(Sym))) {
+    if (img->strtab_start == NULL || img->strtab == NULL) return NULL;
+    if (sym->st_name >= img->strtab->sh_size) return NULL;
+
+    return (const char *)img->strtab_start + sym->st_name;
+  }
+
   if (img->symstr_offset_for_symtab == 0) return NULL;
 
   return (const char *)(offsetOf_char(img->header, img->symstr_offset_for_symtab) + sym->st_name);
@@ -648,12 +690,13 @@ static bool _load_symtabs(ElfImg *img) {
   if (img->symtabs_) return true;
 
   bool has_file_symtab = img->symtab_start != NULL && img->symstr_offset_for_symtab != 0 && img->symtab_count > 0;
+  bool has_dynsym = img->dynsym_start != NULL && img->dynsym_count > 0 && img->strtab_start != NULL && img->strtab != NULL;
   bool has_dd_symtab = img->dd_symtab_start != NULL && img->dd_symtab_count > 0;
-  if (!has_file_symtab && !has_dd_symtab) return false;
+  if (!has_file_symtab && !has_dynsym && !has_dd_symtab) return false;
 
   img->symtabs_count_ = calculate_valid_symtabs_amount(img);
   if (img->symtabs_count_ == 0) {
-    LOGW("No valid symbols (FUNC/OBJECT with size > 0) found in .symtab for %s", img->elf);
+    LOGW("No valid symbols (FUNC/OBJECT with size > 0) found in .symtab, .dynsym or .gnu_debugdata for %s", img->elf);
 
     return false;
   }
@@ -675,38 +718,43 @@ static bool _load_symtabs(ElfImg *img) {
 
     for (ElfW(Off) pos = 0; pos < img->symtab_count; pos++) {
       ElfW(Sym) *current_sym = &img->symtab_start[pos];
-      unsigned int st_type = ELF_ST_TYPE(current_sym->st_info);
 
-      if ((st_type == STT_FUNC || st_type == STT_OBJECT) && current_sym->st_size > 0 && current_sym->st_name != 0) {
-        const char *st_name = symtab_strings + current_sym->st_name;
-        if (!st_name)
-          continue;
+      if (!zn_collectable_symbol(current_sym, symtab_str_shdr != NULL ? symtab_str_shdr->sh_size : SIZE_MAX)) continue;
 
-        if (symtab_str_shdr && current_sym->st_name >= symtab_str_shdr->sh_size) {
-          LOGE("Symbol name offset out of bounds");
+      const char *st_name = symtab_strings + current_sym->st_name;
+      if (!st_name) continue;
 
-          continue;
-        }
+      img->symtabs_[current_valid_index] = current_sym;
 
-        img->symtabs_[current_valid_index] = current_sym;
-
-        current_valid_index++;
-        if (current_valid_index == img->symtabs_count_) break;
-      }
+      current_valid_index++;
+      if (current_valid_index == img->symtabs_count_) break;
     }
+  }
+
+  /* INFO: The exported symbols of a stripped library live here and nowhere
+            else. They are what symbolLookup serves a prefix request from and
+            what forEachSymbols walks, so a resolver over a system library that
+            has no .symtab would otherwise report nothing at all. */
+  if (has_dynsym) for (size_t pos = 0; pos < img->dynsym_count; pos++) {
+    if (current_valid_index >= img->symtabs_count_) break;
+
+    ElfW(Sym) *current_sym = &img->dynsym_start[pos];
+
+    if (!zn_collectable_symbol(current_sym, img->strtab->sh_size)) continue;
+
+    img->symtabs_[current_valid_index] = current_sym;
+
+    current_valid_index++;
   }
 
   if (has_dd_symtab) for (size_t pos = 0; pos < img->dd_symtab_count && current_valid_index < img->symtabs_count_; pos++) {
     ElfW(Sym) *current_sym = &img->dd_symtab_start[pos];
-    unsigned int st_type = ELF_ST_TYPE(current_sym->st_info);
 
-    if ((st_type == STT_FUNC || st_type == STT_OBJECT) && current_sym->st_size > 0 &&
-        current_sym->st_name != 0 && current_sym->st_name < img->dd_strtab_size &&
-        current_sym->st_shndx != SHN_UNDEF) {
-      img->symtabs_[current_valid_index] = current_sym;
+    if (!zn_collectable_symbol(current_sym, img->dd_strtab_size)) continue;
 
-      current_valid_index++;
-    }
+    img->symtabs_[current_valid_index] = current_sym;
+
+    current_valid_index++;
   }
 
   if (current_valid_index == 0) {

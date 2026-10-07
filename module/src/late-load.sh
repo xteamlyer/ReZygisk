@@ -46,34 +46,11 @@ fi
 #         the late-load stage replays on every soft reboot, and two monitors
 #         would race on the same zygote, each spawning its own daemon.
 #
-#         Checked two ways, and neither is the other's duplicate. The binary's
-#         own name is not read from a pidfile - the monitor keeps none, and a
-#         soft reboot would leave one stale - but pidof only sees a monitor
-#         after it has exec'd that name, while the thing that actually makes a
-#         second monitor fail is init already being seized. TracerPid reports
-#         that the moment it happens, so a monitor that has seized init but not
-#         yet renamed itself is still seen, and this script does not start the
-#         second one that would report "Multiple Zygisks functioning".
-have_monitor=0
-
-#         `|| true` is load-bearing: this is a command-substitution assignment,
-#         so under `set -e` a status file that cannot be read would abort the
-#         script instead of just leaving the check without an answer - and
-#         aborting here means never starting a monitor at all.
-init_tracer="$(awk '/^TracerPid:/{print $2; exit}' /proc/1/status 2>/dev/null || true)"
-if [ -n "$init_tracer" ] && [ "$init_tracer" != "0" ]; then
-  have_monitor=1
-fi
-
+#         The check is on the binary's own name rather than a pidfile, which
+#         the monitor does not keep and which every soft reboot would leave
+#         stale anyway.
 if pidof "zygisk-ptrace64" >/dev/null 2>&1; then
-  have_monitor=1
-fi
-
-if [ "$have_monitor" = "1" ]; then
   echo "VexZygisk: monitor already running, leaving it alone"
-
-  : > /data/adb/rezygisk/soft-reboot || true
-
   exit 0
 fi
 
