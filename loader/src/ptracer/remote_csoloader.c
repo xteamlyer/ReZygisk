@@ -123,6 +123,21 @@ static const char *find_remote_module_path(struct maps_info *remote_map, const c
   return NULL;
 }
 
+/* INFO: DT_INIT and friends are part of the ELF gABI and are normally already
+         provided by <elf.h>, but the exact set a given toolchain exposes there
+         varies. Defining them here keeps the loader building against any
+         sysroot instead of failing on a missing macro. The values are fixed by
+         the standard and identical on every ABI this loader targets. */
+#ifndef DT_INIT
+  #define DT_INIT 12
+#endif
+#ifndef DT_INIT_ARRAY
+  #define DT_INIT_ARRAY 25
+#endif
+#ifndef DT_INIT_ARRAYSZ
+  #define DT_INIT_ARRAYSZ 27
+#endif
+
 struct elf_dyn_info {
   off_t dyn_off;
   size_t dyn_sz;
@@ -140,6 +155,15 @@ struct elf_dyn_info {
   size_t syment;
   size_t strsz;
   size_t nsyms;
+
+  /* INFO: DT_INIT / DT_INIT_ARRAY, replayed after the relocations are in place
+           so the C++ global constructors of the bundled engines actually run.
+           Without this the injector behaved like a library whose static
+           objects were never constructed: Dobby and LSPlt kept zeroed internal
+           state, so their hooks were accepted and then did nothing. */
+  ElfW(Addr) init_vaddr;
+  ElfW(Addr) init_array_vaddr;
+  size_t init_array_sz;
 
   char *strtab;
   size_t needed_count;
@@ -239,6 +263,9 @@ static bool elf_load_dyn_info(int fd, const ElfW(Ehdr) *eh, const ElfW(Phdr) *ph
       case DT_PLTRELSZ:  jmprel_sz = (size_t)dyn[i].d_un.d_val; break;
       case DT_PLTREL:    out->pltrel_type = (int)dyn[i].d_un.d_val; break;
       case DT_GNU_HASH:  gnu_hash_vaddr = (ElfW(Addr))dyn[i].d_un.d_ptr; break;
+      case DT_INIT:      out->init_vaddr = (ElfW(Addr))dyn[i].d_un.d_ptr; break;
+      case DT_INIT_ARRAY:      out->init_array_vaddr = (ElfW(Addr))dyn[i].d_un.d_ptr; break;
+      case DT_INIT_ARRAYSZ:    out->init_array_sz = (size_t)dyn[i].d_un.d_val; break;
       case DT_NEEDED: {
         if (needed_str_offsets && needed_i < needed_count)
           needed_str_offsets[needed_i++] = (size_t)dyn[i].d_un.d_val;
@@ -570,6 +597,85 @@ static bool apply_relocations(int pid, int fd, const struct elf_dyn_info *info,
   return true;
 }
 
+/* INFO: Run the library's own initializers, in the order a dynamic linker
+         would: DT_INIT first, then every entry of DT_INIT_ARRAY.
+
+         The engines bundled into the injector (Dobby, LSPlt) are C++ and keep
+         namespace-scope objects and function-local statics. Mapping the
+         segments and applying the relocations is not enough to bring those to
+         life: a real linker also walks DT_INIT_ARRAY. Skipping it left every
+         global constructor unrun, which is why a hook could be installed and
+         then never fire.
+
+         The table is read from the target rather than from the file, because
+         the R_AARCH64_RELATIVE relocations that turn its link-time addresses
+         into runtime ones have only been applied in the target by now. */
+static void run_init_functions(int pid, struct user_regs_struct *regs,
+                             struct maps_info *remote_map,
+                             const struct elf_dyn_info *info, uintptr_t load_bias) {
+  /* INFO: The constructors run before the caller enters the library, so they
+           must not leave the tracer's registers rewritten. Every remote_call
+           clobbers them wholesale; keep the incoming set intact and restore it
+           between calls so a table of any length runs against the same stack
+           the tracer set up for us. */
+  struct user_regs_struct saved = *regs;
+  void *return_addr = find_module_return_addr(remote_map, "libc.so");
+
+  if (!return_addr) {
+    LOGE("Failed to find a return address in libc.so, skipping library initializers");
+
+    return;
+  }
+
+  /* INFO: Bounded by the declared size and clamped, so a truncated or crafted
+             table cannot walk this loop past the end of the mapping. */
+  size_t count = 0;
+
+  if (info->init_array_vaddr && info->init_array_sz) {
+    count = info->init_array_sz / sizeof(ElfW(Addr));
+    if (count > 4096) {
+      LOGW("DT_INIT_ARRAY declares %zu entries, clamping to 4096", count);
+
+      count = 4096;
+    }
+  }
+
+  if (info->init_vaddr) {
+    uintptr_t fn = load_bias + (uintptr_t)info->init_vaddr;
+
+    LOGD("calling DT_INIT at %p", (void *)fn);
+
+    remote_call(pid, regs, fn, (uintptr_t)return_addr, NULL, 0);
+  }
+
+  for (size_t i = 0; i < count; i++) {
+    uintptr_t slot = load_bias + (uintptr_t)info->init_array_vaddr + i * sizeof(ElfW(Addr));
+    ElfW(Addr) fn_value = 0;
+
+    if (read_proc(pid, slot, &fn_value, sizeof(fn_value)) != (ssize_t)sizeof(fn_value)) {
+      LOGE("Failed to read DT_INIT_ARRAY entry %zu at %p", i, (void *)slot);
+
+      break;
+    }
+
+    if (!fn_value) continue;
+
+    /* INFO: The RELATIVE relocations already biased these entries; adding
+             load_bias again would land outside the mapping. */
+    uintptr_t fn = (uintptr_t)fn_value;
+
+    LOGD("calling DT_INIT_ARRAY[%zu] at %p", i, (void *)fn);
+
+    remote_call(pid, regs, fn, (uintptr_t)return_addr, NULL, 0);
+
+    /* INFO: Back to the pre-call register set, so the next constructor starts
+             from the same stack pointer instead of the callee's leftovers. */
+    *regs = saved;
+  }
+
+  *regs = saved;
+}
+
 bool remote_csoloader_load_and_resolve_entry(int pid, struct user_regs_struct *regs,
                                              struct maps_info *remote_map, struct maps_info *local_map,
                                              const char *lib_path, uintptr_t *out_base,
@@ -842,6 +948,14 @@ bool remote_csoloader_load_and_resolve_entry(int pid, struct user_regs_struct *r
       goto cleanup;
     }
   }
+
+  /* INFO: The constructors must run before the library entry is entered, and
+           after the segments carry their final protections — the code they live
+           in is executable by now, and the tables they read are the relocated
+           ones. A constructor that faults cannot be recovered from here, so the
+           failure is logged and the injection continues: the tracer still has to
+           restore the zygote's entry point afterwards. */
+  run_init_functions(pid, regs, remote_map, &dinfo, load_bias);
 
   if (!find_dynsym_value(fd, &dinfo, "entry", &entry_value)) {
     LOGE("Failed to resolve entry from ELF dynsym");
