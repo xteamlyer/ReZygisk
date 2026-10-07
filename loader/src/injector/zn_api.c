@@ -29,45 +29,14 @@ int zn_lsplt_commit_hook(void);
 
 /* INFO: LSPlt identifies libraries by file identity (device + inode) while the ZN
           API hands us a base address, so the owning mapping is looked up in the
-          process maps. Every call used to re-scan /proc/self/maps in full, but a
-          still-loaded library resolves to the same identity each time, so lookups
-          are cached. A base reused for a different file after a dlclose evicts
-          itself once the table fills.
+          process maps.
 
-          The table is shared: pltHook() runs on whichever thread the module
-          calls from, and two of them resolving libraries at once would
-          otherwise interleave the memmove below with a lookup. */
-#define ZN_PLT_LOCATION_CACHE 16
-
-struct zn_plt_location {
-  uintptr_t base;
-  dev_t dev;
-  ino_t inode;
-};
-
-static pthread_mutex_t zn_plt_locations_lock = PTHREAD_MUTEX_INITIALIZER;
-
-static struct zn_plt_location zn_plt_locations[ZN_PLT_LOCATION_CACHE];
-static size_t zn_plt_locations_len = 0;
-
+          The scan is redone per call, which is what the reference does and what
+          keeps the answer honest: a cached identity goes stale the moment a
+          library is unloaded and another one is mapped where it was, and a
+          pltHook then lands on the wrong file. Nothing here is shared between
+          threads either, so no lock is needed. */
 static bool get_lib_location_by_base(uintptr_t base_addr, dev_t *dev, ino_t *inode) {
-  bool cached = false;
-
-  pthread_mutex_lock(&zn_plt_locations_lock);
-  for (size_t i = 0; i < zn_plt_locations_len; i++) {
-    if (zn_plt_locations[i].base != base_addr) continue;
-
-    *dev = zn_plt_locations[i].dev;
-    *inode = zn_plt_locations[i].inode;
-
-    cached = true;
-
-    break;
-  }
-  pthread_mutex_unlock(&zn_plt_locations_lock);
-
-  if (cached) return true;
-
   struct maps_info *maps = parse_maps_safe("self");
   if (maps == NULL) {
     LOGE("Failed to scan maps for the library at %p", (void *)base_addr);
@@ -118,27 +87,6 @@ static bool get_lib_location_by_base(uintptr_t base_addr, dev_t *dev, ino_t *ino
 
     return false;
   }
-
-  /* INFO: When the table is full the oldest entry is evicted, so a module hooking
-            many libraries keeps the ones it touched most recently. There is no
-            way to invalidate an entry on dlclose, so a base that a new library
-            lands on after the old one was unloaded can still resolve to the
-            previous identity; the table is small enough that this is cheaper to
-            accept than to re-scan on every call, as the reference does. */
-  pthread_mutex_lock(&zn_plt_locations_lock);
-
-  if (zn_plt_locations_len == ZN_PLT_LOCATION_CACHE) {
-    memmove(&zn_plt_locations[0], &zn_plt_locations[1],
-            (ZN_PLT_LOCATION_CACHE - 1) * sizeof(struct zn_plt_location));
-    zn_plt_locations_len--;
-  }
-
-  zn_plt_locations[zn_plt_locations_len].base = base_addr;
-  zn_plt_locations[zn_plt_locations_len].dev = *dev;
-  zn_plt_locations[zn_plt_locations_len].inode = *inode;
-  zn_plt_locations_len++;
-
-  pthread_mutex_unlock(&zn_plt_locations_lock);
 
   return true;
 }
@@ -431,14 +379,20 @@ static char *get_lib_path_by_name(const char *name) {
 static struct ZnSymbolResolver *zn_new_symbol_resolver(const char *path, void *base_addr) {
   if (path == NULL) return NULL;
 
-  char *resolved = NULL;
-
-  if (strchr(path, '/') == NULL) {
-    resolved = get_lib_path_by_name(path);
-    if (resolved != NULL) path = resolved;
-  }
-
+  /* INFO: The path is tried as given first, exactly as the reference does. A
+            bare soname is only resolved against the loaded mappings when it
+            does not open - a caller that passes a real path that happens to
+            resolve should get that file, not whatever the maps hold under the
+            same name. */
   struct ZnSymbolResolver *resolver = (struct ZnSymbolResolver *)ElfImg_create(path, base_addr);
+  if (resolver != NULL) return resolver;
+
+  if (strchr(path, '/') != NULL) return NULL;
+
+  char *resolved = get_lib_path_by_name(path);
+  if (resolved == NULL) return NULL;
+
+  resolver = (struct ZnSymbolResolver *)ElfImg_create(resolved, base_addr);
 
   free(resolved);
 

@@ -15,6 +15,11 @@
 
 #include "elf_util.h"
 
+/* INFO: The load base is resolved from the process maps, so the maps reader and
+         its entry shape are needed here. misc.h is not included by elf_util.h:
+         the host tests compile this file on its own. */
+#include "misc.h"
+
 #include "xz.h"
 
 /* INFO: xz-embedded in XZ_INTERNAL_CRC32 mode calls these from the stream
@@ -230,27 +235,65 @@ static ElfW(Word) *offsetOf_Word(ElfW(Ehdr) *head, ElfW(Off) off) {
   return (ElfW(Word) *)(((uintptr_t)head) + off);
 }
 
-static int dl_cb(struct dl_phdr_info *info, size_t size, void *data) {
-  (void) size;
+/* INFO: The load base is looked up in the maps, as the reference does, rather
+          than through dl_iterate_phdr. The linker only lists an object once it
+          has actually mapped it, so the maps answer for a live library, while
+          the program header walk also walks whatever the resolver itself
+          mapped - a plain file view that is not the loaded image and would be
+          picked whenever it sorts below the real one.
 
-  if (info->dlpi_name == NULL)
-    return 0;
+          A bare soname is matched against the last path component, since the
+          caller has no directory to compare against and every mapped path has
+          one. */
+static bool _find_module_base(ElfImg *img) {
+  struct maps_info *maps = parse_maps("self");
+  if (maps == NULL) {
+    LOGE("Failed to read maps for %s", img->elf);
 
-  ElfImg *img = (ElfImg *)data;
-
-  if (strstr(info->dlpi_name, img->elf)) {
-    img->base = (void *)info->dlpi_addr;
-
-    return 1;
+    return false;
   }
 
-  return 0;
-}
+  bool want_basename = strchr(img->elf, '/') == NULL;
 
-static bool _find_module_base(ElfImg *img) {
-  dl_iterate_phdr(dl_cb, img);
+  /* INFO: The size of the whole file, used to recognise the plain file view
+            this process may already hold of the same library: it spans the file
+            and nothing else, where a loaded image has a header map first and
+            segments after it. */
+  size_t whole_size = img->size;
 
-  return img->base != NULL;
+  bool found = false;
+
+  for (size_t i = 0; i < maps->length && !found; i++) {
+    const struct map_entry *entry = &maps->maps[i];
+
+    if (entry->path == NULL || entry->path[0] == '[') continue;
+
+    const char *base = strrchr(entry->path, '/');
+    base = base == NULL ? entry->path : base + 1;
+
+    bool matched = want_basename ? strcmp(base, img->elf) == 0
+                                 : strcmp(entry->path, img->elf) == 0;
+    if (!matched) continue;
+
+    /* INFO: Skipped for the reason above: a file-sized mapping of the same path
+              is data, not the image the linker loaded. */
+    if (whole_size != 0) {
+      uintptr_t span = entry->end - entry->start;
+      if (span >= whole_size && span - whole_size < 4096) continue;
+    }
+
+    /* INFO: Every file offset in a dynamic image is relative to the load bias,
+              so this yields it from any segment - the header mapping does not
+              have to be present, nor listed first. */
+    if (entry->start < entry->offset) continue;
+
+    img->base = (void *)(entry->start - entry->offset);
+    found = true;
+  }
+
+  free_maps(maps);
+
+  return found;
 }
 
 /* INFO: One predicate for every table the linear scan walks, so the counting
@@ -358,28 +401,20 @@ ElfImg *ElfImg_create(const char *elf, void *base) {
 
   /* INFO: Two callers hand in a base and they mean two things unless the
             convention is pinned down. img->base is always the runtime address
-            the ELF header is mapped at; when no base is given,
-            dl_iterate_phdr yields the load bias (dlpi_addr), which is that
-            address minus the bias computed further down — so the found value
-            is normalized by the bias as soon as it is known. */
+            the ELF header is mapped at; when no base is given, the maps yield
+            the load bias, which is that address minus the bias computed further
+            down — so the found value is normalized by the bias as soon as it is
+            known. */
   bool base_provided = base != NULL;
 
   if (base_provided) {
     img->base = base;
 
     LOGD("Using provided base address 0x%p for %s", base, elf);
-  } else {
-    if (!_find_module_base(img)) {
-      LOGE("Failed to find module base for %s using dl_iterate_phdr", elf);
-
-      ElfImg_destroy(img);
-
-      return NULL;
-    }
   }
 
   int fd = open(elf, O_RDONLY | O_CLOEXEC);
-  if (fd < 0) {
+  if (fd == -1) {
     LOGE("failed to open %s", elf);
 
     ElfImg_destroy(img);
@@ -408,6 +443,21 @@ ElfImg *ElfImg_create(const char *elf, void *base) {
     return NULL;
   }
 
+  /* INFO: Resolved before the mmap below, and never after it. That mapping adds
+            a whole-file view of this very path to the maps, which sorts below
+            the real loaded image often enough to be picked as the base - and
+            every symbol address derived from it would be garbage, typically
+            unmapped. The file size is already known here because the scan needs
+            it to recognise such a view for what it is. */
+  if (!base_provided && !_find_module_base(img)) {
+    LOGE("Failed to find the load base of %s in the process maps", elf);
+
+    close(fd);
+    ElfImg_destroy(img);
+
+    return NULL;
+  }
+
   img->header = (ElfW(Ehdr) *)mmap(NULL, img->size, PROT_READ, MAP_PRIVATE, fd, 0);
 
   close(fd);
@@ -429,7 +479,7 @@ ElfImg *ElfImg_create(const char *elf, void *base) {
     return NULL;
   }
 
-  /* INFO: The bias has to be known before the dlpi_addr found above can be
+  /* INFO: The bias has to be known before the base found above can be
             normalized, so it is computed here rather than after the section
             walk. */
   bool bias_calculated = false;
