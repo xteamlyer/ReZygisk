@@ -23,12 +23,11 @@ allow zygote zygote capability sys_chroot
 allow zygote su dir search
 allow zygote su {lnk_file file} read
 
-# INFO: The directory itself has to be searchable from outside the zygote too:
-#       the HyperOS spawner and its apps resolve their own module libraries
-#       under /data/adb whenever the daemon cannot hand them over as an fd, and
-#       that fallback is the only thing that works on a device whose daemon is
-#       not running. The "file *" grant below stays on zygote on purpose - the
-#       fallback only ever needs to reach these libraries, not the whole tree.
+# INFO: The directory stays searchable from outside the zygote: the daemon
+#       resolves each module's library under /data/adb before handing it over
+#       as a descriptor, and the loader itself no longer reads this tree at
+#       all. The "file *" grant below is zygote-only on purpose - nothing
+#       outside it opens module libraries by path any more.
 allow domain adb_data_file dir search
 allow zygote adb_data_file file *
 allow zygote proc file {read open}
