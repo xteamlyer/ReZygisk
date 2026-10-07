@@ -255,57 +255,6 @@ int fork_dont_care() {
   return pid;
 }
 
-uintptr_t find_syscall_gadget(int pid, struct maps_info *remote_map) {
-  /* INFO: Find a syscall instruction (svc #0) in executable memory. We
-           search vdso first as it's always present. */
-
-  const uint32_t svc_insn = 0xD4000001; /* svc #0 */
-  const size_t insn_size = 4;
-  const uintptr_t insn_bias = 0;
-
-  for (int pass = 0; pass < 2; pass++) {
-    bool vdso_only = pass == 0;
-
-    for (size_t i = 0; i < remote_map->length; i++) {
-      const struct map_entry  *m = &remote_map->maps[i];
-      bool is_vdso = m->path && strstr(m->path, "[vdso]") != NULL;
-      size_t region_size = m->end - m->start;
-
-      if (!(m->perms & PROT_EXEC) || is_vdso != vdso_only) continue;
-
-      if (region_size > (vdso_only ? 0x10000 : 0x100000))
-        region_size = vdso_only ? 0x10000 : 0x100000;
-
-      uint8_t *buf = malloc(region_size);
-      if (!buf) continue;
-
-      if (read_proc(pid, m->start, buf, region_size) != (ssize_t)region_size) {
-        free(buf);
-
-        continue;
-      }
-
-      for (size_t j = 0; j + insn_size <= region_size; j += insn_size) {
-        if (memcmp(buf + j, &svc_insn, insn_size) != 0) continue;
-
-        uintptr_t addr = m->start + j + insn_bias;
-
-        LOGD("found syscall gadget in %s at offset 0x%zx", vdso_only ? "vdso" : (m->path ? m->path : "<anon>"), j);
-
-        free(buf);
-
-        return addr;
-      }
-
-      free(buf);
-    }
-  }
-
-  LOGE("Failed to find syscall gadget in remote process");
-
-  return 0;
-}
-
 #define TARGET_JUMP_SLOT R_AARCH64_JUMP_SLOT
 
 #define ELFW_R_TYPE(info) ELF64_R_TYPE(info)
