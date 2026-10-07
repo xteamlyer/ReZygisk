@@ -10,4 +10,4 @@
 
 [submodule "LSPlt"]
 	path = loader/src/external/lsplt
-	url = https://github.com/LSPosed/LSPlt.git
+	url = https://github.com/JingMatrix/LSPlt.git
