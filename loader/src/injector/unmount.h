@@ -21,4 +21,12 @@ bool revert_mode_enabled(void);
    the process with a namespace switch instead. */
 bool revert_root_traces_here(void);
 
+/* Parses this process's own mount table, which is what replaces the copy of it
+   bionic keeps in a static buffer - the one the zygote handed down, taken while
+   the module mounts were still there. The revert reaches the mount tree and not
+   that buffer, so a process whose tree was cleaned can still read the mounts
+   out of its own libc until this runs. Call it under the same flag as the
+   revert, once the tree is the cleaned one. */
+bool refresh_mount_line(void);
+
 #endif /* UNMOUNT_H */

@@ -1282,6 +1282,19 @@ static void rz_app_specialize_pre(struct zygisk_context *ctx) {
 static void rz_app_specialize_post(struct zygisk_context *ctx) {
   rz_run_modules_post(ctx);
 
+  /* INFO: The revert cleans the mount tree, and that is not the only place a
+            process can read the module mounts from: bionic keeps the table it
+            last parsed in a static buffer, and the zygote handed the
+            application a copy of it taken before the tree was cleaned. Parsing
+            is what replaces that content, and specialize time is when the tree
+            it parses is already the clean one.
+
+            The condition is the revert flag and not the denylist bit: a module
+            can ask for the same revert on a process the denylist does not
+            name, and leaving that process's mount line behind would be half a
+            hide - a clearer signal than either state alone. */
+  if (FLAG_GET(ctx, DO_REVERT_UNMOUNT)) refresh_mount_line();
+
   /* INFO: HyperOS runtime dispatch. Modules registered through
              getRuntime().registerModule in the spawner (and inherited by
              every forked child) are told about the specialization here —
