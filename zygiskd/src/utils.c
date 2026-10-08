@@ -88,6 +88,11 @@ void set_socket_create_context(const char *restrict context) {
 }
 
 static bool get_current_attr(char *restrict output, size_t size) {
+  /* INFO: The caller writes a terminator at output[ret], so a zero size would
+            make `size - 1` wrap to SIZE_MAX and let fread loose past the
+            buffer. */
+  if (size == 0) return false;
+
   FILE *current = fopen("/proc/self/attr/current", "r");
   if (current == NULL) {
     LOGE("fopen: %s", strerror(errno));
@@ -207,8 +212,16 @@ int unix_listener_from_path(const char *restrict path) {
   return socket_fd;
 }
 
+/* INFO: The kernel copies a struct cmsghdr into the control buffer, so it has
+         to be aligned as one rather than being a plain byte array. The loader
+         uses the same shape for its side of the exchange. */
+union daemon_cmsg_buffer {
+  struct cmsghdr header;
+  char control[CMSG_SPACE(sizeof(int))];
+};
+
 ssize_t write_fd(int fd, int sendfd) {
-  char cmsgbuf[CMSG_SPACE(sizeof(int))];
+  union daemon_cmsg_buffer cmsgbuf;
   char buf[1] = { 0 };
 
   struct iovec iov = {
@@ -219,8 +232,8 @@ ssize_t write_fd(int fd, int sendfd) {
   struct msghdr msg = {
     .msg_iov = &iov,
     .msg_iovlen = 1,
-    .msg_control = cmsgbuf,
-    .msg_controllen = sizeof(cmsgbuf)
+    .msg_control = cmsgbuf.control,
+    .msg_controllen = sizeof(cmsgbuf.control)
   };
 
   struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
@@ -241,7 +254,7 @@ ssize_t write_fd(int fd, int sendfd) {
 }
 
 int read_fd(int fd) {
-  char cmsgbuf[CMSG_SPACE(sizeof(int))];
+  union daemon_cmsg_buffer cmsgbuf;
 
   /* INFO: The peer writes a single data byte with every descriptor, so the
             payload sizes match on both ends of the exchange. */
@@ -255,11 +268,15 @@ int read_fd(int fd) {
   struct msghdr msg = {
     .msg_iov = &iov,
     .msg_iovlen = 1,
-    .msg_control = cmsgbuf,
-    .msg_controllen = sizeof(cmsgbuf)
+    .msg_control = cmsgbuf.control,
+    .msg_controllen = sizeof(cmsgbuf.control)
   };
 
-  ssize_t ret = recvmsg(fd, &msg, MSG_WAITALL);
+  ssize_t ret;
+  do {
+    ret = recvmsg(fd, &msg, MSG_WAITALL);
+  } while (ret == -1 && errno == EINTR);
+
   if (ret == -1) {
     LOGE("recvmsg: %s", strerror(errno));
 
@@ -522,6 +539,11 @@ ssize_t write_loop(int fd, const void *restrict buf, size_t count) {
 
       return -1;
     }
+
+    /* INFO: A zero-length write would leave written_bytes where it was and spin
+              here forever. read_loop treats the same value as the peer hanging
+              up, so the two loops stay symmetric. */
+    if (ret == 0) return (ssize_t)written_bytes;
 
     written_bytes += (size_t)ret;
   }
@@ -954,8 +976,18 @@ int save_mns_fd(int pid) {
 
     /* INFO: The helper forks a private copy of the mount tree and strips the
               root traces out of it. That copy is what a denylisted process is
-              switched into when the in-place revert could not be applied. */
-    unshare(CLONE_NEWNS);
+              switched into when the in-place revert could not be applied.
+              The copy is not optional: without it the umount below would run
+              against the target's own namespace and strip the mounts out from
+              under the process this is meant to protect. */
+    if (unshare(CLONE_NEWNS) == -1) {
+      LOGE("Failed to unshare the mount namespace: %s", strerror(errno));
+
+      if (write_uint8_t(socket_child, 0) == -1)
+        LOGE("Failed to write to socket_child: %s", strerror(errno));
+
+      goto finalize_mns_fork;
+    }
 
     if (!umount_root()) {
       LOGE("Failed to umount root");
@@ -1014,8 +1046,16 @@ int save_mns_fd(int pid) {
   }
 
   if (close(socket_parent) == -1) {
+    /* INFO: Deliberately not routed through FAIL_MNS: that macro closes
+              socket_parent a second time, and a close() reporting EINTR has
+              still closed the descriptor on Linux - the retry could land on
+              whatever fd took the number. */
+    LOGE("Failed to close socket_parent: %s", strerror(errno));
+
     close(ns_fd);
-    FAIL_MNS("Failed to close socket_parent");
+    waitpid(fork_pid, NULL, 0);
+
+    return -1;
   }
 
   if (waitpid(fork_pid, NULL, 0) == -1) {

@@ -340,7 +340,9 @@ enum uid_manager_state ap_uid_is_manager(uid_t uid) {
   static bool cached_valid = false;
   static struct timespec cached_at = { 0 };
 
-  struct timespec now;
+  /* INFO: Zeroed so a failing clock_gettime() cannot feed an uninitialised
+            value into the age comparison below. */
+  struct timespec now = { 0 };
   clock_gettime(CLOCK_MONOTONIC, &now);
 
   bool fresh = cached_valid &&

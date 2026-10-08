@@ -1400,12 +1400,8 @@ static void handle_spawn_zn_companion(struct Client *client) {
              the healthy companion still serves this one client untracked. */
   struct ZnCompanion *tmp = realloc(client->context->zn_companions,
                                     (client->context->zn_companions_len + 1) * sizeof(struct ZnCompanion));
-  char *lib_path_copy = tmp != NULL ? strdup(lib_path) : NULL;
-
-  if (tmp == NULL || lib_path_copy == NULL) {
+  if (tmp == NULL) {
     LOGW("Failed tracking the Zygisk Next companion of \"%s\"", lib_path);
-
-    free(lib_path_copy);
 
     ret = write_uint8_t(client->fd, (uint8_t)1);
     ASSURE_SIZE_WRITE("SpawnZnCompanion", "response", ret, sizeof(uint8_t), return);
@@ -1417,7 +1413,27 @@ static void handle_spawn_zn_companion(struct Client *client) {
     return;
   }
 
+  /* INFO: The block may have moved, so the context takes the new pointer before
+            anything below can fail. Leaving it on the old one after a later
+            failure would hand the next request a pointer realloc has already
+            freed - the loop at the top of this function and free_zn_companions()
+            both walk that array. */
   client->context->zn_companions = tmp;
+
+  char *lib_path_copy = strdup(lib_path);
+  if (lib_path_copy == NULL) {
+    LOGW("Failed tracking the Zygisk Next companion of \"%s\"", lib_path);
+
+    ret = write_uint8_t(client->fd, (uint8_t)1);
+    ASSURE_SIZE_WRITE("SpawnZnCompanion", "response", ret, sizeof(uint8_t), return);
+
+    if (write_fd(client->fd, companion_fd) == -1) LOGE("Failed sending the Zygisk Next companion fd.");
+
+    close(companion_fd);
+
+    return;
+  }
+
   client->context->zn_companions[client->context->zn_companions_len].lib_path = lib_path_copy;
   client->context->zn_companions[client->context->zn_companions_len].fd = companion_fd;
   client->context->zn_companions_len++;
@@ -1696,6 +1712,21 @@ static void serve_loop(int socket_fd, struct Context *restrict context, char *re
     if (client_fd == -1) {
       /* A signal (EINTR) only interrupts this one wait; keep serving. */
       if (errno == EINTR) continue;
+
+      /* INFO: These describe this one connection, or a shortage that clears,
+                not a dead listener. Returning here used to end serve_loop and
+                take the daemon down with it - every cached companion included -
+                until the monitor noticed and started another one. */
+      if (errno == ECONNABORTED || errno == EMFILE || errno == ENFILE ||
+          errno == ENOBUFS || errno == ENOMEM) {
+        PLOGE("accept");
+
+        /* INFO: A shortage needs a moment to clear; without a pause this
+                  would spin on it. */
+        usleep(100000);
+
+        continue;
+      }
 
       PLOGE("accept");
 

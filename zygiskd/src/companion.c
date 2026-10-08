@@ -56,6 +56,11 @@ void *entry_thread(void *arg) {
   if (fstat(fd, &st0) == -1) {
     LOGE(" - Failed to get initial client fd stats: %s", strerror(errno));
 
+    /* INFO: This thread owns the client fd and closes it at the end of a
+              successful run. Leaving it open here leaks one descriptor per
+              failure, in a process that lives as long as the daemon does. */
+    close(fd);
+
     free(args);
 
     return NULL;
@@ -83,6 +88,12 @@ void *entry_thread(void *arg) {
 }
 
 void companion_entry(int fd) {
+  /* INFO: Installed before the first write. A peer that has already gone away
+            turns a write into SIGPIPE, whose default action kills the process
+            instead of letting the error paths below run. */
+  struct sigaction sa = { .sa_handler = SIG_IGN };
+  sigaction(SIGPIPE, &sa, NULL);
+
   LOGI("New companion entry.\n - Client fd: %d\n", fd);
 
   char name[PROCESS_NAME_MAX_LEN];
@@ -120,9 +131,6 @@ void companion_entry(int fd) {
     ret = write_uint8_t(fd, 1);
     ASSURE_SIZE_WRITE("ZygiskdCompanion", "module_entry", ret, sizeof(uint8_t), goto cleanup);
   }
-
-  struct sigaction sa = { .sa_handler = SIG_IGN };
-  sigaction(SIGPIPE, &sa, NULL);
 
   while (1) {
     if (!check_unix_socket(fd, true)) {

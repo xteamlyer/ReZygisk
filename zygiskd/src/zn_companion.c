@@ -36,7 +36,13 @@ static struct ZygiskNextCompanionModule *load_companion_module(int library_fd) {
   }
 
   struct ZygiskNextCompanionModule *module = (struct ZygiskNextCompanionModule *)dlsym(handle, "zn_companion_module");
-  if (module == NULL) LOGE("Failed to dlsym zn_companion_module: %s", dlerror());
+  if (module == NULL) {
+    LOGE("Failed to dlsym zn_companion_module: %s", dlerror());
+
+    /* INFO: Nothing keeps this handle, so a failed lookup has to drop it here
+              or the library stays mapped for the life of the companion. */
+    dlclose(handle);
+  }
 
   return module;
 }
@@ -66,6 +72,11 @@ static void *zn_client_thread(void *arg) {
   if (fstat(fd, &st0) == -1) {
     LOGE(" - Failed to stat the connection fd: %s", strerror(errno));
 
+    /* INFO: This thread owns the connection fd and closes it at the end of a
+              successful run; returning without closing leaks one descriptor per
+              failure in a process that outlives every connection. */
+    close(fd);
+
     return NULL;
   }
 
@@ -86,6 +97,14 @@ static void *zn_client_thread(void *arg) {
 }
 
 void zn_companion_entry(int fd) {
+  /* INFO: Installed before the first write. A peer that has already gone away
+            turns a write into SIGPIPE, whose default action kills the process
+            instead of letting the error paths below run. */
+  struct sigaction sa;
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_handler = SIG_IGN;
+  sigaction(SIGPIPE, &sa, NULL);
+
   LOGI("New Zygisk Next companion. Control fd: %d", fd);
 
   char path[PATH_MAX];
@@ -123,11 +142,6 @@ void zn_companion_entry(int fd) {
 
     goto cleanup;
   }
-
-  struct sigaction sa;
-  memset(&sa, 0, sizeof(sa));
-  sa.sa_handler = SIG_IGN;
-  sigaction(SIGPIPE, &sa, NULL);
 
   module->onCompanionLoaded();
 
