@@ -21,6 +21,12 @@
 
 #include "utils.h"
 
+/* INFO: The branch the CPU believes it took, kept in PSTATE bits 10-11. A value
+         of 0b11 means the last branch was an indirect jump, and a BTI landing
+         pad rejects that: see the two places that clear it before redirecting
+         the tracee. */
+#define AARCH64_PSTATE_BTYPE_MASK (3ull << 10)
+
 ssize_t write_proc(int pid, uintptr_t remote_addr, const void *buf, size_t len) {
   LOGV("write to remote addr %" PRIxPTR " size %zu", remote_addr, len);
 
@@ -181,6 +187,19 @@ void align_stack(struct user_regs_struct *regs, long preserve) {
 uintptr_t remote_call(int pid, struct user_regs_struct *regs, uintptr_t func_addr, uintptr_t return_addr, long *args, size_t args_size) {
   align_stack(regs, 0);
 
+  /* INFO: BTYPE so jumping into the callee is accepted by the CPU. The
+             tracer intercepted the target on an indirect branch - the linker's
+             jump to __libc_init through the poisoned GOT slot - which left
+             BTYPE at 0b11 (indirect jump). Every bionic library on a BTI
+             enabled device starts with a BTI landing pad that only accepts
+             0b01 (direct call) or 0b10 (indirect call); arriving with 0b11
+             makes the CPU treat the branch as a JOP attempt and raise SIGILL
+             instead of running the function.
+
+             remote_syscall clears the same field for the vDSO svc a few lines
+             below; this is the equivalent for an ordinary function call. */
+  regs->pstate &= ~AARCH64_PSTATE_BTYPE_MASK;
+
   LOGV("calling remote function %" PRIxPTR " args %zu", func_addr, args_size);
 
   for (size_t i = 0; i < args_size; i++) {
@@ -230,6 +249,15 @@ uintptr_t remote_call(int pid, struct user_regs_struct *regs, uintptr_t func_add
     parse_status(status, status_str, sizeof(status_str));
 
     LOGE("stopped by other reason %s at addr %p", status_str, (void *)regs->REG_IP);
+
+    /* INFO: SIGILL here is almost always a BTI landing pad refusing the
+               branch, which means the BTYPE clear above did not reach the CPU
+               for this call. Say so outright: the generic message above reads
+               like an unrelated stop and sends the reader hunting elsewhere. */
+    if (WSTOPSIG(status) == SIGILL) {
+      LOGE("remote call to %" PRIxPTR " raised SIGILL - branch target rejected (BTYPE %lu)",
+           func_addr, (unsigned long)((regs->pstate >> 10) & 3));
+    }
   }
 
   return 0;
@@ -253,57 +281,6 @@ int fork_dont_care() {
   }
 
   return pid;
-}
-
-uintptr_t find_syscall_gadget(int pid, struct maps_info *remote_map) {
-  /* INFO: Find a syscall instruction (svc #0) in executable memory. We
-           search vdso first as it's always present. */
-
-  const uint32_t svc_insn = 0xD4000001; /* svc #0 */
-  const size_t insn_size = 4;
-  const uintptr_t insn_bias = 0;
-
-  for (int pass = 0; pass < 2; pass++) {
-    bool vdso_only = pass == 0;
-
-    for (size_t i = 0; i < remote_map->length; i++) {
-      const struct map_entry  *m = &remote_map->maps[i];
-      bool is_vdso = m->path && strstr(m->path, "[vdso]") != NULL;
-      size_t region_size = m->end - m->start;
-
-      if (!(m->perms & PROT_EXEC) || is_vdso != vdso_only) continue;
-
-      if (region_size > (vdso_only ? 0x10000 : 0x100000))
-        region_size = vdso_only ? 0x10000 : 0x100000;
-
-      uint8_t *buf = malloc(region_size);
-      if (!buf) continue;
-
-      if (read_proc(pid, m->start, buf, region_size) != (ssize_t)region_size) {
-        free(buf);
-
-        continue;
-      }
-
-      for (size_t j = 0; j + insn_size <= region_size; j += insn_size) {
-        if (memcmp(buf + j, &svc_insn, insn_size) != 0) continue;
-
-        uintptr_t addr = m->start + j + insn_bias;
-
-        LOGD("found syscall gadget in %s at offset 0x%zx", vdso_only ? "vdso" : (m->path ? m->path : "<anon>"), j);
-
-        free(buf);
-
-        return addr;
-      }
-
-      free(buf);
-    }
-  }
-
-  LOGE("Failed to find syscall gadget in remote process");
-
-  return 0;
 }
 
 #define TARGET_JUMP_SLOT R_AARCH64_JUMP_SLOT
@@ -603,8 +580,6 @@ bool ptrace_poke_uintptr(pid_t pid, uintptr_t addr, uintptr_t value) {
 
   return true;
 }
-
-#define AARCH64_PSTATE_BTYPE_MASK (3ull << 10)
 
 bool wait_for_ptrace_syscall_stop(int pid, int *status) {
   int step_retries = 0;
