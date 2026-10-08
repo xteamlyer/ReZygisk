@@ -158,38 +158,46 @@ static bool dlopen_inject(int pid, struct user_regs_struct *regs, struct maps_in
     return false;
   }
 
+  /* INFO: The object is identified by dev+inode rather than by its path. A
+            path test is not a safe key here: a module that replaced its own
+            file leaves the old one mapped under a "(deleted)" suffix, and any
+            second mapping whose path merely contains the same basename would
+            be folded into the range entry() later hands to munmap - unmapping
+            pages that belong to something else. dev+inode names the file
+            itself, and because anonymous mappings carry inode 0 they are
+            excluded for free.
+
+            Only the first pass still looks at the path, and it anchors the
+            match at the start so a longer path with this one as a substring
+            cannot be mistaken for it. A trailing "(deleted)" does not affect
+            the match. */
   uintptr_t base = 0;
   size_t size = 0;
+  dev_t lib_dev = 0;
+  ino_t lib_inode = 0;
 
   for (size_t i = 0; i < post->length; i++) {
     const struct map_entry *m = &post->maps[i];
 
-    if (!m->path || m->offset != 0) continue;
-    if (strcmp(m->path, lib_path) != 0) continue;
+    if (m->inode == 0) continue;
+    if (m->offset != 0) continue;
+    if (!m->path || strncmp(m->path, lib_path, strlen(lib_path)) != 0) continue;
 
-    base = (uintptr_t)m->start;
+    lib_dev = m->dev;
+    lib_inode = m->inode;
 
     break;
   }
 
-  if (base) {
-    /* INFO: The high end of the object is the topmost mapping of the same
-              file; anything the linker placed below the base is its own
-              bookkeeping and is not part of the image. */
-    uintptr_t high = base;
-
+  if (lib_inode != 0) {
     for (size_t i = 0; i < post->length; i++) {
       const struct map_entry *m = &post->maps[i];
 
-      if (!m->path) continue;
-      if (strcmp(m->path, lib_path) != 0) continue;
+      if (m->dev != lib_dev || m->inode != lib_inode) continue;
 
-      size_t end = (size_t)m->start + m->end - m->start;
-
-      if (end > high) high = end;
+      if (!base) base = (uintptr_t)m->start;
+      if (m->end > (uintptr_t)base + size) size = (size_t)(m->end - (uintptr_t)base);
     }
-
-    size = (size_t)(high - base);
   }
 
   free_maps(post);
