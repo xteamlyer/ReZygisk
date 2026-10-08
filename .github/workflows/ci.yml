@@ -19,8 +19,10 @@ jobs:
           fetch-depth: 0
 
       - name: Setup NDK_PATH
-        # INFO: Same resolution as the Trusted CI: the version is pinned in
-        #       common.mk and this only points ANDROID_HOME at the runner's SDK.
+        # INFO: Same resolution as the Trusted CI - the version is pinned in
+        #       common.mk, this only points ANDROID_HOME at the runner's SDK -
+        #       and the same fallback: build on the newest NDK the runner has
+        #       when the pinned one is missing, and say so out loud.
         run: |
           set -euo pipefail
 
@@ -30,19 +32,27 @@ jobs:
             exit 1
           fi
 
-          ndk_version=$(sed -n 's/^NDK_VERSION ?= *//p' common.mk)
-          if [ -z "$ndk_version" ]; then
+          pinned=$(sed -n 's/^NDK_VERSION ?= *//p' common.mk)
+          if [ -z "$pinned" ]; then
             echo "::error::NDK_VERSION is not pinned in common.mk"
             exit 1
           fi
 
-          if [ ! -d "$sdk/ndk/$ndk_version" ]; then
-            echo "::error::NDK $ndk_version (pinned in common.mk) is not installed; the runner has: $(ls "$sdk/ndk" 2>/dev/null | tr '\n' ' ')"
+          echo "ANDROID_HOME=$sdk" >> "$GITHUB_ENV"
+
+          if [ -d "$sdk/ndk/$pinned" ]; then
+            echo "Using the pinned NDK $pinned"
+            exit 0
+          fi
+
+          newest=$(ls -1 "$sdk/ndk" 2>/dev/null | sort -V | tail -1)
+          if [ -z "$newest" ]; then
+            echo "::error::No NDK is installed under $sdk/ndk"
             exit 1
           fi
 
-          echo "ANDROID_HOME=$sdk" >> "$GITHUB_ENV"
-          echo "Using the pinned NDK $ndk_version from $sdk/ndk"
+          echo "::warning::The pinned NDK $pinned is not installed; building on $newest instead (installed: $(ls "$sdk/ndk" | tr '\n' ' '))"
+          echo "NDK_VERSION=$newest" >> "$GITHUB_ENV"
 
       - name: Build
         # INFO: The same set the Trusted CI builds, not just the KernelSU

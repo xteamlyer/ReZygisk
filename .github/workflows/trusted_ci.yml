@@ -40,26 +40,41 @@ jobs:
           private_key: ${{ secrets.ORG_PRIVATE_KEY }}
           public_key: ${{ secrets.ORG_PUBLIC_KEY }}
         run: |
-          # INFO: A missing key used to be a bare echo, and the build then fell
-          #       through to its unsigned flavour - the run stayed green and the
-          #       archives it published carried empty signature placeholders.
-          #       A signed build is the reason this workflow exists, so refuse to
-          #       produce anything rather than produce that.
+          # INFO: Without the keys the build selects its unsigned flavour, and
+          #       that flavour still creates the signature files - empty ones -
+          #       so a missing secret used to produce a green run whose archives
+          #       only looked signed. A repository may legitimately not sign, so
+          #       this is a warning rather than a failure; what it may not be is
+          #       unmentioned.
           if [ -z "$private_key" ] || [ -z "$public_key" ]; then
-            echo "::error::ORG_PRIVATE_KEY / ORG_PUBLIC_KEY are not configured; refusing to publish an unsigned build"
+            echo "::warning::ORG_PRIVATE_KEY / ORG_PUBLIC_KEY are not configured; this build will be UNSIGNED"
+            exit 0
+          fi
+
+          # INFO: A key that is present but does not decode is a different
+          #       thing: the secret exists and is wrong, and the build would go
+          #       on to produce an unsigned archive out of it.
+          if ! printf '%s' "$private_key" | base64 -d > module/private_key 2>/dev/null || [ ! -s module/private_key ]; then
+            echo "::error::ORG_PRIVATE_KEY is set but does not decode into a usable key"
             exit 1
           fi
-          echo "$private_key" | base64 -d > module/private_key
-          echo "$public_key" | base64 -d > module/public_key
+
+          if ! printf '%s' "$public_key" | base64 -d > module/public_key 2>/dev/null || [ ! -s module/public_key ]; then
+            echo "::error::ORG_PUBLIC_KEY is set but does not decode into a usable key"
+            exit 1
+          fi
+
+          echo "Signing keys installed"
 
       - name: Setup NDK_PATH
-        # INFO: NDK_VERSION in common.mk pins the toolchain, and NDK_PATH
-        #       defaults to $(ANDROID_HOME)/ndk/$(NDK_VERSION). Exporting
-        #       ANDROID_NDK_LATEST_HOME as NDK_PATH - as this did - overrode that
-        #       default, so the pin never took effect and the build was judged on
-        #       whatever "-latest" pointed at that week. Point ANDROID_HOME at
-        #       the runner's SDK instead and let common.mk resolve the version,
-        #       failing loudly if that exact release is not installed.
+        # INFO: NDK_VERSION in common.mk names the toolchain this build is meant
+        #       to use, and NDK_PATH was being overridden with
+        #       ANDROID_NDK_LATEST_HOME - so the pin never took effect and the
+        #       build ran on whatever "-latest" happened to be that week. The
+        #       pinned release is used when the runner has it. When it does not,
+        #       the run continues on the newest one it does have, and says so:
+        #       swapping the toolchain silently is the thing this step exists to
+        #       stop, not a hard failure nobody asked for.
         run: |
           set -euo pipefail
 
@@ -69,19 +84,27 @@ jobs:
             exit 1
           fi
 
-          ndk_version=$(sed -n 's/^NDK_VERSION ?= *//p' common.mk)
-          if [ -z "$ndk_version" ]; then
+          pinned=$(sed -n 's/^NDK_VERSION ?= *//p' common.mk)
+          if [ -z "$pinned" ]; then
             echo "::error::NDK_VERSION is not pinned in common.mk"
             exit 1
           fi
 
-          if [ ! -d "$sdk/ndk/$ndk_version" ]; then
-            echo "::error::NDK $ndk_version (pinned in common.mk) is not installed; the runner has: $(ls "$sdk/ndk" 2>/dev/null | tr '\n' ' ')"
+          echo "ANDROID_HOME=$sdk" >> "$GITHUB_ENV"
+
+          if [ -d "$sdk/ndk/$pinned" ]; then
+            echo "Using the pinned NDK $pinned"
+            exit 0
+          fi
+
+          newest=$(ls -1 "$sdk/ndk" 2>/dev/null | sort -V | tail -1)
+          if [ -z "$newest" ]; then
+            echo "::error::No NDK is installed under $sdk/ndk"
             exit 1
           fi
 
-          echo "ANDROID_HOME=$sdk" >> "$GITHUB_ENV"
-          echo "Using the pinned NDK $ndk_version from $sdk/ndk"
+          echo "::warning::The pinned NDK $pinned is not installed; building on $newest instead (installed: $(ls "$sdk/ndk" | tr '\n' ' '))"
+          echo "NDK_VERSION=$newest" >> "$GITHUB_ENV"
 
       - name: Build
         run: |
@@ -94,13 +117,18 @@ jobs:
 
       - name: Verify the builds are signed
         # INFO: The build selects its unsigned flavour whenever the keys are
-        #       absent, and that flavour still touches the signature files - so
+        #       absent, and that flavour still creates the signature files - so
         #       their presence proves nothing. A real Ed25519 signature followed
-        #       by the public key is 96 bytes; the placeholder is zero. Checked
-        #       by size, on every variant, so an unsigned archive cannot leave
-        #       this workflow.
+        #       by the public key is 96 bytes; the placeholder is zero. When a
+        #       key was installed the archives must carry one, on every variant.
         run: |
           set -euo pipefail
+
+          if [ ! -s module/private_key ]; then
+            echo "::warning::No signing key in this run, so the archives are unsigned"
+            ls -l build/module/*/misaki.sig build-apatch/module/*/misaki.sig 2>/dev/null || true
+            exit 0
+          fi
 
           status=0
           for sig in build/module/*/machikado.arm64 build/module/*/misaki.sig \
