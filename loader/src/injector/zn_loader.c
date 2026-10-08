@@ -428,3 +428,7 @@ void zn_load_modules_for_process(const char *process_name) {
 
   free(process_path);
 }
+
+size_t zn_loaded_library_count(void) {
+  return loaded_libs_count;
+}

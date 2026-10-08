@@ -37,4 +37,10 @@ void zn_load_modules_for_process(const char *process_name);
          Returns the socket, or -1 when there is no reachable companion. */
 int zn_companion_connect(void *handle);
 
+/* INFO: How many Zygisk Next libraries this process holds. Zero means its maps
+         carry none of ours, so there is nothing there to stop naming - and a
+         count inherited from the zygote is inherited along with the libraries
+         it was raised for. */
+size_t zn_loaded_library_count(void);
+
 #endif /* ZN_LOADER_H */

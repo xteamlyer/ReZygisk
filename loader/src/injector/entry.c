@@ -13,6 +13,9 @@ __attribute__((visibility("default")))
 void entry(void *addr, size_t size) {
   LOGD("VexZygisk library injected, version %s", ZKSU_VERSION);
 
+  start_addr = addr;
+  block_size = size;
+
   /* INFO: HyperOS runs applications on its own Rust runtime instead of a
            zygote, and there is no ART specialize path there to hook — hooking
            the JNI is what crashed the spawner and left every app unable to
