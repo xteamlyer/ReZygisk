@@ -33,9 +33,14 @@
          and the ART images, and turning one into a private copy would leave
          it holding a stale view of someone else's memory.
 
-         Our own library is skipped: the unloader unmaps it once specialization
-         ends, so nothing of it is left to name by then - and replacing the
-         mapping this code runs from would be a risk taken for nothing. */
+         The injector's own mapping is included, and it is the one that has to
+         be: the target's linker loaded it, so the linker carries a module entry
+         naming it, and an entry left pointing at nothing is a hidden process
+         that takes down the next thing to walk its module list. Replacing the
+         mapping this code runs from is safe for the reason the replacement is
+         the same bytes at the same address - the copy is moved in with its
+         permissions already set, and an instruction fetch after the move reads
+         the same code it read before. */
 static bool is_module_map(const struct map_entry *map, dev_t data_dev) {
   const char *path = map->path;
 
@@ -44,6 +49,11 @@ static bool is_module_map(const struct map_entry *map, dev_t data_dev) {
   if (!map->is_private) return false;
 
   if (strncmp(path, ZYGISK_ZN_MEMFD, sizeof(ZYGISK_ZN_MEMFD) - 1) == 0) return true;
+
+  /* INFO: Checked before the module directory is excluded below, since the
+            injector lives inside it. It stays mapped until the unloader runs,
+            and the unloader keeps it mapped - see hook.c for why. */
+  if (strcmp(path, ZYGISK_LOADER_LIB) == 0) return true;
 
   if (map->dev != data_dev) return false;
 
@@ -113,11 +123,12 @@ static bool collect_one_map(const struct map_entry *map, void *userdata) {
   return true;
 }
 
-/* INFO: A module library that is still mapped - every one the loader abandons
-         rather than unloads, and every Zygisk Next library the system linker
-         holds - names its own file in /proc/self/maps. The mapping is replaced
-         with an anonymous copy of the same bytes at the same address, so the
-         library keeps running out of the same place and the name is gone. */
+/* INFO: A library that is still mapped - the injector itself, every module
+         library the loader abandons rather than unloads, and every Zygisk Next
+         library the system linker holds - names its own file in
+         /proc/self/maps. The mapping is replaced with an anonymous copy of the
+         same bytes at the same address, so the library keeps running out of the
+         same place and the name is gone. */
 static bool hide_map(struct hide_target *target) {
   size_t size = target->size;
 

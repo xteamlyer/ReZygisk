@@ -182,7 +182,7 @@ static void spawn_pipeline_leave(void) {
   sem_post(&spawn_pipeline_sem);
 }
 
-static bool should_unmap_zygisk = false;
+static bool hooks_removed = false;
 static bool enable_unloader = false;
 
 /* INFO: Helper function to add to PLT hook list */
@@ -348,14 +348,20 @@ DCL_HOOK_FUNC(void, _ZNK18FileDescriptorInfo14ReopenOrDetach, void *_this, void 
 }
 
 static void unhook_functions(void);
-/* INFO: Self-unloading is not a direct task, it requires the utilization of tail
-           optimization, which requires the signature to be the same as munmap, or
-           else munmap will be executed and will try to reach our code, leading to
-           a segmentation fault.
+/* INFO: The teardown runs here, on the first pthread_attr_setstacksize of the
+           main thread, because that is the last moment before the application
+           executes code of its own: the hooks come off and the mappings this
+           process was never meant to name stop naming anything, before there is
+           an application around to look.
 
-         To counter that, we hook pthread_attr_setstacksize, which is called around
-           when the VM daemon starts, to allow this to happen before the app can
-           execute code.
+         The library itself stays mapped, as an anonymous copy of itself. The
+           target's linker loaded it, so the linker holds a module entry for it,
+           and unmapping the block left that entry describing memory that is no
+           longer there - which is how a detector walking the module list ended
+           up reading a header that had been unmapped underneath it and taking
+           the application down with it. A copy at the same address keeps every
+           pointer the linker holds valid, and the name is gone from the maps
+           listing all the same.
 */
 DCL_HOOK_FUNC(int, pthread_attr_setstacksize, void *target, size_t size) {
   int res = old_pthread_attr_setstacksize((pthread_attr_t *)target, size);
@@ -366,13 +372,13 @@ DCL_HOOK_FUNC(int, pthread_attr_setstacksize, void *target, size_t size) {
   /* INFO: Only perform unloading on the main thread */
   if (gettid() != getpid()) return res;
 
-  if (should_unmap_zygisk) {
+  if (hooks_removed) {
     unhook_functions();
 
     csoloader_deinit();
 
-    if (!should_unmap_zygisk) {
-      LOGW("Failed to unmap libzygisk.so, skipping munmap");
+    if (!hooks_removed) {
+      LOGW("A hook could not be removed, so the library stays as it is");
 
       enable_unloader = false;
 
@@ -385,15 +391,19 @@ DCL_HOOK_FUNC(int, pthread_attr_setstacksize, void *target, size_t size) {
     }
 
     /* INFO: Modules might use libzygisk.so after postAppSpecialize. We can only
-               free it when we are really before our unmap. */
+               free it when we are really before hiding it. */
     free(zygisk_modules);
     zygisk_modules = NULL;
 
     plti_deinit(&plti_ctx);
 
-    LOGD("unmap libzygisk.so loaded at %p with size %zu", start_addr, block_size);
+    /* INFO: Hiding rather than unmapping, and it is the last of the teardown
+               on purpose: the block this code runs from is replaced with a copy
+               of itself, so the mapping that comes back is anonymous while the
+               bytes and the permissions are the ones already executing. */
+    if (!hide_module_maps()) LOGW("Failed to hide the module mappings");
 
-    [[clang::musttail]] return munmap(start_addr, block_size);
+    LOGD("kept libzygisk.so mapped at %p with size %zu", start_addr, block_size);
   }
 
   return res;
@@ -1457,7 +1467,7 @@ static void rz_cleanup(struct zygisk_context *ctx) {
 
   if (!is_zygote_child(ctx)) return;
 
-  should_unmap_zygisk = true;
+  hooks_removed = true;
 
   /* INFO: Unhook JNI methods */
   for (size_t i = 0; i < jni_hook_list_count; i++) {
@@ -1467,7 +1477,7 @@ static void rz_cleanup(struct zygisk_context *ctx) {
       if (entry->methods_count > 0 && (*ctx->env)->RegisterNatives(ctx->env, jc, entry->methods, (jint)entry->methods_count) != 0) {
         LOGE("Failed to restore JNI hook of class [%s]", entry->class_name);
 
-        should_unmap_zygisk = false;
+        hooks_removed = false;
       }
 
       (*ctx->env)->DeleteLocalRef(ctx->env, jc);
@@ -1513,7 +1523,7 @@ static bool hook_unregister(const char *lib_name, const char *symbol, bool is_pr
   if (!(is_prefix ? plti_remove_hook_by_prefix : plti_remove_hook)(&plti_ctx, lib_name, symbol, backup)) {
     LOGE("Failed to unregister plt_hook \"%s\" with PLTI", symbol);
 
-    should_unmap_zygisk = false;
+    hooks_removed = false;
 
     return false;
   }

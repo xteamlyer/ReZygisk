@@ -26,6 +26,12 @@
 #define ZYGISK_STATE_JSON ZYGISK_TMP_PATH "/state.json"
 #define ZYGISK_MODULE_PROP ZYGISK_MODULE_DIR "/module.prop"
 
+/* INFO: The injector the ptracer loads into every target. The hiding pass
+         matches this path to describe the mapping afterwards, so the two cannot
+         be edited apart - the loader has to be able to recognise its own block
+         before it can leave it readable (see the unloader in hook.c). */
+#define ZYGISK_LOADER_LIB ZYGISK_MODULE_DIR "/lib64/libzygisk.so"
+
 /* INFO: The memfd the Zygisk Next loader copies a module library into
          before dlopen() of it - bionic rejects both the module path and a
          plain fd. It is also the name the library carries in a maps

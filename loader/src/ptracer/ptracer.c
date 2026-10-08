@@ -378,7 +378,7 @@ bool trace_zygote(int pid) {
   int stop_event = (int)((unsigned int)status >> 16);
   if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGSTOP &&
       (stop_event == PTRACE_EVENT_STOP || stop_event == 0)) {
-    char *lib_path = ZYGISK_MODULE_DIR "/lib64/libzygisk.so";
+    char *lib_path = ZYGISK_LOADER_LIB;
     if (!inject_on_main(pid, lib_path, libc_init_resolved, libc_init_got_slot)) {
       LOGE("failed to inject");
 
