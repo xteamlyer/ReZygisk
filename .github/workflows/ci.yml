@@ -19,23 +19,78 @@ jobs:
           fetch-depth: 0
 
       - name: Setup NDK_PATH
-        run: echo "NDK_PATH=$ANDROID_NDK_LATEST_HOME" >> $GITHUB_ENV
+        # INFO: Same resolution as the Trusted CI: the version is pinned in
+        #       common.mk and this only points ANDROID_HOME at the runner's SDK.
+        run: |
+          set -euo pipefail
+
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          if [ -z "$sdk" ]; then
+            echo "::error::Neither ANDROID_SDK_ROOT nor ANDROID_HOME is set"
+            exit 1
+          fi
+
+          ndk_version=$(sed -n 's/^NDK_VERSION ?= *//p' common.mk)
+          if [ -z "$ndk_version" ]; then
+            echo "::error::NDK_VERSION is not pinned in common.mk"
+            exit 1
+          fi
+
+          if [ ! -d "$sdk/ndk/$ndk_version" ]; then
+            echo "::error::NDK $ndk_version (pinned in common.mk) is not installed; the runner has: $(ls "$sdk/ndk" 2>/dev/null | tr '\n' ' ')"
+            exit 1
+          fi
+
+          echo "ANDROID_HOME=$sdk" >> "$GITHUB_ENV"
+          echo "Using the pinned NDK $ndk_version from $sdk/ndk"
 
       - name: Build
+        # INFO: The same set the Trusted CI builds, not just the KernelSU
+        #       flavour: a pull request that breaks the APatch build used to
+        #       merge green, because nothing here ever built it.
         run: |
           make all -j$(nproc)
+          make apatch -j$(nproc)
+          make apatch-debug -j$(nproc)
+
+      - name: Binary size budget
+        run: python3 scripts/ci_size_budget.py build build-apatch
+
+      - name: Generate update.json
+        # INFO: Runs here as well so a change to the archive names or the
+        #       script itself is caught by the pull request rather than by the
+        #       release that follows the merge.
+        run: |
+          python3 scripts/make_update_json.py --tree build --output build/out/update.json --pattern "VexZygisk-v*-release.zip"
+          python3 scripts/make_update_json.py --tree build-apatch --output build-apatch/out/update-apatch.json --pattern "VexZygisk-APatch-v*-release.zip"
 
       - name: Upload release
         uses: actions/upload-artifact@v7
         with:
           path: "build/out/VexZygisk-v*-release.zip"
           archive: false
+          if-no-files-found: error
+
+      - name: Upload APatch release
+        uses: actions/upload-artifact@v7
+        with:
+          path: "build-apatch/out/VexZygisk-APatch-v*-release.zip"
+          archive: false
+          if-no-files-found: error
 
       - name: Upload debug
         uses: actions/upload-artifact@v7
         with:
           path: "build/out/VexZygisk-v*-debug.zip"
           archive: false
+          if-no-files-found: error
+
+      - name: Upload APatch debug
+        uses: actions/upload-artifact@v7
+        with:
+          path: "build-apatch/out/VexZygisk-APatch-v*-debug.zip"
+          archive: false
+          if-no-files-found: error
 
   host-test:
     # INFO: Kept on the same image as the build job so the suite a pull request

@@ -130,6 +130,19 @@ def main():
         print(f"  daemon only: {sorted(daemon_helpers - loader_helpers)}")
         print(f"  loader only: {sorted(loader_helpers - daemon_helpers)}")
 
+    # INFO: A parser that stops matching reads as agreement between two empty
+    #       sets. That is the failure mode this whole check exists to prevent,
+    #       and it is silent: renaming the flag macro or the write_func
+    #       definition on both sides at once - the very edit that would be a
+    #       deliberate change, not drift - would take the comparison with it.
+    #       Demand that each side actually produced something first.
+    for label, values in (("daemon flags", daemon_flags), ("loader flags", loader_flags),
+                          ("daemon helpers", daemon_helpers), ("loader helpers", loader_helpers)):
+        if not values:
+            failed = True
+
+            print(f"EMPTY {label}: nothing matched, so there was nothing to compare")
+
     if not failed:
         print(f"protocol check ok: {len(daemon_actions)} actions, "
               f"{len(daemon_flags)} flags, "

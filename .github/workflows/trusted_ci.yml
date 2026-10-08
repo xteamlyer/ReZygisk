@@ -40,15 +40,48 @@ jobs:
           private_key: ${{ secrets.ORG_PRIVATE_KEY }}
           public_key: ${{ secrets.ORG_PUBLIC_KEY }}
         run: |
+          # INFO: A missing key used to be a bare echo, and the build then fell
+          #       through to its unsigned flavour - the run stayed green and the
+          #       archives it published carried empty signature placeholders.
+          #       A signed build is the reason this workflow exists, so refuse to
+          #       produce anything rather than produce that.
           if [ -z "$private_key" ] || [ -z "$public_key" ]; then
-            echo "Private or public key is not set."
-          else
-            echo "$private_key" | base64 -d > module/private_key
-            echo "$public_key" | base64 -d > module/public_key
+            echo "::error::ORG_PRIVATE_KEY / ORG_PUBLIC_KEY are not configured; refusing to publish an unsigned build"
+            exit 1
           fi
+          echo "$private_key" | base64 -d > module/private_key
+          echo "$public_key" | base64 -d > module/public_key
 
       - name: Setup NDK_PATH
-        run: echo "NDK_PATH=$ANDROID_NDK_LATEST_HOME" >> $GITHUB_ENV
+        # INFO: NDK_VERSION in common.mk pins the toolchain, and NDK_PATH
+        #       defaults to $(ANDROID_HOME)/ndk/$(NDK_VERSION). Exporting
+        #       ANDROID_NDK_LATEST_HOME as NDK_PATH - as this did - overrode that
+        #       default, so the pin never took effect and the build was judged on
+        #       whatever "-latest" pointed at that week. Point ANDROID_HOME at
+        #       the runner's SDK instead and let common.mk resolve the version,
+        #       failing loudly if that exact release is not installed.
+        run: |
+          set -euo pipefail
+
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          if [ -z "$sdk" ]; then
+            echo "::error::Neither ANDROID_SDK_ROOT nor ANDROID_HOME is set"
+            exit 1
+          fi
+
+          ndk_version=$(sed -n 's/^NDK_VERSION ?= *//p' common.mk)
+          if [ -z "$ndk_version" ]; then
+            echo "::error::NDK_VERSION is not pinned in common.mk"
+            exit 1
+          fi
+
+          if [ ! -d "$sdk/ndk/$ndk_version" ]; then
+            echo "::error::NDK $ndk_version (pinned in common.mk) is not installed; the runner has: $(ls "$sdk/ndk" 2>/dev/null | tr '\n' ' ')"
+            exit 1
+          fi
+
+          echo "ANDROID_HOME=$sdk" >> "$GITHUB_ENV"
+          echo "Using the pinned NDK $ndk_version from $sdk/ndk"
 
       - name: Build
         run: |
@@ -58,6 +91,78 @@ jobs:
 
       - name: Binary size budget
         run: python3 scripts/ci_size_budget.py build build-apatch
+
+      - name: Verify the builds are signed
+        # INFO: The build selects its unsigned flavour whenever the keys are
+        #       absent, and that flavour still touches the signature files - so
+        #       their presence proves nothing. A real Ed25519 signature followed
+        #       by the public key is 96 bytes; the placeholder is zero. Checked
+        #       by size, on every variant, so an unsigned archive cannot leave
+        #       this workflow.
+        run: |
+          set -euo pipefail
+
+          status=0
+          for sig in build/module/*/machikado.arm64 build/module/*/misaki.sig \
+                     build-apatch/module/*/machikado.arm64 build-apatch/module/*/misaki.sig; do
+            if [ ! -f "$sig" ]; then
+              echo "::error::$sig was never produced"
+              status=1
+              continue
+            fi
+
+            size=$(stat -c%s "$sig")
+            if [ "$size" -lt 96 ]; then
+              echo "::error::$sig is $size bytes - the build is not signed"
+              status=1
+            fi
+          done
+
+          [ "$status" -eq 0 ] && echo "All signature files carry a signature"
+          exit $status
+
+      - name: Check the published update channel
+        # INFO: module.prop points the KernelSU manager at update.json on main,
+        #       and a zipUrl that names an archive its release does not hold
+        #       fails silently - the file itself looks fine in the repository,
+        #       and only the device notices. It has drifted before: the channel
+        #       named build 768 while the release held 770.
+        #
+        #       update-apatch.json is deliberately not checked here: the v2.2.0
+        #       release carries no APatch archive, so its zipUrl cannot resolve
+        #       until one is published. Add it to the list below the day APatch
+        #       archives start shipping.
+        run: |
+          python3 - <<'PY'
+          import json
+          import sys
+          import urllib.error
+          import urllib.request
+
+          failed = False
+
+          for path in ("update.json",):
+              with open(path, encoding="utf-8") as file:
+                  channel = json.load(file)
+
+              url = channel["zipUrl"]
+
+              try:
+                  status = urllib.request.urlopen(
+                      urllib.request.Request(url, method="HEAD"), timeout=30).status
+              except urllib.error.HTTPError as error:
+                  status = error.code
+              except Exception as error:
+                  status = f"{type(error).__name__}: {error}"
+
+              if status != 200:
+                  print(f"::error::{path} names {url}, which answers {status}")
+                  failed = True
+              else:
+                  print(f"{path}: {url} -> {status}")
+
+          sys.exit(1 if failed else 0)
+          PY
 
       - name: Generate update.json
         run: |
@@ -70,6 +175,7 @@ jobs:
           name: update.json
           path: "build/out/update.json"
           archive: false
+          if-no-files-found: error
 
       - name: Upload APatch update.json
         uses: actions/upload-artifact@v7
@@ -77,30 +183,35 @@ jobs:
           name: update-apatch.json
           path: "build-apatch/out/update-apatch.json"
           archive: false
+          if-no-files-found: error
 
       - name: Upload release
         uses: actions/upload-artifact@v7
         with:
           path: "build/out/VexZygisk-v*-release.zip"
           archive: false
+          if-no-files-found: error
 
       - name: Upload APatch release
         uses: actions/upload-artifact@v7
         with:
           path: "build-apatch/out/VexZygisk-APatch-v*-release.zip"
           archive: false
+          if-no-files-found: error
 
       - name: Upload debug
         uses: actions/upload-artifact@v7
         with:
           path: "build/out/VexZygisk-v*-debug.zip"
           archive: false
+          if-no-files-found: error
 
       - name: Upload APatch debug
         uses: actions/upload-artifact@v7
         with:
           path: "build-apatch/out/VexZygisk-APatch-v*-debug.zip"
           archive: false
+          if-no-files-found: error
 
       - name: Publish artifacts to Telegram
         env:
