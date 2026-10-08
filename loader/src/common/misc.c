@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <sched.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -20,9 +21,16 @@
 int parse_int(const char *str) {
   int val = 0;
 
-  char *c = (char *)str;
+  const char *c = str;
   while (*c) {
     if (*c > '9' || *c < '0')
+      return -1;
+
+    /* INFO: An int holds nine decimal digits. Refusing anything longer keeps
+              a long digit string from wrapping into a negative result, which
+              the callers - array subscripts among them - would otherwise take
+              for a valid index. */
+    if (val > (INT_MAX - (*c - '0')) / 10)
       return -1;
 
     val = val * 10 + *c - '0';

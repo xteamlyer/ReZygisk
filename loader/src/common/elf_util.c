@@ -479,11 +479,30 @@ ElfImg *ElfImg_create(const char *elf, void *base) {
     return NULL;
   }
 
+  /* INFO: The class has to match the ElfW() types every later access is spelled
+            with. A 32-bit object read through 64-bit structures would have its
+            e_phoff/e_shoff/e_phnum taken from the wrong offsets, and the walks
+            below would then chase whatever those bytes happened to say. */
+  if (img->header->e_ident[EI_CLASS] != (sizeof(void *) == 8 ? ELFCLASS64 : ELFCLASS32)) {
+    LOGE("Unsupported ELF class in %s", elf);
+
+    ElfImg_destroy(img);
+
+    return NULL;
+  }
+
   /* INFO: The bias has to be known before the base found above can be
             normalized, so it is computed here rather than after the section
             walk. */
   bool bias_calculated = false;
-  if (img->header->e_phoff > 0 && img->header->e_phnum > 0) {
+  /* INFO: The table is walked by index, so it has to be proven to sit inside
+            the mapped file first - otherwise e_phnum on its own decides how far
+            past the end of the map phdr[i] reaches. The entry size is required
+            to be the structure's own size for the same reason. */
+  if (img->header->e_phoff > 0 && img->header->e_phnum > 0 &&
+      img->header->e_phentsize == sizeof(ElfW(Phdr)) &&
+      img->header->e_phoff <= img->size &&
+      img->header->e_phnum <= (img->size - img->header->e_phoff) / sizeof(ElfW(Phdr))) {
     ElfW(Phdr) *phdr = (ElfW(Phdr) *)((uintptr_t)img->header + img->header->e_phoff);
 
     for (int i = 0; i < img->header->e_phnum; ++i) {
@@ -515,7 +534,15 @@ ElfImg *ElfImg_create(const char *elf, void *base) {
 
   if (!base_provided && img->base != NULL) img->base = (void *)((uintptr_t)img->base + img->bias);
 
-  if (img->header->e_shoff == 0 || img->header->e_shentsize == 0 || img->header->e_shnum == 0) {
+  /* INFO: e_shentsize is required to be the structure's own size as well,
+            because the table is walked by adding it to a section pointer - any
+            other stride would read the entries at the wrong places. And the
+            table has to be inside the mapped file, for the same reason the
+            program header table does. */
+  if (img->header->e_shoff == 0 || img->header->e_shnum == 0 ||
+      img->header->e_shentsize != sizeof(ElfW(Shdr)) ||
+      img->header->e_shoff > img->size ||
+      img->header->e_shnum > (img->size - img->header->e_shoff) / sizeof(ElfW(Shdr))) {
     LOGW("Section header table missing or invalid in %s", elf);
   } else {
     img->section_header = offsetOf_Shdr(img->header, img->header->e_shoff);
@@ -532,7 +559,15 @@ ElfImg *ElfImg_create(const char *elf, void *base) {
   if (img->section_header && img->header->e_shstrndx != SHN_UNDEF) {
     if (img->header->e_shstrndx < img->header->e_shnum) {
       ElfW(Shdr) *shstrtab_hdr = img->section_header + img->header->e_shstrndx;
-      section_str = offsetOf_char(img->header, shstrtab_hdr->sh_offset);
+
+      /* INFO: Every section name is read relative to this pointer, so the
+                string table has to be inside the map before it is used as one. */
+      if (shstrtab_hdr->sh_offset <= img->size &&
+          shstrtab_hdr->sh_size <= img->size - shstrtab_hdr->sh_offset) {
+        section_str = offsetOf_char(img->header, shstrtab_hdr->sh_offset);
+      } else {
+        LOGW("Section header string table lies outside the file in %s", elf);
+      }
     } else {
       LOGW("Section header string table index (%u) out of bounds (%u)", img->header->e_shstrndx, img->header->e_shnum);
     }
@@ -544,6 +579,19 @@ ElfImg *ElfImg_create(const char *elf, void *base) {
     uintptr_t shoff = (uintptr_t)img->section_header;
     for (int i = 0; i < img->header->e_shnum; i++, shoff += img->header->e_shentsize) {
       ElfW(Shdr) *section_h = (ElfW(Shdr *))shoff;
+
+      /* INFO: Everything below turns sh_offset into a pointer into the mapped
+                file, so a section whose extent leaves the map is skipped rather
+                than followed. SHT_NOBITS occupies no file space - its sh_size
+                is a memory size - and is therefore exempt. */
+      if (section_h->sh_type != SHT_NOBITS && section_h->sh_type != SHT_NULL &&
+          (section_h->sh_offset > img->size ||
+           section_h->sh_size > img->size - section_h->sh_offset)) {
+        LOGW("Section %d lies outside the file in %s, skipping", i, elf);
+
+        continue;
+      }
+
       char *sname = section_str ? (section_h->sh_name + section_str) : "<?>";
       size_t entsize = section_h->sh_entsize;
 
@@ -838,22 +886,21 @@ ElfW(Addr) GnuLookup(ElfImg *restrict img, const char *name, uint32_t hash, unsi
     return 0;
   }
 
+  /* INFO: The bounds check has to come first: the chain table is indexed by
+            sym_index, which the hash bucket supplies, and a malformed table can
+            name an entry whose index runs past the end of the chain. The count
+            is taken from the image rather than recomputed, because the recorded
+            one already guards against a zero sh_entsize. */
+  size_t dynsym_count = img->dynsym_count;
   uint32_t sym_index = img->gnu_bucket_[hash % img->gnu_nbucket_];
-  if (sym_index < img->gnu_symndx_) {
-    LOGW("Symbol %s hash %u maps to bucket %u index %u (below gnu_symndx %u), not exported?", name, hash, hash % img->gnu_nbucket_, sym_index, img->gnu_symndx_);
+  if (sym_index < img->gnu_symndx_ || (size_t)sym_index >= dynsym_count) {
+    LOGW("Symbol %s hash %u maps to bucket %u index %u (gnu_symndx %u, count %zu), not exported?", name, hash, hash % img->gnu_nbucket_, sym_index, img->gnu_symndx_, dynsym_count);
 
     return 0;
   }
 
   char *strings = (char *)img->strtab_start;
   uint32_t chain_val = img->gnu_chain_[sym_index - img->gnu_symndx_];
-
-  ElfW(Word) dynsym_count = img->dynsym->sh_size / img->dynsym->sh_entsize;
-  if (sym_index >= dynsym_count) {
-    LOGE("Symbol index %u out of bounds", sym_index);
-
-    return 0;
-  }
 
   ElfW(Sym) *sym = img->dynsym_start + sym_index;
 
@@ -904,7 +951,7 @@ ElfW(Addr) ElfLookup(ElfImg *restrict img, const char *restrict name, uint32_t h
     return 0;
 
   char *strings = (char *)img->strtab_start;
-  ElfW(Word) dynsym_count = img->dynsym->sh_size / img->dynsym->sh_entsize;
+  size_t dynsym_count = img->dynsym_count;
 
   /* INFO: The chain table has one entry per dynamic symbol, so dynsym_count
             bounds both walks, mirroring the checks in GnuLookup. */

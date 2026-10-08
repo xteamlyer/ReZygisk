@@ -159,7 +159,11 @@ void rezygiskd_get_info(struct rezygisk_info *info) {
     return;
   }
 
-  info->modules.modules = (char **)malloc(sizeof(char *) * info->modules.modules_count);
+  /* INFO: calloc validates the multiplication for us. The count arrives over
+            the socket, so a corrupted or hostile value could wrap
+            count * sizeof(char *) into a small block that the loop below would
+            then write straight past; calloc refuses that and returns NULL. */
+  info->modules.modules = (char **)calloc(info->modules.modules_count, sizeof(char *));
   if (!info->modules.modules) {
     PLOGE("allocating modules name memory");
 

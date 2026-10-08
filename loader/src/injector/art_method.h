@@ -102,8 +102,14 @@ static inline bool amethod_init(JNIEnv *env) {
 
   size_t art_method_size = second - first;
   LOGD("ArtMethod size: %zu", art_method_size);
-  if ((4 * 9 + 3 * sizeof(void *)) < art_method_size) {
-    LOGE("ArtMethod size exceeds maximum assume. There may be something wrong.");
+
+  /* INFO: The two subtractions below have to stay inside the object, so two
+            pointers have to fit in the stride the two constructors are apart.
+            A smaller value means they were not laid out the way this probe
+            assumes, and the difference would underflow size_t into a wild
+            offset instead of failing here. */
+  if (art_method_size < 2 * sizeof(void *) || (4 * 9 + 3 * sizeof(void *)) < art_method_size) {
+    LOGE("ArtMethod size %zu is outside the range this build assumes. There may be something wrong.", art_method_size);
 
     return false;
   }

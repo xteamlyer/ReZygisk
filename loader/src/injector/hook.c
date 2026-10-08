@@ -44,6 +44,7 @@ enum {
   SERVER_FORK_AND_SPECIALIZE,
   DO_REVERT_UNMOUNT,
   SKIP_FD_SANITIZATION,
+  SPECIALIZE_IN_PLACE,
 
   FLAG_MAX
 };
@@ -113,8 +114,17 @@ DCL_PRE_POST(nativeForkSystemServer);
 
 #undef DCL_PRE_POST
 
+/* INFO: True in the processes that have to run the specialise pipeline: the
+           child of a successful fork, and the in-place path
+           (nativeSpecializeAppProcess never forks, it specialises the caller).
+
+           The parked value rz_init() writes is -1, and a failed fork leaves the
+           very same -1, so the pid alone cannot tell "no fork happened" from
+           "the fork failed". Reading the second as a child sends the parent -
+           which is the zygote itself - through specialisation and then through
+           rz_cleanup's self-unmap. The flag is what separates them. */
 static inline bool is_zygote_child(struct zygisk_context *ctx) {
-  return ctx->pid <= 0;
+  return ctx->pid == 0 || FLAG_GET(ctx, SPECIALIZE_IN_PLACE);
 }
 
 struct plt_hook_entry {
@@ -269,7 +279,18 @@ static bool update_mnt_ns(enum mount_namespace_state mns_state, bool dry_run) {
            pid while it is non-negative, i.e. also for the forked child itself.
            A negative pid means the cached fork failed and the caller has to fork. */
 DCL_HOOK_FUNC(int, fork) {
-  return (g_ctx && g_ctx->pid >= 0) ? g_ctx->pid : old_fork();
+  if (g_ctx && g_ctx->pid >= 0) return g_ctx->pid;
+
+  int pid = old_fork();
+
+  /* INFO: rz_fork_pre's own fork failed, so this one decides the process.
+             Recording its result keeps is_zygote_child() truthful: the child
+             born here would otherwise be left on the parked -1 and never
+             specialise, and a second failure would leave a value that reads as
+             "no fork happened" and hands the zygote to the child path. */
+  if (g_ctx) g_ctx->pid = pid;
+
+  return pid;
 }
 
 /* INFO: file_path is a std::string in the actual class. We represent it as opaque bytes. */
@@ -841,7 +862,10 @@ bool rezygisk_module_register(struct rezygisk_api *api, struct rezygisk_abi cons
 
   LOGD("Registering module with API version %ld", target_module->api_version);
 
-  struct rezygisk_module *m = &zygisk_modules[DECODE_ID(api->impl)];
+  size_t index = decode_module_id(api->impl);
+  if (index == SIZE_MAX) return false;
+
+  struct rezygisk_module *m = &zygisk_modules[index];
   m->abi = *target_module;
   m->api = *api;
 
@@ -897,7 +921,7 @@ static void rz_fork_pre(struct zygisk_context *ctx) {
   struct dirent *entry;
   while ((entry = readdir(dir))) {
     int fd = parse_int(entry->d_name);
-    if (fd == -1) continue;
+    if (fd < 0) continue;
 
     if (fd >= MAX_FD_SIZE) {
       close(fd);
@@ -1326,6 +1350,13 @@ static void rz_nativeSpecializeAppProcess_pre(struct zygisk_context *ctx) {
   LOGV("pre specialize [%s]", ctx->process);
 
   FLAG_SET(ctx, SKIP_FD_SANITIZATION);
+
+  /* INFO: This path specialises the calling process without a fork, so it is
+             the caller that is the "child" here. Marking it is what lets
+             is_zygote_child() tell that apart from a failed fork, which parks
+             the same -1. */
+  FLAG_SET(ctx, SPECIALIZE_IN_PLACE);
+
   rz_app_specialize_pre(ctx);
 
   if (!zn_presence_known || zn_modules_present) zn_load_modules_for_process(ctx->process);

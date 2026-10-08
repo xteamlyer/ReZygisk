@@ -608,6 +608,13 @@ static void zn_hyos_deliver(const char *pkg_name, const char *se_info) {
   if (zn_hyos_has_process_name && zn_hyos_process_name[0] != '\0') {
     snprintf(process_name, sizeof(process_name), "%s", zn_hyos_process_name);
   } else if (!zn_hyos_read_cmdline(process_name, sizeof(process_name)) || process_name[0] == '\0') {
+    /* INFO: prctl leaves the buffer untouched when it fails, and the condition
+              below reads the first byte regardless. Clearing it first keeps a
+              failed PR_GET_NAME from being taken for the length of whatever
+              the stack happened to hold, which snprintf would then read as a
+              string. */
+    process_name[0] = '\0';
+
     if (prctl(PR_GET_NAME, process_name, 0, 0, 0) != 0 || process_name[0] == '\0') {
       snprintf(process_name, sizeof(process_name), "%s", "hyos_app");
     }
