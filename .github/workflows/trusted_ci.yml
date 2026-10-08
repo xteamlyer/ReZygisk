@@ -156,10 +156,12 @@ jobs:
         #       and only the device notices. It has drifted before: the channel
         #       named build 768 while the release held 770.
         #
-        #       update-apatch.json is deliberately not checked here: the v2.2.0
-        #       release carries no APatch archive, so its zipUrl cannot resolve
-        #       until one is published. Add it to the list below the day APatch
-        #       archives start shipping.
+        #       update-apatch.json is checked too. It named an archive the
+        #       v2.2.0 release had never been given - the APatch flavour was
+        #       built and archived by CI, but only the KernelSU archives were
+        #       attached to the release - so the channel answered 404 to every
+        #       device that read it. The archives are attached now, which is
+        #       what this check is here to keep true.
         run: |
           python3 - <<'PY'
           import json
@@ -169,7 +171,7 @@ jobs:
 
           failed = False
 
-          for path in ("update.json",):
+          for path in ("update.json", "update-apatch.json"):
               with open(path, encoding="utf-8") as file:
                   channel = json.load(file)
 
