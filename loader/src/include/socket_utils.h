@@ -3,11 +3,24 @@
 
 #include <stdint.h>
 
+#include <sys/socket.h>
 #include <sys/types.h>
 
-ssize_t write_loop(int fd, const void *buf, size_t count);
+/* INFO: The kernel may copy a struct cmsghdr into the control buffer, so the
+         buffer has to be aligned as one instead of being a plain byte array.
 
-ssize_t read_loop_offset(int fd, void *buf, size_t len, off_t offset);
+         The ZN companion protocol header carries an identical union and does
+         not include this one: the daemon compiles its own read_string with a
+         different signature - buffer and length instead of an allocation - so
+         pulling these declarations into that header would be a conflicting
+         declaration for its translation unit. The two unions are deliberately
+         separate, not a duplication that was missed. */
+union zygisk_cmsg_buffer {
+  struct cmsghdr header;
+  char control[CMSG_SPACE(sizeof(int))];
+};
+
+ssize_t write_loop(int fd, const void *buf, size_t count);
 
 ssize_t read_loop(int fd, void *buf, size_t len);
 

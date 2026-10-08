@@ -214,7 +214,13 @@ int unix_listener_from_path(const char *restrict path) {
 
 /* INFO: The kernel copies a struct cmsghdr into the control buffer, so it has
          to be aligned as one rather than being a plain byte array. The loader
-         uses the same shape for its side of the exchange. */
+         uses the same shape for its side of the exchange.
+
+         Written out here instead of included from the loader's header: that
+         header declares read_string as an allocation, while this file defines
+         it as taking a buffer and a length, so including it would be a
+         conflicting declaration in this translation unit. The daemon is built
+         from its own include set for the same reason. */
 union daemon_cmsg_buffer {
   struct cmsghdr header;
   char control[CMSG_SPACE(sizeof(int))];

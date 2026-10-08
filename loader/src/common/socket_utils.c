@@ -34,12 +34,10 @@ ssize_t write_loop(int fd, const void *buf, size_t count) {
   return (ssize_t)written;
 }
 
-ssize_t read_loop_offset(int fd, void *buf, size_t count, off_t offset) {
+ssize_t read_loop(int fd, void *buf, size_t count) {
   size_t read_bytes = 0;
   while (read_bytes < count) {
-    ssize_t ret;
-    if (offset == 0) ret = TEMP_FAILURE_RETRY(read(fd, (char *)buf + read_bytes, count - read_bytes));
-    else ret = TEMP_FAILURE_RETRY(pread(fd, (char *)buf + read_bytes, count - read_bytes, offset + read_bytes));
+    ssize_t ret = TEMP_FAILURE_RETRY(read(fd, (char *)buf + read_bytes, count - read_bytes));
     if (ret == -1) {
       /* INFO: As in write_loop, EAGAIN means the deadline passed and not
                 "wait and retry": the reading sockets carry SO_RCVTIMEO. The
@@ -61,12 +59,8 @@ ssize_t read_loop_offset(int fd, void *buf, size_t count, off_t offset) {
   return (ssize_t)read_bytes;
 }
 
-ssize_t read_loop(int fd, void *buf, size_t count) {
-  return read_loop_offset(fd, buf, count, 0);
-}
-
 ssize_t write_fd(int fd, int sendfd) {
-  char cmsgbuf[CMSG_SPACE(sizeof(int))];
+  union zygisk_cmsg_buffer cmsgbuf;
   char buf[1] = { 0 };
 
   struct iovec iov = {
@@ -77,8 +71,8 @@ ssize_t write_fd(int fd, int sendfd) {
   struct msghdr msg = {
     .msg_iov = &iov,
     .msg_iovlen = 1,
-    .msg_control = cmsgbuf,
-    .msg_controllen = sizeof(cmsgbuf)
+    .msg_control = cmsgbuf.control,
+    .msg_controllen = sizeof(cmsgbuf.control)
   };
 
   struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
@@ -99,7 +93,7 @@ ssize_t write_fd(int fd, int sendfd) {
 }
 
 int read_fd(int fd) {
-  char cmsgbuf[CMSG_SPACE(sizeof(int))];
+  union zygisk_cmsg_buffer cmsgbuf;
 
   char buf[1] = { 0 };
 
@@ -111,8 +105,8 @@ int read_fd(int fd) {
   struct msghdr msg = {
     .msg_iov = &iov,
     .msg_iovlen = 1,
-    .msg_control = cmsgbuf,
-    .msg_controllen = sizeof(cmsgbuf)
+    .msg_control = cmsgbuf.control,
+    .msg_controllen = sizeof(cmsgbuf.control)
   };
 
   ssize_t ret = TEMP_FAILURE_RETRY(recvmsg(fd, &msg, MSG_WAITALL));

@@ -37,11 +37,14 @@ enum DaemonSocketAction {
   SpawnZnCompanion       = 10
 };
 
+/* INFO: Two states, not four: how the implementation was found is answered by
+         whether it exists at all. There used to be names for "too old" and
+         "abnormal" as well, but nothing ever assigned them and nothing read
+         them, so they only invited the reader to look for handling that was
+         never there. */
 enum RootImplState {
   Supported,
-  TooOld,
-  Inexistent,
-  Abnormal
+  Inexistent
 };
 
 /* INFO: The clean namespace is the only one the loader ever asks for - it is

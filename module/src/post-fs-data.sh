@@ -14,36 +14,6 @@ create_sys_perm() {
 
 export TMP_PATH=/data/adb/rezygisk
 
-# INFO: The boot stages replay on a soft reboot while the session from before
-#         it can still be up. When that happens the monitor is alive, and so is
-#         the daemon it started with the sockets it carved out of TMP_PATH:
-#         wiping that directory would unlink the endpoint every client connects
-#         to and leave the running daemon unreachable, and starting a second
-#         monitor would put two of them on the same zygote, racing each other.
-#         Looking for the monitor first avoids both. This is the same check
-#         late-load.sh makes, and for the same reason.
-#
-#         On a normal boot nothing carries that name yet, so both branches
-#         below take the path they always took. A pidof that is missing or
-#         fails is read as "not running" on purpose: starting the monitor is
-#         the safe side of this decision either way.
-if pidof "zygisk-ptrace64" >/dev/null 2>&1; then
-  MONITOR_RUNNING=1
-else
-  MONITOR_RUNNING=0
-fi
-
-if [ "$MONITOR_RUNNING" -eq 0 ]; then
-  rm -rf "$TMP_PATH"
-
-  # INFO: Guarded because a kernel whose policy does not carry the label would
-  #         make chcon return non-zero, and `set -e` would then abort this
-  #         script before the monitor is started - the whole injection would go
-  #         down over the label of a directory. The rezygisk.sh call below is
-  #         guarded for the same reason.
-  create_sys_perm "$TMP_PATH" || true
-fi
-
 # INFO: rezygisk.sh in post-fs-data.d resets module.prop from its pristine
 #         .bak copy. This explicit call looks redundant with the global
 #         script, but it is the only run with a guaranteed ordering: the
@@ -59,11 +29,82 @@ fi
 #         module.prop for one boot. Letting that reach `set -e` would abort
 #         before the monitor is started and take the whole injection down with
 #         it, silently.
+#
+#         Deliberately above the session check below: the reset has nothing to
+#         do with the sockets, and skipping it on a soft reboot would leave the
+#         stale status text it exists to clear in place for another boot.
 if [ -f /data/adb/post-fs-data.d/rezygisk.sh ]; then
   sh /data/adb/post-fs-data.d/rezygisk.sh || true
 fi
 
-if [ "$MONITOR_RUNNING" -eq 0 ] && [ -f "$MODDIR/bin/zygisk-ptrace64" ]; then
+# INFO: A monitor surviving from the current session owns this entire directory:
+#         it holds the controller socket, and the daemon it forked holds
+#         cp64.sock. A soft reboot replays the boot stages but leaves both
+#         processes running, so clearing TMP_PATH out from under them does not
+#         clean up after a dead session - it leaves a *live* daemon that nothing
+#         can reach, because the loader connects to the socket path and not to
+#         the process. Every module then stays dead until a real reboot.
+#
+#         That is why this only ever broke on the second soft reboot: the first
+#         one runs while no monitor exists yet, so the wipe below is harmless,
+#         and from the second one onwards the monitor from the previous session
+#         is still there and has its sockets pulled out from under it.
+#
+#         Only the two steps a live session would be harmed by are skipped — the
+#         wipe and starting a second monitor. On a cold boot nothing survives,
+#         pidof finds nothing, and both still run, exactly as late-load.sh
+#         already leaves a live session alone on its side.
+#
+#         Getting here also means the boot stages have just been replayed around
+#         a session that stayed up, which is a soft reboot and not a crash. The
+#         monitor cannot tell the two apart by itself - a replayed stage and a
+#         zygote that died look identical from where it stands - so the mark
+#         below is left for it, and it restarts its zygote count on finding it.
+#         Without that, a user rebooting three times in a row is counted as a
+#         crash loop and injection is shut off.
+#
+#         Two checks, because they cover different windows of the same thing.
+#         pidof only sees a monitor once it has exec'd its own name, while what
+#         actually makes a second monitor fail is init already being seized -
+#         and TracerPid goes non-zero the moment that happens. Leaving only the
+#         first check in place is what occasionally starts a second monitor on
+#         the boot stages of a soft reboot, which then reports "Multiple
+#         Zygisks functioning" and exits while the first one keeps working.
+have_monitor=0
+
+#         `|| true` is load-bearing: this is a command-substitution assignment,
+#         so under `set -e` a status file that cannot be read would abort the
+#         script instead of just leaving the check without an answer - and
+#         aborting here means never starting a monitor at all.
+init_tracer="$(awk '/^TracerPid:/{print $2; exit}' /proc/1/status 2>/dev/null || true)"
+if [ -n "$init_tracer" ] && [ "$init_tracer" != "0" ]; then
+  have_monitor=1
+fi
+
+if pidof "zygisk-ptrace64" >/dev/null 2>&1; then
+  have_monitor=1
+fi
+
+if [ "$have_monitor" = "1" ]; then
+  echo "VexZygisk: monitor already running, leaving its session alone"
+
+  # INFO: The mark the monitor may not survive without: it is what tells the
+  #         reloaded stage apart from a zygote that crashed, and the monitor
+  #         consumes it on the next exec.
+  : > "$TMP_PATH/soft-reboot" || true
+
+  exit 0
+fi
+
+rm -rf "$TMP_PATH"
+
+# INFO: Guarded because a kernel whose policy does not carry the label would
+#         make chcon return non-zero, and `set -e` would then abort this script
+#         before the monitor is started - the whole injection would go down
+#         over the label of a directory.
+create_sys_perm "$TMP_PATH" || true
+
+if [ -f "$MODDIR/bin/zygisk-ptrace64" ]; then
   "$MODDIR/bin/zygisk-ptrace64" monitor &
 fi
 

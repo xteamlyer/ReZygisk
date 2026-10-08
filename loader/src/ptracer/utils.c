@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <string.h>
 #include <errno.h>
+#include <time.h>
 
 #include <inttypes.h>
 #include <linux/limits.h>
@@ -325,15 +326,28 @@ uintptr_t remote_call(int pid, struct user_regs_struct *regs, uintptr_t func_add
 int fork_dont_care() {
   pid_t pid = fork();
 
-  if (pid < 0) PLOGE("fork 1");
-  else if (pid == 0) {
+  if (pid < 0) {
+    PLOGE("fork 1");
+  } else if (pid == 0) {
     pid = fork();
 
     /* INFO: _exit, not exit: this intermediate fork still carries the
               tracer's stdio buffers, and flushing them here would duplicate
               the output the parent is about to produce. */
-    if (pid < 0) PLOGE("fork 2");
-    else if (pid > 0) _exit(0);
+    if (pid < 0) {
+      /* INFO: A second failure here used to fall through and hand -1 back to
+                the caller. The caller only ever looks for 0, so that process
+                did not exec the tracer and did not exit either: it carried on
+                into the event loop as a second monitor, and every pass through
+                it forked again. Nothing above it is left to report the failure
+                to - the process that forked this one has already reaped it -
+                so it ends here. */
+      PLOGE("fork 2");
+
+      _exit(1);
+    } else if (pid > 0) {
+      _exit(0);
+    }
   } else {
     int status;
     waitpid(pid, &status, __WALL);
@@ -592,6 +606,16 @@ bool wait_linker_ready(int pid, uintptr_t *out_libc_init_resolved, uintptr_t *ou
     return false;
   }
 
+  /* INFO: The loop below steps the target one syscall at a time until the
+            linker writes the resolved address into the slot. That normally
+            happens within the first few steps. If it does not, stepping
+            forever would leave the target parked in ptrace-stop with the whole
+            injection waiting on it, so the wait is bounded: the caller detaches
+            and lets the process carry on without injection. */
+  struct timespec deadline;
+  clock_gettime(CLOCK_MONOTONIC, &deadline);
+  deadline.tv_sec += 5;
+
   /* INFO: Loop till linker changes the value (resolves the symbol) */
   while (1) {
     uintptr_t current_value = 0;
@@ -608,6 +632,14 @@ bool wait_linker_ready(int pid, uintptr_t *out_libc_init_resolved, uintptr_t *ou
       LOGI("Resolved __libc_init (0x%" PRIxPTR " -> 0x%" PRIxPTR ", pid %d)", initial_value, current_value, pid);
 
       return true;
+    }
+
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    if (now.tv_sec >= deadline.tv_sec) {
+      LOGE("Timed out waiting for __libc_init to resolve in pid %d", pid);
+
+      return false;
     }
 
     /* INFO: Step to the next syscall */
