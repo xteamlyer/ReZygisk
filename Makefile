@@ -26,14 +26,34 @@ ZIP_FILE = $(ZIP_DIR)/$(ZIP_NAME)
 #       stage to install it into. Shipping it there leaves a script in the
 #       archive that nothing can ever run.
 SHARED_SCRIPTS = module/src/verify.sh module/src/rezygisk.sh
+
+# INFO: The SELinux rules differ between the flavours only in the name of the
+#       root daemon's domain, so they are kept as a single template and
+#       substituted here instead of being maintained as two copies. The
+#       generated files are build output: they live under $(BUILD_DIR), not in
+#       module/src, so there is exactly one thing to edit.
+SEPOLICY_TEMPLATE = module/src/sepolicy.rule.in
+SEPOLICY_OUT = $(BUILD_DIR)/sepolicy-$(ROOT_IMPL).rule
+
+# INFO: ROOT_IMPL names the build flavour, which is not the domain name: the
+#       APatch flavour still runs under the "su" context.
+SEPOLICY_ROOT_DOMAIN = ksu
 ifeq ($(ROOT_IMPL),apatch)
-	SEPOLICY_SRC = module/src/apatch/sepolicy.rule
+	SEPOLICY_ROOT_DOMAIN = su
+endif
+
+$(SEPOLICY_OUT): $(SEPOLICY_TEMPLATE) Makefile
+	@mkdir -p $(dir $@)
+	@sed 's/@ROOT_DOMAIN@/$(SEPOLICY_ROOT_DOMAIN)/g' $< > $@
+
+ifeq ($(ROOT_IMPL),apatch)
+	SEPOLICY_SRC = $(SEPOLICY_OUT)
 	CUSTOMIZE_SRC = module/src/apatch/customize.sh
 	MODULE_PROP_SRC = module/src/apatch/module.prop
 	UNINSTALL_SRC = module/src/apatch/uninstall.sh
 	MODULE_SCRIPTS = $(SHARED_SCRIPTS)
 else
-	SEPOLICY_SRC = module/src/sepolicy.rule
+	SEPOLICY_SRC = $(SEPOLICY_OUT)
 	CUSTOMIZE_SRC = module/src/customize.sh
 	MODULE_PROP_SRC = module/src/module.prop
 	UNINSTALL_SRC = module/src/uninstall.sh
