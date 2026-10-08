@@ -15,13 +15,6 @@
 
 #include "daemon.h"
 
-/* INFO: How long one unproductive connection attempt waits before the next is
-         a property of the caller, not of the socket: the daemon either accepts
-         at once or is refused outright. Ordinary callers keep the short
-         default, which still rides out a daemon restart; the HyperOS spawner
-         passes the long one, because its daemon may be starting up in the same
-         breath as its own exec and its module plan is loaded once for every
-         app it will ever fork. Both values live in daemon.h. */
 /* INFO: Bounds how long a request may block on the daemon once connected. A
          stalled or overloaded daemon would otherwise leave the caller - the
          spawner collecting its one-shot boot plan, a zygote child mid-
@@ -244,13 +237,7 @@ void rezygiskd_get_info(struct rezygisk_info *info) {
 }
 
 void free_rezygisk_info(struct rezygisk_info *info) {
-  for (size_t i = 0; i < info->modules.modules_count; i++) {
-    free(info->modules.modules[i]);
-  }
-
-  free(info->modules.modules);
-  info->modules.modules = NULL;
-  info->modules.modules_count = 0;
+  free_modules(&info->modules);
 }
 
 bool rezygiskd_read_modules(struct zygisk_modules *modules) {

@@ -349,13 +349,6 @@ struct staged_library {
 
 static struct staged_library staged_libraries[STAGED_LIBRARY_MAX];
 
-static bool staged_same_file(const struct stat *a, const struct stat *b) {
-  return a->st_dev == b->st_dev &&
-         a->st_ino == b->st_ino &&
-         a->st_size == b->st_size &&
-         a->st_mtime == b->st_mtime;
-}
-
 /* INFO: Fills a fresh memfd with the contents of file_fd, optionally
          sealing it. Returns -1 when the staging or the seal fails. */
 static int stage_library_bytes(int file_fd, const char *restrict path, bool seal) {
@@ -473,7 +466,7 @@ int create_library_fd(const char *restrict path, bool *shared) {
 
     if (strcmp(slot->path, path) != 0) continue;
 
-    if (staged_same_file(&slot->st, &st)) {
+    if (stat_identity_same(&slot->st, &st)) {
       *shared = true;
 
       return slot->mem_fd;
@@ -802,39 +795,18 @@ bool parse_mountinfo(const char *restrict pid, struct mountinfos *restrict mount
     return false;
 }
 
-/* INFO: True when `path` equals `prefix` or sits directly underneath it (the
-         next byte is '/'). A bare prefix test would also match a sibling such
-         as /data/adb/modules_extra, which must never be unmounted. */
-static bool mount_path_at_or_under(const char *path, const char *prefix) {
-  size_t len = strlen(prefix);
-
-  if (strncmp(path, prefix, len) != 0) return false;
-
-  char next = path[len];
-
-  return next == '\0' || next == '/';
-}
-
-/* INFO: KernelSU keeps its modules on a loop device, and that device name
-         shows up as the source of every module mount. APatch overlays them
-         instead, so only the KernelSU flavour looks for it. Without this the
-         clean namespace would miss every mount whose source is the loop
-         device rather than the "KSU" overlay name. */
+/* INFO: Without this the clean namespace would miss every mount whose source
+         is the loop device rather than the "KSU" overlay name. */
 static const char *find_module_loop_source(const struct mountinfos *all) {
-#ifndef ROOT_IMPL_APATCH
   for (size_t i = 0; i < all->length; i++) {
     const struct mountinfo *info = &all->mounts[i];
 
-    if (strcmp(info->target, ROOT_MODULES_DIR) == 0 &&
-        strncmp(info->source, MOUNT_SOURCE_LOOP, strlen(MOUNT_SOURCE_LOOP)) == 0) {
-      LOGD("Detected the KernelSU module loop source: %s", info->source);
+    if (!mount_is_module_loop_source(info->target, info->source)) continue;
 
-      return info->source;
-    }
+    LOGD("Detected the KernelSU module loop source: %s", info->source);
+
+    return info->source;
   }
-#else
-  (void) all;
-#endif
 
   return NULL;
 }
@@ -905,12 +877,12 @@ bool umount_root(void) {
                leaves those lookups pointing at a path the process's own
                mountinfo still reports as overlaid. */
     if (umount2(target, MNT_DETACH) == -1) {
-      LOGE("[%s] Failed to unmount %s: %s", source_name, target, strerror(errno));
+      LOGE("[%s] Failed to detach %s: %s", source_name, target, strerror(errno));
 
       continue;
     }
 
-    LOGI("[%s] Unmounted %s", source_name, target);
+    LOGI("[%s] Detached %s", source_name, target);
   }
 
   free(targets_to_unmount);

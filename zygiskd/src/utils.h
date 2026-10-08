@@ -2,8 +2,10 @@
 #define UTILS_H
 
 #include <errno.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 
 #include <android/log.h>
@@ -16,6 +18,20 @@
          include tree, including the host tests, which build the daemon
          sources on their own. */
 #define APP_ID(uid) ((uid) % 100000)
+
+/* INFO: The identity a cached verdict is invalidated on. A staged library, the
+         APatch policy file and a module directory each spelled this comparison
+         out in their own file, so a change to what counts as the same file
+         could reach one caller and miss the others. It sits beside APP_ID for
+         the same reason that one is duplicated rather than pulled from the
+         loader's header: utils.h is the only header the daemon's own sources
+         share, and depending on the loader's would drag the host tests along. */
+static inline bool stat_identity_same(const struct stat *a, const struct stat *b) {
+  return a->st_dev == b->st_dev &&
+         a->st_ino == b->st_ino &&
+         a->st_size == b->st_size &&
+         a->st_mtime == b->st_mtime;
+}
 
 #ifndef LOG_TAG
   #define LOG_TAG "zygiskd"

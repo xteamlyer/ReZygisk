@@ -1,8 +1,6 @@
 ROOT_DIR := ..
 include ../common.mk
 
-BUILD_DIR ?= $(ROOT_DIR)/build
-
 OBJ_ROOT = $(BUILD_DIR)/obj/$(BUILD_TYPE)/loader
 OBJ_DIR = $(OBJ_ROOT)/$(ARCH)
 

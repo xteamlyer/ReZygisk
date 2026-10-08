@@ -52,7 +52,6 @@ typedef struct {
   /* INFO: Mini-debug info (.gnu_debugdata): an LZMA-compressed ELF holding a
             full .symtab for otherwise stripped system libraries. */
   uint8_t *debugdata;
-  size_t debugdata_size;
   ElfW(Sym) *dd_symtab_start;
   size_t dd_symtab_count;
   const char *dd_strtab;

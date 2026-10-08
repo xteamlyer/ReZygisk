@@ -156,39 +156,18 @@ static bool mount_list_parse(const char *path, struct mount_list *out) {
   return ok;
 }
 
-/* INFO: KernelSU keeps its modules on a loop device, and that device name
-         shows up as the source of every module mount. APatch mounts them as a
-         plain overlay, so only the KernelSU flavour looks for it. */
 static const char *find_module_loop_source(const struct mount_list *all) {
-#ifndef ROOT_IMPL_APATCH
   for (size_t i = 0; i < all->len; i++) {
     const struct mount_info *info = &all->items[i];
 
-    if (strcmp(info->target, ROOT_MODULES_DIR) == 0 &&
-        strncmp(info->source, MOUNT_SOURCE_LOOP, strlen(MOUNT_SOURCE_LOOP)) == 0) {
-      LOGV("Detected the KernelSU module loop source: %s", info->source);
+    if (!mount_is_module_loop_source(info->target, info->source)) continue;
 
-      return info->source;
-    }
+    LOGV("Detected the KernelSU module loop source: %s", info->source);
+
+    return info->source;
   }
-#else
-  (void) all;
-#endif
 
   return NULL;
-}
-
-/* INFO: True when `path` equals `prefix` or sits directly underneath it (the
-         next byte is '/'). A bare prefix test would also match a sibling such
-         as /data/adb/modules_extra, which must never be reverted. */
-static bool mount_path_at_or_under(const char *path, const char *prefix) {
-  size_t len = strlen(prefix);
-
-  if (strncmp(path, prefix, len) != 0) return false;
-
-  char next = path[len];
-
-  return next == '\0' || next == '/';
 }
 
 static bool carries_root_trace(const struct mount_info *info, const char *loop_source) {
@@ -279,7 +258,12 @@ bool revert_root_traces_here(void) {
     traces.items[traces.len] = all.items[i];
 
     /* INFO: The entry now belongs to the trace list, detaching it keeps the
-              cleanup below from freeing it twice. */
+              cleanup below from freeing it twice. From here on the strings it
+              named are gone from `all` while `all.len` still counts the entry,
+              so it reads back as a NULL target: anything that has to look at
+              the whole table must run before this loop, and none of it after.
+              (`all` is released on the next statement, which is what makes the
+              hand-over safe - keep it that way.) */
     all.items[i].root = NULL;
     all.items[i].target = NULL;
     all.items[i].source = NULL;

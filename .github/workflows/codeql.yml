@@ -47,10 +47,12 @@ jobs:
           submodules: ${{ matrix.language == 'c-cpp' && 'recursive' || 'false' }}
 
       # INFO: Autobuild runs this repository's own make, and common.mk points
-      #       the toolchain at $(HOME)/Android/Sdk/ndk/29.0.13113456, which
-      #       this image does not carry. Point NDK_PATH at the NDK the image
-      #       does have, the same way the build jobs in ci.yml and
-      #       trusted_ci.yml do, so autobuild finds a compiler.
+      #       the toolchain at $(HOME)/Android/Sdk/ndk/<pinned>, which this
+      #       image does not carry. The build jobs in ci.yml and trusted_ci.yml
+      #       resolve the pinned version from common.mk first and fall back with
+      #       a warning; this one only needs some compiler for autobuild to
+      #       observe, so it points NDK_PATH straight at the newest NDK the
+      #       image has.
       - name: Setup NDK_PATH
         if: matrix.language == 'c-cpp'
         run: echo "NDK_PATH=$ANDROID_NDK_LATEST_HOME" >> $GITHUB_ENV

@@ -1,7 +1,7 @@
 /* INFO: Some libc functions (memcpy and friends) have SIMD/NEON paths whose
            registers are caller-saved, and libc does not restore them. The string
-           data left behind can be used to detect VexZygisk, so clear_regs()
-           scrubs those registers. */
+           data left behind can be used to detect VexZygisk, so
+           registers_clear() scrubs those registers. */
 
 #ifndef REGISTERS_H
 #define REGISTERS_H

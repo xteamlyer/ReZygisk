@@ -492,13 +492,7 @@ static bool zn_hyos_hooks_warned = false;
 #define ZN_HYOS_SPAWNER_NAME "hyos_spawner"
 
 static bool zn_hyos_path_is_spawner(const char *path) {
-  static const char kDeletedSuffix[] = " (deleted)";
-
-  size_t len = strlen(path);
-  if (len > sizeof(kDeletedSuffix) - 1 &&
-      memcmp(path + len - (sizeof(kDeletedSuffix) - 1), kDeletedSuffix, sizeof(kDeletedSuffix) - 1) == 0) {
-    len -= sizeof(kDeletedSuffix) - 1;
-  }
+  size_t len = strip_deleted_suffix(path, strlen(path));
 
   /* INFO: Compared as a whole path component, so a longer name that merely
             ends with it (say "hyos_spawner.bak") is not a match, while a build
@@ -804,22 +798,15 @@ static const struct ZygiskNextRuntime zn_hyos_runtime = {
   .registerModule = zn_hyos_register_module
 };
 
-/* INFO: The runtime is exposed in the hyos_spawner process tree only: the
-         spawner and every app it forks carry the same /proc/self/exe, so this
-         identifies the whole tree, and a registration made in the spawner is
-         inherited by every child. An upgraded binary leaves a " (deleted)"
-         suffix on the link target. */
 /* INFO: Whether the HyperOS Rust runtime is reachable from this process. This
          is the question the ZN runtime API answers, and the one the injector
          needs before it picks its hook set, so both read it from here.
 
-         It is a mapping lookup and not an exe lookup - see
-         zn_hyos_path_is_spawner above. A child forked from the spawner inherits
-         the mapping and therefore answers yes as well, which is exactly what
-         the runtime contract wants: the module registered in the spawner is
-         inherited, and every app it forks answers for the same runtime.
-         An upgraded binary leaves a " (deleted)" suffix on the mapping, which
-         the predicate strips. */
+         The runtime is exposed in the hyos_spawner process tree only: the
+         spawner runs as its own executable and every app it forks carries the
+         same /proc/self/exe, so the executable path identifies the whole tree,
+         and a registration made in the spawner is inherited by every child,
+         which is exactly what the runtime contract wants. */
 static bool zn_hyos_process_is_spawner(void) {
   static int is_spawner = -1;
 

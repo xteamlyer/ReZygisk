@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 /* INFO: Every uid is userId * 100000 + appId, and it is the appId that root
          implementations key off. A later user - Private Space included - shifts
@@ -11,6 +12,26 @@
 
 #define IS_ISOLATED_SERVICE(uid)      \
   (APP_ID(uid) >= 90000)
+
+/* INFO: The kernel appends " (deleted)" to the link target of an executable
+         whose file was replaced while it was running - an OTA is the usual
+         cause - and the suffix is part of the target, so a plain comparison
+         against the expected path would miss it. Every /proc/<pid>/exe reader in
+         this tree has to drop it first, and the suffix, the memcmp and the
+         arithmetic behind it were written out once per reader. Returns the
+         length to terminate the path at. The test is strict so that a path
+         consisting of the suffix alone cannot come back empty; a real link
+         target is absolute and never reaches that case. */
+static inline size_t strip_deleted_suffix(const char *path, size_t len) {
+  static const char kDeletedSuffix[] = " (deleted)";
+  size_t suffix_len = sizeof(kDeletedSuffix) - 1;
+
+  if (len > suffix_len && memcmp(path + len - suffix_len, kDeletedSuffix, suffix_len) == 0) {
+    return len - suffix_len;
+  }
+
+  return len;
+}
 
 struct kernel_version {
   uint8_t major;
