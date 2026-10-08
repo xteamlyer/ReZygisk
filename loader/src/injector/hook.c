@@ -11,7 +11,6 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <limits.h>
-#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -22,7 +21,6 @@
 #include <plti.h>
 
 #include "daemon.h"
-#include "hiding.h"
 #include "misc.h"
 #include "module.h"
 
@@ -32,9 +30,6 @@
 #include "unmount.h"
 #include "zn_api.h"
 #include "zn_loader.h"
-
-void *start_addr = NULL;
-size_t block_size = 0;
 
 /* INFO: Flag indices */
 enum {
@@ -350,18 +345,18 @@ DCL_HOOK_FUNC(void, _ZNK18FileDescriptorInfo14ReopenOrDetach, void *_this, void 
 static void unhook_functions(void);
 /* INFO: The teardown runs here, on the first pthread_attr_setstacksize of the
            main thread, because that is the last moment before the application
-           executes code of its own: the hooks come off and the mappings this
-           process was never meant to name stop naming anything, before there is
-           an application around to look.
+           executes code of its own: the hooks come off and this process stops
+           reaching the modules it was never meant to carry, before there is an
+           application around to look.
 
-         The library itself stays mapped, as an anonymous copy of itself. The
-           target's linker loaded it, so the linker holds a module entry for it,
-           and unmapping the block left that entry describing memory that is no
-           longer there - which is how a detector walking the module list ended
-           up reading a header that had been unmapped underneath it and taking
-           the application down with it. A copy at the same address keeps every
-           pointer the linker holds valid, and the name is gone from the maps
-           listing all the same.
+         The library is left where the linker put it. Unmapping it is not an
+           option: the linker holds a module entry for the block, and an entry
+           describing memory that is no longer mapped is what takes down the
+           next walk of the module list. Replacing the mapping with an anonymous
+           copy of itself was tried for the same reason and given up - it buys
+           nothing the entry already has, and costs every process a private copy
+           of a live library. What the process still names inside itself is the
+           mount revert's business, which is where the rest of the hiding is.
 */
 DCL_HOOK_FUNC(int, pthread_attr_setstacksize, void *target, size_t size) {
   int res = old_pthread_attr_setstacksize((pthread_attr_t *)target, size);
@@ -390,20 +385,12 @@ DCL_HOOK_FUNC(int, pthread_attr_setstacksize, void *target, size_t size) {
       return res;
     }
 
-    /* INFO: Modules might use libzygisk.so after postAppSpecialize. We can only
-               free it when we are really before hiding it. */
+    /* INFO: Modules might use libzygisk.so after postAppSpecialize, so the
+               array is only released once the hooks are off. */
     free(zygisk_modules);
     zygisk_modules = NULL;
 
     plti_deinit(&plti_ctx);
-
-    /* INFO: Hiding rather than unmapping, and it is the last of the teardown
-               on purpose: the block this code runs from is replaced with a copy
-               of itself, so the mapping that comes back is anonymous while the
-               bytes and the permissions are the ones already executing. */
-    if (!hide_module_maps()) LOGW("Failed to hide the module mappings");
-
-    LOGD("kept libzygisk.so mapped at %p with size %zu", start_addr, block_size);
   }
 
   return res;
@@ -1293,23 +1280,6 @@ static void rz_app_specialize_pre(struct zygisk_context *ctx) {
 
 static void rz_app_specialize_post(struct zygisk_context *ctx) {
   rz_run_modules_post(ctx);
-
-  /* INFO: Neither is a mount, so neither is reachable from the revert, and
-            both are only final once the modules have run: the libraries they
-            left mapped are known by then, and the mount table this process
-            hands to the application is already the cleaned one.
-
-            The condition is the revert flag and not the denylist bit: a module
-            can ask for the same revert on a process the denylist does not
-            name, and leaving that process's libraries and mount line behind
-            would be half a hide - a clearer signal than either state alone. */
-  if (FLAG_GET(ctx, DO_REVERT_UNMOUNT)) {
-    refresh_mount_line();
-
-    /* INFO: Nothing was loaded into this process, so the scan could only come
-              back empty and it is the whole cost of asking. */
-    if (zygisk_module_length > 0 || zn_loaded_library_count() > 0) hide_module_maps();
-  }
 
   /* INFO: HyperOS runtime dispatch. Modules registered through
              getRuntime().registerModule in the spawner (and inherited by

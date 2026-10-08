@@ -50,10 +50,4 @@ struct maps_info *parse_maps(const char *pid);
 
 void free_maps(struct maps_info *maps);
 
-/* INFO: parse_maps_safe without the table: the entries are handed to the
-         visitor as they are read, so looking for a few of them costs nothing
-         for the thousands that are not. Returns false when the maps could not
-         be read at all. */
-bool scan_maps_safe(const char *pid, maps_visitor visit, void *userdata);
-
 #endif /* MISC_H */

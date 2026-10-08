@@ -218,9 +218,9 @@ typedef bool (*maps_stream_fn)(FILE *fp, void *userdata);
 
 /* INFO: Opening /proc/.../maps leads to its access time being updated. This
            function bypasses this by reading the maps from a forked process,
-           which is the same memory topology anyway. It backs both
-           parse_maps_safe() and scan_maps_safe(), which are what callers
-           wanting that property should use.
+           which is the same memory topology anyway. It backs
+           parse_maps_safe(), which is what callers wanting that property
+           should use.
 */
 static bool with_maps_stream(const char *pid, maps_stream_fn callback, void *userdata) {
   int sockets[2];
@@ -347,23 +347,6 @@ struct maps_info *parse_maps_safe(const char *pid) {
   if (!with_maps_stream(pid, collect_maps, &info)) return NULL;
 
   return info;
-}
-
-struct scan_state {
-  maps_visitor visit;
-  void *userdata;
-};
-
-static bool walk_maps(FILE *fp, void *userdata) {
-  struct scan_state *state = userdata;
-
-  return walk_maps_stream(fp, state->visit, state->userdata);
-}
-
-bool scan_maps_safe(const char *pid, maps_visitor visit, void *userdata) {
-  struct scan_state state = { .visit = visit, .userdata = userdata };
-
-  return with_maps_stream(pid, walk_maps, &state);
 }
 
 /* INFO: The plain read: it updates the maps access time, which a process that
