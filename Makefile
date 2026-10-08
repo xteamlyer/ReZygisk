@@ -29,16 +29,10 @@ SHARED_SCRIPTS = module/src/verify.sh module/src/rezygisk.sh
 
 # INFO: The SELinux rules differ between the flavours only in the name of the
 #       root daemon's domain, so they are kept as a single template and
-#       substituted here instead of being maintained as two copies. The
-#       generated files are build output: they live under $(BUILD_DIR), not in
-#       module/src, so there is exactly one thing to edit.
+#       substituted into the module tree at build time instead of being
+#       maintained as two copies under module/src. One thing to edit, one
+#       thing to review.
 SEPOLICY_TEMPLATE = module/src/sepolicy.rule.in
-
-# INFO: The name carries the build type as well as the flavour because "make
-#       all -j" runs the debug and release trees concurrently and they share
-#       one BUILD_DIR per flavour - a single file would be written twice at
-#       once, and the loser would copy a truncated rule file into its archive.
-SEPOLICY_OUT = $(BUILD_DIR)/sepolicy-$(ROOT_IMPL)-$(BUILD_TYPE).rule
 
 # INFO: ROOT_IMPL names the build flavour, which is not the domain name: the
 #       APatch flavour still runs under the "su" context.
@@ -47,18 +41,12 @@ ifeq ($(ROOT_IMPL),apatch)
 	SEPOLICY_ROOT_DOMAIN = su
 endif
 
-$(SEPOLICY_OUT): $(SEPOLICY_TEMPLATE) Makefile
-	@mkdir -p $(dir $@)
-	@sed 's/@ROOT_DOMAIN@/$(SEPOLICY_ROOT_DOMAIN)/g' $< > $@
-
 ifeq ($(ROOT_IMPL),apatch)
-	SEPOLICY_SRC = $(SEPOLICY_OUT)
 	CUSTOMIZE_SRC = module/src/apatch/customize.sh
 	MODULE_PROP_SRC = module/src/apatch/module.prop
 	UNINSTALL_SRC = module/src/apatch/uninstall.sh
 	MODULE_SCRIPTS = $(SHARED_SCRIPTS)
 else
-	SEPOLICY_SRC = $(SEPOLICY_OUT)
 	CUSTOMIZE_SRC = module/src/customize.sh
 	MODULE_PROP_SRC = module/src/module.prop
 	UNINSTALL_SRC = module/src/uninstall.sh
@@ -127,14 +115,14 @@ $(ZYGISKD_DONE): $(ZYGISKD_INPUTS)
 	@mkdir -p $(dir $@)
 	@touch $@
 
-$(MODULE_DONE): $(LOADER_DONE) $(ZYGISKD_DONE) $(SEPOLICY_OUT) $(MODULE_INPUTS)
+$(MODULE_DONE): $(LOADER_DONE) $(ZYGISKD_DONE) $(MODULE_INPUTS)
 
 	@rm -rf $(MODULE_OUT)
 	@mkdir -p $(MODULE_OUT)
 
 	@echo "Copying module files..."
 	@cp $(MODULE_SCRIPTS) $(MODULE_OUT)/
-	@cp $(SEPOLICY_SRC) $(MODULE_OUT)/sepolicy.rule
+	@sed 's/@ROOT_DOMAIN@/$(SEPOLICY_ROOT_DOMAIN)/g' $(SEPOLICY_TEMPLATE) > $(MODULE_OUT)/sepolicy.rule
 
 	@echo "Customizing module.prop..."
 	@sed -e 's/$${moduleId}/$(MODULE_ID)/g'                                             \
