@@ -78,8 +78,13 @@ MODULE_DONE = $(BUILD_DIR)/module-$(BUILD_TYPE).done
 LOADER_INPUTS = common.mk loader/Makefile \
         $(shell find loader/src -type f | sort)
 
+# INFO: zygiskd compiles against the headers in loader/src/include (see the
+#       -I in zygiskd/Makefile), so a change there has to rebuild it as well.
+#       Only the headers are listed: the rest of loader/src reaches zygiskd
+#       through LOADER_DONE, which already depends on all of it.
 ZYGISKD_INPUTS = common.mk zygiskd/Makefile \
-        $(shell find zygiskd/src -type f | sort)
+        $(shell find zygiskd/src -type f | sort) \
+        $(shell find loader/src/include -type f 2>/dev/null | sort)
 
 MODULE_INPUTS = scripts/sign.py \
         $(shell find module/src -type f | sort) \
