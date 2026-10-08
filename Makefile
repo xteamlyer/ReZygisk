@@ -33,7 +33,12 @@ SHARED_SCRIPTS = module/src/verify.sh module/src/rezygisk.sh
 #       generated files are build output: they live under $(BUILD_DIR), not in
 #       module/src, so there is exactly one thing to edit.
 SEPOLICY_TEMPLATE = module/src/sepolicy.rule.in
-SEPOLICY_OUT = $(BUILD_DIR)/sepolicy-$(ROOT_IMPL).rule
+
+# INFO: The name carries the build type as well as the flavour because "make
+#       all -j" runs the debug and release trees concurrently and they share
+#       one BUILD_DIR per flavour - a single file would be written twice at
+#       once, and the loser would copy a truncated rule file into its archive.
+SEPOLICY_OUT = $(BUILD_DIR)/sepolicy-$(ROOT_IMPL)-$(BUILD_TYPE).rule
 
 # INFO: ROOT_IMPL names the build flavour, which is not the domain name: the
 #       APatch flavour still runs under the "su" context.
@@ -122,7 +127,7 @@ $(ZYGISKD_DONE): $(ZYGISKD_INPUTS)
 	@mkdir -p $(dir $@)
 	@touch $@
 
-$(MODULE_DONE): $(LOADER_DONE) $(ZYGISKD_DONE) $(MODULE_INPUTS)
+$(MODULE_DONE): $(LOADER_DONE) $(ZYGISKD_DONE) $(SEPOLICY_OUT) $(MODULE_INPUTS)
 
 	@rm -rf $(MODULE_OUT)
 	@mkdir -p $(MODULE_OUT)
