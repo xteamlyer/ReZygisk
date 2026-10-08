@@ -303,6 +303,12 @@ bool inject_on_main(int pid, const char *lib_path, uintptr_t libc_init_target, u
     return false;
   }
 
+  /* INFO: Restore from `backup`, not from `regs`: every remote call has been
+             mutating `regs` (arguments, SP, and the BTYPE field remote_call
+             clears), and the tracee has to resume with the register state it
+             was interrupted in - the target validates its own BTI pad once it
+             runs again. Only the instruction pointer is redirected, back to the
+             real __libc_init now that the GOT slot holds it again. */
   backup.REG_IP = (long)libc_init_target;
   if (!set_regs(pid, &backup)) return false;
 

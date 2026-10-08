@@ -21,6 +21,12 @@
 
 #include "utils.h"
 
+/* INFO: The branch the CPU believes it took, kept in PSTATE bits 10-11. A value
+         of 0b11 means the last branch was an indirect jump, and a BTI landing
+         pad rejects that: see the two places that clear it before redirecting
+         the tracee. */
+#define AARCH64_PSTATE_BTYPE_MASK (3ull << 10)
+
 ssize_t write_proc(int pid, uintptr_t remote_addr, const void *buf, size_t len) {
   LOGV("write to remote addr %" PRIxPTR " size %zu", remote_addr, len);
 
@@ -181,6 +187,19 @@ void align_stack(struct user_regs_struct *regs, long preserve) {
 uintptr_t remote_call(int pid, struct user_regs_struct *regs, uintptr_t func_addr, uintptr_t return_addr, long *args, size_t args_size) {
   align_stack(regs, 0);
 
+  /* INFO: BTYPE so jumping into the callee is accepted by the CPU. The
+             tracer intercepted the target on an indirect branch - the linker's
+             jump to __libc_init through the poisoned GOT slot - which left
+             BTYPE at 0b11 (indirect jump). Every bionic library on a BTI
+             enabled device starts with a BTI landing pad that only accepts
+             0b01 (direct call) or 0b10 (indirect call); arriving with 0b11
+             makes the CPU treat the branch as a JOP attempt and raise SIGILL
+             instead of running the function.
+
+             remote_syscall clears the same field for the vDSO svc a few lines
+             below; this is the equivalent for an ordinary function call. */
+  regs->pstate &= ~AARCH64_PSTATE_BTYPE_MASK;
+
   LOGV("calling remote function %" PRIxPTR " args %zu", func_addr, args_size);
 
   for (size_t i = 0; i < args_size; i++) {
@@ -230,6 +249,15 @@ uintptr_t remote_call(int pid, struct user_regs_struct *regs, uintptr_t func_add
     parse_status(status, status_str, sizeof(status_str));
 
     LOGE("stopped by other reason %s at addr %p", status_str, (void *)regs->REG_IP);
+
+    /* INFO: SIGILL here is almost always a BTI landing pad refusing the
+               branch, which means the BTYPE clear above did not reach the CPU
+               for this call. Say so outright: the generic message above reads
+               like an unrelated stop and sends the reader hunting elsewhere. */
+    if (WSTOPSIG(status) == SIGILL) {
+      LOGE("remote call to %" PRIxPTR " raised SIGILL - branch target rejected (BTYPE %lu)",
+           func_addr, (unsigned long)((regs->pstate >> 10) & 3));
+    }
   }
 
   return 0;
@@ -552,8 +580,6 @@ bool ptrace_poke_uintptr(pid_t pid, uintptr_t addr, uintptr_t value) {
 
   return true;
 }
-
-#define AARCH64_PSTATE_BTYPE_MASK (3ull << 10)
 
 bool wait_for_ptrace_syscall_stop(int pid, int *status) {
   int step_retries = 0;
