@@ -7,6 +7,7 @@
 #include <inttypes.h>
 #include <linux/limits.h>
 
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <link.h>
 #include <signal.h>
@@ -121,19 +122,21 @@ void *find_module_return_addr(struct maps_info *map, const char *suffix) {
   return NULL;
 }
 
-/* INFO: `file` is a bare soname ("libdl.so", "libc.so"), but a maps path is
-           the full location it was loaded from
-           ("/apex/com.android.runtime/lib64/bionic/libdl.so"), so this
-           compares the basename. An exact strcmp against the whole path never
-           matched anything, which left find_func_addr unable to resolve
-           dlopen or dlsym in the target and the injection dead on arrival -
-           with no error anywhere to say so, since the caller only sees a null
-           address.
+/* INFO: Locating a module is needed for two different things - its load base,
+           and the file the local process mapped it from. Both live on the same
+           maps entry, so the search sits here once and the two helpers below
+           are thin wrappers over it.
 
-           The comparison is exact on the basename rather than a prefix match:
-           on Android "libdl.so" also appears as "libdl.so.1", and matching
-           that would hand back the wrong image. */
-void *find_module_base(struct maps_info *map, const char *file) {
+           `file` may be a bare soname ("libdl.so") or the full path a maps
+           entry carries ("/apex/com.android.runtime/lib64/bionic/libdl.so"),
+           so a caller may hand over whichever spelling it holds.
+
+           A maps path is normally the full location a library was loaded from,
+           which is why the basename is compared and not the whole string. The
+           comparison is exact on the basename rather than a prefix match: on
+           Android "libdl.so" also appears as "libdl.so.1", and matching that
+           would hand back the wrong image. */
+static const struct map_entry *find_module_entry(const struct maps_info *map, const char *file) {
   for (size_t i = 0; i < map->length; i++) {
     const struct map_entry  *m = &map->maps[i];
     const char *base_name;
@@ -141,53 +144,93 @@ void *find_module_base(struct maps_info *map, const char *file) {
     if (!m->path || m->offset != 0) continue;
 
     base_name = position_after(m->path, '/');
-    if (strcmp(base_name, file) != 0) continue;
+    if (strcmp(base_name, file) != 0 && strcmp(m->path, file) != 0) continue;
 
-    return (void *)m->start;
+    return m;
   }
 
   return NULL;
 }
 
+void *find_module_base(struct maps_info *map, const char *file) {
+  const struct map_entry *m = find_module_entry(map, file);
+
+  return m ? (void *)m->start : NULL;
+}
+
+/* INFO: The symbol is looked up in the image the local process has `module`
+           mapped from, and the path for that comes from the maps entry itself
+           rather than from the name the caller used.
+
+           That detail is the fix. A caller names a module by bare soname
+           ("libdl.so"), and opening that string is a path lookup: open() knows
+           nothing about the linker's namespaces, so it failed on every call,
+           the image came back NULL and every symbol lookup returned NULL.
+           dlopen_inject() could not resolve even dlopen itself, so the
+           injection never started - and a release build compiles every log
+           away, which is why it did so in silence.
+
+           The local maps entry carries an absolute path, and that path is what
+           gets opened. The offset found this way is the symbol's virtual
+           address inside the image, which is what makes the remote address
+           below valid: both processes run the same file, so the same offset
+           lands on the same code.
+
+           dlopen() by soname is the fallback, for a module that was mapped from
+           something without a path on disk. */
 void *find_func_addr(struct maps_info *local_info, struct maps_info *remote_info, const char *module, const char *func) {
-  uint8_t *local_base = (uint8_t *)find_module_base(local_info, module);
-  if (local_base == NULL) {
-    LOGD("failed to find local base for module %s", module);
+  const struct map_entry *local_entry = find_module_entry(local_info, module);
+  const struct map_entry *remote_entry = find_module_entry(remote_info, module);
+
+  if (local_entry == NULL || remote_entry == NULL) {
+    LOGE("module %s is not mapped in the %s", module, local_entry == NULL ? "tracer" : "target");
 
     return NULL;
   }
 
-  uint8_t *remote_base = (uint8_t *)find_module_base(remote_info, module);
-  if (remote_base == NULL) {
-    LOGD("failed to find remote base for module %s", module);
+  uintptr_t local_base = (uintptr_t)local_entry->start;
+  uintptr_t remote_base = (uintptr_t)remote_entry->start;
+  uintptr_t offset = 0;
+
+  if (local_entry->path != NULL) {
+    ElfImg *mod = ElfImg_create(local_entry->path, (void *)local_base);
+
+    if (mod != NULL) {
+      ElfW(Addr) sym = getSymbAddress(mod, func);
+
+      if (sym != 0) offset = (uintptr_t)sym - local_base;
+
+      ElfImg_destroy(mod);
+    }
+  }
+
+  if (offset == 0) {
+    void *lib = dlopen(module, RTLD_NOW);
+
+    if (lib != NULL) {
+      uintptr_t sym = (uintptr_t)dlsym(lib, func);
+
+      /* INFO: Only the handle is dropped. The libraries asked for here (libdl,
+                 libc) are already resident, so the reference count never
+                 reaches zero and the offset stays valid. */
+      dlclose(lib);
+
+      if (sym != 0) offset = sym - local_base;
+    } else {
+      LOGW("dlopen(%s) failed: %s", module, dlerror());
+    }
+  }
+
+  if (offset == 0) {
+    LOGE("failed to find symbol %s in %s", func, module);
 
     return NULL;
   }
 
-  LOGD("found local base %p remote base %p", local_base, remote_base);
+  uintptr_t addr = remote_base + offset;
 
-  ElfImg *mod = ElfImg_create(module, local_base);
-  if (mod == NULL) {
-    LOGW("failed to create elf img %s", module);
-
-    return NULL;
-  }
-
-  uint8_t *sym = (uint8_t *)getSymbAddress(mod, func);
-  if (sym == NULL) {
-    LOGD("failed to find symbol %s in %s", func, module);
-
-    ElfImg_destroy(mod);
-
-    return NULL;
-  }
-
-  LOGD("found symbol %s in %s: %p", func, module, sym);
-
-  uintptr_t addr = (uintptr_t)(sym - local_base) + (uintptr_t)remote_base;
-  LOGD("addr %p", (void *)addr);
-
-  ElfImg_destroy(mod);
+  LOGD("found remote %s!%s at %p (offset %#zx, local base %p, remote base %p)", module, func,
+       (void *)addr, (size_t)offset, (void *)local_base, (void *)remote_base);
 
   return (void *)addr;
 }
