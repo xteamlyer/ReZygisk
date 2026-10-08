@@ -121,11 +121,27 @@ void *find_module_return_addr(struct maps_info *map, const char *suffix) {
   return NULL;
 }
 
+/* INFO: `file` is a bare soname ("libdl.so", "libc.so"), but a maps path is
+           the full location it was loaded from
+           ("/apex/com.android.runtime/lib64/bionic/libdl.so"), so this
+           compares the basename. An exact strcmp against the whole path never
+           matched anything, which left find_func_addr unable to resolve
+           dlopen or dlsym in the target and the injection dead on arrival -
+           with no error anywhere to say so, since the caller only sees a null
+           address.
+
+           The comparison is exact on the basename rather than a prefix match:
+           on Android "libdl.so" also appears as "libdl.so.1", and matching
+           that would hand back the wrong image. */
 void *find_module_base(struct maps_info *map, const char *file) {
   for (size_t i = 0; i < map->length; i++) {
     const struct map_entry  *m = &map->maps[i];
+    const char *base_name;
+
     if (!m->path || m->offset != 0) continue;
-    if (strcmp(m->path, file) != 0) continue;
+
+    base_name = position_after(m->path, '/');
+    if (strcmp(base_name, file) != 0) continue;
 
     return (void *)m->start;
   }
