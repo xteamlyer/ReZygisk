@@ -89,6 +89,20 @@ enum ptracer_tracing_state {
 
 static enum ptracer_tracing_state tracing_state = TRACING;
 
+/* INFO: The crash-loop guard's memory: how many zygote restarts have been seen
+         back to back, and when the one before the current call was. Only
+         should_stop_inject() below reads them; the injection report resets the
+         count, because a zygote that ran far enough to report back was
+         injected, and the restarts counted before it were therefore not a
+         loop. Declared up here rather than beside that guard because the
+         report is handled above it. */
+static struct timespec last_zygote = {
+  .tv_sec = 0,
+  .tv_nsec = 0
+};
+
+static int count_zygote = 0;
+
 struct rezygiskd_status {
   bool supported;
   bool zygote_injected;
@@ -322,6 +336,18 @@ void rezygiskd_listener_callback() {
 
         status.zygote_injected = true;
 
+        /* INFO: A zygote that ran far enough to report back was injected, so
+                  the restarts counted before it were not a crash loop. Only a
+                  zygote that dies between its exec and this report keeps
+                  counting, which is what the guard is for.
+
+                  WebView's zygote is why this reset exists: it runs as the same
+                  binary and restarts on its own schedule, and it reports back
+                  exactly like the main one - so a device that merely used
+                  WebView often enough was read as a crash loop and had its
+                  injection shut off on it. */
+        count_zygote = 0;
+
         update_status(NULL);
 
         break;
@@ -482,12 +508,6 @@ void rezygiskd_listener_stop() {
          is also what the WebView zygote runs as, and the reboot restarts both. */
 #define SOFT_REBOOT_MARKER ZYGISK_TMP_PATH "/soft-reboot"
 
-static struct timespec last_zygote = {
-  .tv_sec = 0,
-  .tv_nsec = 0
-};
-
-static int count_zygote = 0;
 static bool should_stop_inject() {
   struct timespec now = {};
   clock_gettime(CLOCK_MONOTONIC, &now);
@@ -1334,9 +1354,19 @@ static void append_status_text(char *out, size_t cap) {
     STATUS_APPEND(MONITOR_ABI);
     STATUS_APPEND("-bit: ");
 
-    if (tracing_state != TRACING) STATUS_APPEND("❌");
-    else if (status.zygote_injected && status.daemon_running) STATUS_APPEND("✅");
-    else STATUS_APPEND("⚠️");
+    if (tracing_state == TRACING) {
+      if (status.zygote_injected && status.daemon_running) STATUS_APPEND("✅");
+      else STATUS_APPEND("⚠️");
+    } else if (status.zygote_injected) {
+      /* INFO: The injection is a one-shot that happens inside the zygote, and
+                a monitor that stopped afterwards does not undo it - every
+                application forked since already carries it, and the modules
+                keep working. Reporting a failure here is what made a working
+                session look broken on the manager's card. */
+      STATUS_APPEND("✅ injected (monitor paused)");
+    } else {
+      STATUS_APPEND("❌");
+    }
 
     if (!status.daemon_running) {
       if (status.daemon_error_info) {
