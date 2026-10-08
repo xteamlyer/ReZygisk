@@ -32,13 +32,13 @@ NDK_VERSION ?= 29.0.13113456
 ANDROID_HOME ?= $(HOME)/Android/Sdk
 NDK_PATH ?= $(ANDROID_HOME)/ndk/$(NDK_VERSION)
 TOOLCHAIN = $(NDK_PATH)/toolchains/llvm/prebuilt/linux-x86_64
-SYSROOT = $(TOOLCHAIN)/sysroot
 
 ifeq ($(TERMUX_VERSION),)
 	CC = $(TOOLCHAIN)/bin/clang
 	CXX = $(TOOLCHAIN)/bin/clang++
 	AR = $(TOOLCHAIN)/bin/llvm-ar
 	STRIP = $(TOOLCHAIN)/bin/llvm-strip
+	SYSROOT = $(TOOLCHAIN)/sysroot
 else
 	CC = clang
 	CXX = clang++
@@ -50,8 +50,13 @@ BUILD_DIR ?= $(ROOT_DIR)/build
 
 TARGET_arm64-v8a = aarch64-linux-android$(API_LEVEL)
 
-CC_ARCH = $(CC) --target=$(TARGET_$(ARCH)) --sysroot=$(SYSROOT)
-CXX_ARCH = $(CXX) --target=$(TARGET_$(ARCH)) --sysroot=$(SYSROOT)
+ifneq ($(SYSROOT),)
+	CC_ARCH = $(CC) --target=$(TARGET_$(ARCH)) --sysroot=$(SYSROOT)
+	CXX_ARCH = $(CXX) --target=$(TARGET_$(ARCH)) --sysroot=$(SYSROOT)
+else
+	CC_ARCH = $(CC) --target=$(TARGET_$(ARCH))
+	CXX_ARCH = $(CXX) --target=$(TARGET_$(ARCH))
+endif
 
 NDK_CFLAGS = -DANDROID -fdata-sections -ffunction-sections -funwind-tables \
 	-fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 \
