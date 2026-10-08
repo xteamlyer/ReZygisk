@@ -171,6 +171,11 @@ def main():
 
     return
 
+  if len(sys.argv) < 4:
+    print("Usage: sign.py <module_dir> <private_key> <public_key>")
+
+    sys.exit(1)
+
   module_dir = sys.argv[1]
   private_key_path = sys.argv[2]
   public_key_path = sys.argv[3]

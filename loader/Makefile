@@ -151,13 +151,21 @@ clean:
 	rm -rf $(BUILD_DIR)/obj/$(BUILD_TYPE)/dobby
 	rm -rf $(BUILD_DIR)/obj/$(BUILD_TYPE)/lsplt
 
-$(PLTI_LIB):
+# INFO: The build is delegated to a sub-make, so this one cannot see the
+#       sources it reads. Without a prerequisite the library would be built
+#       once and then taken as up to date forever, and a later submodule update
+#       would link a stale .a into libzygisk. Dobby and LSPlt below list their
+#       sources for the same reason.
+PLTI_INPUTS = $(shell find $(PLTI_DIR) -type f 2>/dev/null | sort)
+CSOLOADER_INPUTS = $(shell find $(CSOLOADER_DIR) -type f 2>/dev/null | sort)
+
+$(PLTI_LIB): $(PLTI_INPUTS)
 	@mkdir -p $(dir $@)
 	$(MAKE) -C $(PLTI_DIR) BUILD_TYPE=$(BUILD_TYPE) ARCH=$(ARCH) \
 		NDK_PATH=$(NDK_PATH) API_LEVEL=$(API_LEVEL)              \
 		out=$(BUILD_DIR)/obj/$(BUILD_TYPE)/plti/$(ARCH)
 
-$(CSOLOADER_LIB):
+$(CSOLOADER_LIB): $(CSOLOADER_INPUTS)
 	@mkdir -p $(dir $@)
 	$(MAKE) -C $(CSOLOADER_DIR) BUILD_TYPE=$(BUILD_TYPE) ARCH=$(ARCH) \
 		NDK_PATH=$(NDK_PATH) API_LEVEL=$(API_LEVEL)                   \

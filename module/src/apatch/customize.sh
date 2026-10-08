@@ -78,6 +78,11 @@ extract "$ZIPFILE" 'post-fs-data.sh' "$MODPATH"
 extract "$ZIPFILE" 'uninstall.sh'    "$MODPATH"
 extract "$ZIPFILE" 'rezygisk.sh' "/data/adb/post-fs-data.d/"
 
+# INFO: Everything in the archive is 0644 and extract does not bring an
+#         executable bit in from the zip, while the stage directory is only
+#         run when the script carries one.
+chmod 0755 "$MODPATH/post-fs-data.sh" "/data/adb/post-fs-data.d/rezygisk.sh"
+
 # INFO: The KernelSU flavour copies rezygisk.sh into post-mount.d as well, a
 #         stage the APatch flavour never uses. A switch from one flavour to
 #         the other would otherwise leave that copy running at every boot,

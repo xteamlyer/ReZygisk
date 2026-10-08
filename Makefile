@@ -147,7 +147,7 @@ $(MODULE_DONE): $(LOADER_DONE) $(ZYGISKD_DONE) $(MODULE_INPUTS)
 	@cp $(OBJ_DIR)/loader/$(ARCH)/stripped/libzygisk.so $(MODULE_OUT)/lib/$(ARCH)/libzygisk.so
 	@cp $(OBJ_DIR)/loader/$(ARCH)/stripped/libzygisk_ptrace.so $(MODULE_OUT)/lib/$(ARCH)/libzygisk_ptrace.so
 
-	@if [ -f module/private_key ]; then                                             \
+	@if [ -f module/private_key ] && [ -f module/public_key ]; then                 \
 		echo "Signing module...";                                                   \
 		python3 scripts/sign.py $(MODULE_OUT) module/private_key module/public_key; \
 	else                                                                            \
@@ -172,6 +172,6 @@ installAndReboot: install
 	$(REBOOT_CMD)
 
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf $(CURDIR)/build $(CURDIR)/build-apatch
 	$(MAKE) -C loader clean BUILD_DIR=$(BUILD_DIR)
 	$(MAKE) -C zygiskd clean BUILD_DIR=$(BUILD_DIR)

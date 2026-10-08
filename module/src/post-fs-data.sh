@@ -7,15 +7,20 @@ MODDIR=${0%/*}
 cd "$MODDIR"
 
 create_sys_perm() {
-  mkdir -p $1
-  chmod 555 $1
-  chcon u:object_r:system_file:s0 $1
+  mkdir -p "$1"
+  chmod 555 "$1"
+  chcon u:object_r:system_file:s0 "$1"
 }
 
 export TMP_PATH=/data/adb/rezygisk
 rm -rf "$TMP_PATH"
 
-create_sys_perm $TMP_PATH
+# INFO: Guarded because a kernel whose policy does not carry the label would
+#         make chcon return non-zero, and `set -e` would then abort this script
+#         before the monitor is started - the whole injection would go down
+#         over the label of a directory. The rezygisk.sh call below is guarded
+#         for the same reason.
+create_sys_perm "$TMP_PATH" || true
 
 # INFO: rezygisk.sh in post-fs-data.d resets module.prop from its pristine
 #         .bak copy. This explicit call looks redundant with the global

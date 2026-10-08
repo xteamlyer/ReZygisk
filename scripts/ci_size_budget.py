@@ -31,10 +31,13 @@ def main(argv):
     roots = [root.rstrip("/\\") for root in argv[1:]]
 
     failed = False
+    matched = 0
 
     for path, limit in sorted(BUDGET_KIB.items()):
         if roots and not any(path.startswith(root + os.sep) or path.startswith(root + "/") for root in roots):
             continue
+
+        matched += 1
 
         if not os.path.exists(path):
             print(f"MISSING                {path}")
@@ -47,6 +50,13 @@ def main(argv):
         failed = failed or over
 
         print(f"{actual:6} KiB / {limit:6} KiB  {'OVER' if over else 'ok  '}  {path}")
+
+    # INFO: A root that matches nothing would otherwise walk away with an empty
+    #       loop and a success, and the step would look like it checked
+    #       something. A typo in the build directory must not pass silently.
+    if roots and matched == 0:
+        print(f"No budget entry matches the given root(s): {', '.join(roots)}")
+        failed = True
 
     return 1 if failed else 0
 

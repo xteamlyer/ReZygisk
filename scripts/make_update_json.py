@@ -20,6 +20,21 @@ import re
 import subprocess
 
 
+def git_output(args, required=True):
+    """Runs git and returns its stdout, trimmed.
+
+    INFO: A failing git used to be invisible: `describe` without a tag and
+          `log` in a shallow clone both answer with empty output, and the run
+          went on to write a file with an empty changelog and a silent
+          fallback range. The required calls now stop it instead.
+    """
+    result = subprocess.run(["git"] + args, capture_output=True, text=True)
+    if required and result.returncode != 0:
+        raise SystemExit(f"git {' '.join(args)} failed ({result.returncode}): {result.stderr.strip()}")
+
+    return result.stdout.strip()
+
+
 # INFO: Lexicographic order would pick v2.1.9 over v2.1.10, so the newest
 #       archive is the one with the highest versionCode.
 def archive_version_code(path):
@@ -48,24 +63,19 @@ def main():
     fields = name[: -len("-release.zip")].split("-")
     version, version_code = fields[-3], fields[-2]
 
-    previous = subprocess.run(
-        ["git", "describe", "--tags", "--abbrev=0"],
-        capture_output=True, text=True).stdout.strip()
+    # INFO: No tag yet is an expected answer, not a failure. A shallow clone is
+    #       the case that has to be noticed, and it is the log below that
+    #       reports it.
+    previous = git_output(["describe", "--tags", "--abbrev=0"], required=False)
 
     revisions = f"{previous}..HEAD" if previous else "-50"
-    commits = subprocess.run(
-        ["git", "log", "--pretty=- %s", revisions],
-        capture_output=True, text=True).stdout.strip()
+    commits = git_output(["log", "--pretty=- %s", revisions])
 
-    head = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        capture_output=True, text=True).stdout.strip()
+    head = git_output(["rev-parse", "HEAD"])
 
     # INFO: The zipUrl points at a release named exactly after the version;
     #       warn while it is still cheap to notice.
-    tag = subprocess.run(
-        ["git", "rev-parse", "-q", "--verify", f"refs/tags/{version}"],
-        capture_output=True, text=True).stdout.strip()
+    tag = git_output(["rev-parse", "-q", "--verify", f"refs/tags/{version}"], required=False)
 
     if not tag:
         print(f"WARNING: tag {version} does not exist yet; "

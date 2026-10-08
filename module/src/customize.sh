@@ -96,6 +96,13 @@ extract "$ZIPFILE" 'post-fs-data.sh' "$MODPATH"
 extract "$ZIPFILE" 'uninstall.sh'    "$MODPATH"
 extract "$ZIPFILE" 'rezygisk.sh' "/data/adb/post-fs-data.d/"
 
+# INFO: Everything in the archive is 0644 and extract does not bring an
+#         executable bit in from the zip. KernelSU runs a stage script only
+#         when the file carries one (module.rs, is_executable), so the two that
+#         land in a stage directory are marked here - the same reason
+#         late-load.sh and uninstall.sh are chmodded below.
+chmod 0755 "$MODPATH/post-fs-data.sh" "/data/adb/post-fs-data.d/rezygisk.sh"
+
 # INFO: Installed to late-load.d as well, not just post-fs-data.d. A late-loaded
 #         KernelSU (the temporary-root / jailbreak flow) is injected after
 #         post-fs-data has already passed, so post-fs-data.d is never reached
@@ -126,6 +133,7 @@ chmod 0755 "/data/adb/late-load.d/late-load.sh"
 #  - https://github.com/tiann/KernelSU/blob/6615068a987a12bbc6a3ad272b285cec7f594964/userspace/ksud/src/init_event.rs#L212-L217
 mkdir -p /data/adb/post-mount.d
 cp "/data/adb/post-fs-data.d/rezygisk.sh" "/data/adb/post-mount.d/rezygisk.sh"
+chmod 0755 "/data/adb/post-mount.d/rezygisk.sh"
 
 cp "$MODPATH/module.prop" "$MODPATH/module.prop.bak"
 
@@ -148,9 +156,13 @@ ui_print "- Setting permissions"
 set_perm_recursive "$MODPATH/bin" 0 0 0755 0755
 set_perm_recursive "$MODPATH/lib64" 0 0 0755 0644 u:object_r:system_lib_file:s0
 
-# If Huawei's Maple is enabled, system_server is created with a special way which is out of Zygisk's control
-HUAWEI_MAPLE_ENABLED=$(grep_prop ro.maple.enable)
-if [ "$HUAWEI_MAPLE_ENABLED" == "1" ]; then
+# INFO: If Huawei's Maple is enabled, system_server is created in a way that is
+#         out of Zygisk's control, so the property is turned off for this
+#         module's boot. It is read through getprop: grep_prop looks a property
+#         up in a prop file and reads stdin when it is given none, which is why
+#         this check never fired.
+HUAWEI_MAPLE_ENABLED=$(getprop ro.maple.enable)
+if [ "$HUAWEI_MAPLE_ENABLED" = "1" ]; then
   ui_print "- Add ro.maple.enable=0"
   echo "ro.maple.enable=0" >>"$MODPATH/system.prop"
 fi
