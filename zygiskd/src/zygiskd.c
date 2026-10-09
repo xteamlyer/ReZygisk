@@ -959,6 +959,53 @@ static struct zn_cached_module *zn_parse_cache_get(const char *dir_name, const c
          would be. */
 #define ZN_PLAN_DEDUP_MAX 32
 
+/* INFO: The listing of the module directory, rebuilt in place when the
+         directory is gone from the table or its identity changed; otherwise it
+         stays as it is. Kept across calls because it is read on every fork. */
+static bool refresh_module_dir_cache(const struct stat *dir_st) {
+  if (zn_dir_valid && stat_identity_same(dir_st, &zn_dir_st)) return true;
+
+  for (size_t i = 0; i < zn_dir_cache_len; i++) {
+    free(zn_dir_cache[i].name);
+  }
+
+  zn_dir_cache_len = 0;
+
+  DIR *dir = opendir(ZYGISK_MODULES_DIR);
+  if (dir == NULL) {
+    LOGE("Failed opening %s: %s", ZYGISK_MODULES_DIR, strerror(errno));
+
+    zn_dir_valid = false;
+
+    return false;
+  }
+
+  struct dirent *entry;
+  while ((entry = readdir(dir)) != NULL) {
+    if (entry->d_type != DT_DIR && entry->d_type != DT_UNKNOWN) continue;
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0 || strcmp(entry->d_name, "rezygisk") == 0) continue;
+
+    struct zn_dir_entry *tmp = realloc(zn_dir_cache, (zn_dir_cache_len + 1) * sizeof(struct zn_dir_entry));
+    if (tmp == NULL) {
+      LOGE("Failed growing the module directory listing");
+
+      break;
+    }
+
+    zn_dir_cache = tmp;
+    zn_dir_cache[zn_dir_cache_len].name = strdup(entry->d_name);
+    if (zn_dir_cache[zn_dir_cache_len].name == NULL) break;
+
+    zn_dir_cache_len++;
+  }
+
+  closedir(dir);
+  zn_dir_st = dir_st;
+  zn_dir_valid = true;
+
+  return true;
+}
+
 static bool collect_zn_modules(const char *process_name, const char *process_path, struct ZnModuleFile **out, size_t *out_len) {
   *out = NULL;
   *out_len = 0;
@@ -978,47 +1025,7 @@ static bool collect_zn_modules(const char *process_name, const char *process_pat
     return false;
   }
 
-  /* INFO: Rebuilt in place when the directory is gone from the table or its
-            identity changed; otherwise the listing stays as it is. */
-  if (!zn_dir_valid || !stat_identity_same(&dir_st, &zn_dir_st)) {
-    for (size_t i = 0; i < zn_dir_cache_len; i++) {
-      free(zn_dir_cache[i].name);
-    }
-
-    zn_dir_cache_len = 0;
-
-    DIR *dir = opendir(ZYGISK_MODULES_DIR);
-    if (dir == NULL) {
-      LOGE("Failed opening %s: %s", ZYGISK_MODULES_DIR, strerror(errno));
-
-      zn_dir_valid = false;
-
-      return false;
-    }
-
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL) {
-      if (entry->d_type != DT_DIR && entry->d_type != DT_UNKNOWN) continue;
-      if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0 || strcmp(entry->d_name, "rezygisk") == 0) continue;
-
-      struct zn_dir_entry *tmp = realloc(zn_dir_cache, (zn_dir_cache_len + 1) * sizeof(struct zn_dir_entry));
-      if (tmp == NULL) {
-        LOGE("Failed growing the module directory listing");
-
-        break;
-      }
-
-      zn_dir_cache = tmp;
-      zn_dir_cache[zn_dir_cache_len].name = strdup(entry->d_name);
-      if (zn_dir_cache[zn_dir_cache_len].name == NULL) break;
-
-      zn_dir_cache_len++;
-    }
-
-    closedir(dir);
-    zn_dir_st = dir_st;
-    zn_dir_valid = true;
-  }
+  if (!refresh_module_dir_cache(&dir_st)) return false;
 
   for (size_t i = 0; i < zn_dir_cache_len; i++) {
     const char *entry_name = zn_dir_cache[i].name;
