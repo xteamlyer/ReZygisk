@@ -399,8 +399,19 @@ DCL_HOOK_FUNC(int, pthread_attr_setstacksize, void *target, size_t size) {
     /* INFO: Hiding rather than unmapping, and it is the last of the teardown
                on purpose: the block this code runs from is replaced with a copy
                of itself, so the mapping that comes back is anonymous while the
-               bytes and the permissions are the ones already executing. */
-    if (!hide_module_maps()) LOGW("Failed to hide the module mappings");
+               bytes and the permissions are the ones already executing.
+
+               Skipped when the specialize path already did it here. That path
+               runs after the modules have had their callbacks, so every library
+               they mapped is covered by it; a second pass could only read the
+               whole map table - through a fork, so the read leaves no mark - to
+               find nothing, which is the most expensive thing either pass does.
+               A process that path never reached still gets this one. */
+    if (module_maps_hidden()) {
+      LOGD("Module mappings were already hidden at specialize time");
+    } else if (!hide_module_maps()) {
+      LOGW("Failed to hide the module mappings");
+    }
 
     LOGD("kept libzygisk.so mapped at %p with size %zu", start_addr, block_size);
   }

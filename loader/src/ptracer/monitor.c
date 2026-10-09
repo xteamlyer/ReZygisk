@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <dirent.h>
+#include <fcntl.h>
 #include <string.h>
 #include <time.h>
 #include <errno.h>
@@ -883,17 +884,24 @@ static pid_t parent_of(int pid) {
   char path[PATH_MAX];
   snprintf(path, sizeof(path), "/proc/%d/stat", pid);
 
-  FILE *stat = fopen(path, "r");
-  if (stat == NULL) return 0;
+  /* INFO: open/read rather than stdio on purpose. This is called once for
+            every entry under /proc by the scan that looks for a target which a
+            normal boot does not have, so it is called to read one bounded line
+            a few hundred times and find nothing. fopen, fgets and fclose
+            allocate and release a FILE and its buffer on each of those calls;
+            the line wanted here is at the front of the file either way, and a
+            short read still leaves the closing paren in place or returns 0. */
+  int fd = open(path, O_RDONLY | O_CLOEXEC);
+  if (fd == -1) return 0;
 
   char line[512];
-  if (fgets(line, sizeof(line), stat) == NULL) {
-    fclose(stat);
+  ssize_t got = TEMP_FAILURE_RETRY(read(fd, line, sizeof(line) - 1));
 
-    return 0;
-  }
+  close(fd);
 
-  fclose(stat);
+  if (got <= 0) return 0;
+
+  line[got] = '\0';
 
   char *rparen = strrchr(line, ')');
   if (rparen == NULL) return 0;

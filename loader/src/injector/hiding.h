@@ -17,4 +17,14 @@
 
 bool hide_module_maps(void);
 
+/* INFO: Whether hide_module_maps() has already run in this process.
+         The specialize path hides once, after the modules have run, and the
+         teardown hides again as its last step. The second call has nothing
+         left to act on in the processes the first one reached - the entries it
+         worked on are anonymous now - and finding that out costs a fork and a
+         walk of the whole table, which is the most expensive thing either call
+         does. The teardown asks this first; a process where the specialize path
+         did not run still gets its one pass. */
+bool module_maps_hidden(void);
+
 #endif /* HIDING_H */

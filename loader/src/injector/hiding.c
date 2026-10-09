@@ -185,6 +185,16 @@ static bool hide_map(struct hide_target *target) {
   return true;
 }
 
+/* INFO: Set once the process's own mappings have been replaced, so the teardown
+         can skip a pass that could only come back empty. Per process, like
+         everything else here: a forked application does not inherit the
+         replacement, it inherits the mappings that were replaced. */
+static bool module_maps_were_hidden = false;
+
+bool module_maps_hidden(void) {
+  return module_maps_were_hidden;
+}
+
 bool hide_module_maps(void) {
   struct stat data;
   if (stat("/data", &data) == -1) {
@@ -231,6 +241,12 @@ bool hide_module_maps(void) {
   free(state.targets);
 
   if (maps > 0) LOGD("Hid %zu module map(s), %zu KiB", maps, bytes / 1024);
+
+  /* INFO: Recorded whether or not anything was found. What the later pass needs
+            to know is that this process has had its pass - and a process with
+            nothing to hide is exactly the one that must not pay for reading the
+            whole table a second time to learn the same thing. */
+  module_maps_were_hidden = true;
 
   return true;
 }
