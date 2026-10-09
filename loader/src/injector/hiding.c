@@ -2,9 +2,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 
 #include "hiding.h"
 #include "logging.h"
@@ -122,18 +124,91 @@ static bool collect_one_map(const struct map_entry *map, void *userdata) {
   return true;
 }
 
+/* INFO: The name the copy is given, and the reason it is that name.
+
+         An anonymous executable mapping is a signature of its own: a scan for
+         PROT_EXEC regions with nothing behind them finds this replacement
+         without ever having to ask what it replaced. A memfd has a name, and a
+         scan has to judge the name instead - so the copy is mapped from a memfd
+         named after the runtime's own JIT cache, which is an executable mapping
+         with no file of its own that every process already carries.
+
+         "jit-zygote-cache" rather than "jit-cache" on purpose. The JIT cache
+         belongs to the process, while the name carrying "zygote" is the one the
+         zygote creates - so an application is the last place a scan expects a
+         second one, and the last place this code is likely to collide with a
+         real one. Colliding is what it must not do: see below.
+
+         Every replacement in a process is a range of the same memfd, because
+         the check that reads these names compares the inode behind each of them
+         with the others. One memfd is one inode, so they agree. */
+#define HIDE_MEMFD_NAME "jit-zygote-cache"
+
+/* INFO: memfd_create() only reaches bionic from API 30, while common.mk builds
+         against an older level; the raw syscall is what the daemon uses too. */
+#ifndef MFD_CLOEXEC
+  #define MFD_CLOEXEC 0x0001U
+#endif
+
+/* INFO: A kernel from 6.3 on refuses to map a memfd executable unless it was
+         created with this flag, and a kernel older than that refuses the flag
+         itself. It is tried first and dropped when the call rejects it. */
+#ifndef MFD_EXEC
+  #define MFD_EXEC 0x0010U
+#endif
+
+/* INFO: The one memfd every replacement in this process is mapped from, and
+         how much of it is in use. Both belong to the process: a forked
+         application inherits neither the replacements nor this cache, so it
+         starts from its own. */
+static int hide_memfd = -1;
+static off_t hide_memfd_end = 0;
+
+static int hide_backing_memfd(void) {
+  if (hide_memfd != -1) return hide_memfd;
+
+  int fd = (int)syscall(__NR_memfd_create, HIDE_MEMFD_NAME, MFD_CLOEXEC | MFD_EXEC);
+  if (fd == -1 && errno == EINVAL) fd = (int)syscall(__NR_memfd_create, HIDE_MEMFD_NAME, MFD_CLOEXEC);
+
+  if (fd == -1) {
+    PLOGE("create the backing memfd");
+
+    return -1;
+  }
+
+  hide_memfd = fd;
+
+  return fd;
+}
+
 /* INFO: A library that is still mapped - the injector itself, every module
          library the loader abandons rather than unloads, and every Zygisk Next
          library the system linker holds - names its own file in
-         /proc/self/maps. The mapping is replaced with an anonymous copy of the
-         same bytes at the same address, so the library keeps running out of the
-         same place and the name is gone. */
+         /proc/self/maps. The mapping is replaced with a copy of the same bytes
+         at the same address, so the library keeps running out of the same place
+         and the name is gone. */
 static bool hide_map(struct hide_target *target) {
   size_t size = target->size;
 
-  void *copy = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+  int fd = hide_backing_memfd();
+  if (fd == -1) return false;
+
+  /* INFO: A fresh range at the end of the memfd. Nothing else is written there
+            until a replacement has actually landed, so a failure costs the
+            process nothing but the space, and the file is only ever grown to
+            the end of what is in use - a later ftruncate cannot shorten a range
+            an earlier replacement is still mapped from. */
+  off_t offset = hide_memfd_end;
+
+  if (ftruncate(fd, offset + (off_t)size) == -1) {
+    PLOGE("grow the backing memfd for [%s]", target->path);
+
+    return false;
+  }
+
+  void *copy = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, offset);
   if (copy == MAP_FAILED) {
-    PLOGE("allocate a copy of [%s]", target->path);
+    PLOGE("map a copy of [%s]", target->path);
 
     return false;
   }
@@ -179,6 +254,10 @@ static bool hide_map(struct hide_target *target) {
 
     return false;
   }
+
+  /* INFO: Only now does the range become part of the file's used length: until
+            the replacement is in place, nothing has been taken from it. */
+  hide_memfd_end = offset + (off_t)size;
 
   LOGD("Hid [%s]", target->path);
 
