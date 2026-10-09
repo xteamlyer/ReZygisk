@@ -157,21 +157,52 @@ static bool collect_one_map(const struct map_entry *map, void *userdata) {
   #define MFD_EXEC 0x0010U
 #endif
 
-/* INFO: The one memfd every replacement in this process is mapped from, and
-         how much of it is in use. Both belong to the process: a forked
-         application inherits neither the replacements nor this cache, so it
-         starts from its own. */
+/* INFO: The one memfd every replacement in this process is mapped from, how
+         much of it is in use, and whether it turned out to be usable at all.
+         All three belong to the process: a forked application inherits neither
+         the replacements nor this cache, so it starts from its own. */
 static int hide_memfd = -1;
 static off_t hide_memfd_end = 0;
+static bool hide_memfd_refused = false;
 
 static int hide_backing_memfd(void) {
   if (hide_memfd != -1) return hide_memfd;
+  if (hide_memfd_refused) return -1;
 
   int fd = (int)syscall(__NR_memfd_create, HIDE_MEMFD_NAME, MFD_CLOEXEC | MFD_EXEC);
   if (fd == -1 && errno == EINVAL) fd = (int)syscall(__NR_memfd_create, HIDE_MEMFD_NAME, MFD_CLOEXEC);
 
   if (fd == -1) {
     PLOGE("create the backing memfd");
+
+    hide_memfd_refused = true;
+
+    return -1;
+  }
+
+  /* INFO: Whether this process may map the memfd executable is policy, and the
+            answer picks the backing for every replacement that follows. It is
+            asked once, on one page. The grant that lets a process make
+            anonymous memory executable is not the one that covers a file, so a
+            device where the anonymous copy works can still refuse this one -
+            and there the older behaviour is the fallback rather than a
+            failure, or hiding would stop working altogether. */
+  size_t page = (size_t)sysconf(_SC_PAGESIZE);
+  void *probe = MAP_FAILED;
+
+  if (ftruncate(fd, (off_t)page) != -1)
+    probe = mmap(NULL, page, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+
+  bool usable = probe != MAP_FAILED && mprotect(probe, page, PROT_EXEC) == 0;
+
+  if (probe != MAP_FAILED) munmap(probe, page);
+
+  if (!usable) {
+    PLOGE("map a copy out of the backing memfd");
+
+    close(fd);
+
+    hide_memfd_refused = true;
 
     return -1;
   }
@@ -190,27 +221,40 @@ static int hide_backing_memfd(void) {
 static bool hide_map(struct hide_target *target) {
   size_t size = target->size;
 
+  /* INFO: Where the copy comes from: the memfd when this process may map one
+            executable, an anonymous mapping when it may not. Only this choice
+            differs between the two - everything below treats the copy the same
+            way, and the anonymous one is what this always used to be. */
   int fd = hide_backing_memfd();
-  if (fd == -1) return false;
-
-  /* INFO: A fresh range at the end of the memfd. Nothing else is written there
-            until a replacement has actually landed, so a failure costs the
-            process nothing but the space, and the file is only ever grown to
-            the end of what is in use - a later ftruncate cannot shorten a range
-            an earlier replacement is still mapped from. */
   off_t offset = hide_memfd_end;
 
-  if (ftruncate(fd, offset + (off_t)size) == -1) {
-    PLOGE("grow the backing memfd for [%s]", target->path);
+  void *copy;
 
-    return false;
-  }
+  if (fd != -1) {
+    /* INFO: A fresh range at the end of the memfd. Nothing else is written
+              there until a replacement has actually landed, so a failure costs
+              the process nothing but the space, and the file is only ever
+              grown to the end of what is in use - a later ftruncate cannot
+              shorten a range an earlier replacement is still mapped from. */
+    if (ftruncate(fd, offset + (off_t)size) == -1) {
+      PLOGE("grow the backing memfd for [%s]", target->path);
 
-  void *copy = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, offset);
-  if (copy == MAP_FAILED) {
-    PLOGE("map a copy of [%s]", target->path);
+      return false;
+    }
 
-    return false;
+    copy = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, offset);
+    if (copy == MAP_FAILED) {
+      PLOGE("map a copy of [%s] out of the memfd", target->path);
+
+      return false;
+    }
+  } else {
+    copy = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    if (copy == MAP_FAILED) {
+      PLOGE("allocate a copy of [%s]", target->path);
+
+      return false;
+    }
   }
 
   /* INFO: A mapping without PROT_READ cannot be copied out of, so it is made
@@ -256,8 +300,9 @@ static bool hide_map(struct hide_target *target) {
   }
 
   /* INFO: Only now does the range become part of the file's used length: until
-            the replacement is in place, nothing has been taken from it. */
-  hide_memfd_end = offset + (off_t)size;
+            the replacement is in place, nothing has been taken from it. An
+            anonymous copy has no file to account for. */
+  if (fd != -1) hide_memfd_end = offset + (off_t)size;
 
   LOGD("Hid [%s]", target->path);
 
