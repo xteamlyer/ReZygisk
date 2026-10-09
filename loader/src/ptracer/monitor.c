@@ -288,6 +288,121 @@ static char *read_socket_string(const char *what) {
   return value;
 }
 
+/* INFO: The module list the daemon sends, one entry at a time: the name, a
+         type byte, and for a Zygisk Next module a companion flag and the
+         targets it was registered for.
+
+         Every slot is allocated before anything is read into it, so the cleanup
+         path can walk the full lists - which is what the label at the end is
+         for, and why the failure paths jump to it rather than unwinding by
+         hand. A read that fails partway leaves the lists empty rather than half
+         filled: the status line says so instead of naming modules that were
+         never delivered. */
+static void read_daemon_modules(void) {
+  /* INFO: Read into a local first: the old lists are freed through the
+            length they were allocated with, so the stored length must
+            not be overwritten before that. */
+  uint32_t modules_len;
+  if (read_uint32_t(monitor_sock_fd, &modules_len) != sizeof(modules_len)) {
+    LOGE("read VexZygiskd%s modules len", MONITOR_ABI);
+
+    free(environment_information.root_impl);
+    environment_information.root_impl = NULL;
+
+    return;
+  }
+
+  free_environment_information();
+
+  environment_information.modules_len = modules_len;
+
+  environment_information.modules = calloc(modules_len, sizeof(char *));
+  environment_information.modules_zn = calloc(modules_len, sizeof(bool));
+  environment_information.modules_companion = calloc(modules_len, sizeof(bool));
+  environment_information.modules_targets = calloc(modules_len, sizeof(char **));
+  environment_information.modules_targets_len = calloc(modules_len, sizeof(uint32_t));
+
+  if (environment_information.modules == NULL || environment_information.modules_zn == NULL ||
+      environment_information.modules_companion == NULL || environment_information.modules_targets == NULL ||
+      environment_information.modules_targets_len == NULL) {
+    PLOGE("malloc VexZygiskd%s module lists", MONITOR_ABI);
+
+    free(environment_information.root_impl);
+    environment_information.root_impl = NULL;
+
+    free_environment_information();
+
+    return;
+  }
+
+  for (size_t i = 0; i < environment_information.modules_len; i++) {
+    environment_information.modules[i] = read_socket_string("module name");
+    if (environment_information.modules[i] == NULL) goto set_info_modules_cleanup;
+
+    uint8_t module_type;
+    if (read_uint8_t(monitor_sock_fd, &module_type) != sizeof(module_type)) {
+      LOGE("read VexZygiskd%s module type", MONITOR_ABI);
+
+      goto set_info_modules_cleanup;
+    }
+
+    environment_information.modules_zn[i] = module_type == 1;
+    environment_information.modules_companion[i] = false;
+    environment_information.modules_targets[i] = NULL;
+    environment_information.modules_targets_len[i] = 0;
+
+    if (module_type == 1) {
+      uint8_t companion;
+      if (read_uint8_t(monitor_sock_fd, &companion) != sizeof(companion)) {
+        LOGE("read VexZygiskd%s module companion", MONITOR_ABI);
+
+        goto set_info_modules_cleanup;
+      }
+      environment_information.modules_companion[i] = companion == 1;
+
+      uint32_t targets_len;
+      if (read_uint32_t(monitor_sock_fd, &targets_len) != sizeof(targets_len)) {
+        LOGE("read VexZygiskd%s module targets len", MONITOR_ABI);
+
+        goto set_info_modules_cleanup;
+      }
+      environment_information.modules_targets_len[i] = targets_len;
+
+      if (targets_len > 0) {
+        environment_information.modules_targets[i] = calloc(targets_len, sizeof(char *));
+        if (environment_information.modules_targets[i] == NULL) {
+          PLOGE("malloc VexZygiskd%s module targets", MONITOR_ABI);
+
+          goto set_info_modules_cleanup;
+        }
+
+        for (uint32_t t = 0; t < targets_len; t++) {
+          environment_information.modules_targets[i][t] = read_socket_string("module target");
+          if (environment_information.modules_targets[i][t] == NULL) goto set_info_modules_cleanup;
+        }
+      }
+    }
+
+    LOGD("VexZygiskd%s module %zu: %s (%s)", MONITOR_ABI, i, environment_information.modules[i], environment_information.modules_zn[i] ? "next" : "zygisk");
+  }
+
+  update_status(NULL);
+
+  return;
+
+  /* INFO: Reached from any failed read above. Every slot was calloc'ed,
+            so free_environment_information can walk the full lists. */
+  set_info_modules_cleanup:
+    free(environment_information.root_impl);
+    environment_information.root_impl = NULL;
+
+    free_environment_information();
+
+    update_status(NULL);
+
+    return;
+}
+
 void rezygiskd_listener_callback() {
   while (1) {
     uint8_t cmd = 0;
@@ -392,108 +507,9 @@ void rezygiskd_listener_callback() {
 
         LOGD("VexZygiskd%s root impl: %s", MONITOR_ABI, environment_information.root_impl);
 
-        /* INFO: Read into a local first: the old lists are freed through the
-                  length they were allocated with, so the stored length must
-                  not be overwritten before that. */
-        uint32_t modules_len;
-        if (read_uint32_t(monitor_sock_fd, &modules_len) != sizeof(modules_len)) {
-          LOGE("read VexZygiskd%s modules len", MONITOR_ABI);
-
-          free(environment_information.root_impl);
-          environment_information.root_impl = NULL;
-
-          break;
-        }
-
-        free_environment_information();
-
-        environment_information.modules_len = modules_len;
-
-        environment_information.modules = calloc(modules_len, sizeof(char *));
-        environment_information.modules_zn = calloc(modules_len, sizeof(bool));
-        environment_information.modules_companion = calloc(modules_len, sizeof(bool));
-        environment_information.modules_targets = calloc(modules_len, sizeof(char **));
-        environment_information.modules_targets_len = calloc(modules_len, sizeof(uint32_t));
-
-        if (environment_information.modules == NULL || environment_information.modules_zn == NULL ||
-            environment_information.modules_companion == NULL || environment_information.modules_targets == NULL ||
-            environment_information.modules_targets_len == NULL) {
-          PLOGE("malloc VexZygiskd%s module lists", MONITOR_ABI);
-
-          free(environment_information.root_impl);
-          environment_information.root_impl = NULL;
-
-          free_environment_information();
-
-          break;
-        }
-
-        for (size_t i = 0; i < environment_information.modules_len; i++) {
-          environment_information.modules[i] = read_socket_string("module name");
-          if (environment_information.modules[i] == NULL) goto set_info_modules_cleanup;
-
-          uint8_t module_type;
-          if (read_uint8_t(monitor_sock_fd, &module_type) != sizeof(module_type)) {
-            LOGE("read VexZygiskd%s module type", MONITOR_ABI);
-
-            goto set_info_modules_cleanup;
-          }
-
-          environment_information.modules_zn[i] = module_type == 1;
-          environment_information.modules_companion[i] = false;
-          environment_information.modules_targets[i] = NULL;
-          environment_information.modules_targets_len[i] = 0;
-
-          if (module_type == 1) {
-            uint8_t companion;
-            if (read_uint8_t(monitor_sock_fd, &companion) != sizeof(companion)) {
-              LOGE("read VexZygiskd%s module companion", MONITOR_ABI);
-
-              goto set_info_modules_cleanup;
-            }
-            environment_information.modules_companion[i] = companion == 1;
-
-            uint32_t targets_len;
-            if (read_uint32_t(monitor_sock_fd, &targets_len) != sizeof(targets_len)) {
-              LOGE("read VexZygiskd%s module targets len", MONITOR_ABI);
-
-              goto set_info_modules_cleanup;
-            }
-            environment_information.modules_targets_len[i] = targets_len;
-
-            if (targets_len > 0) {
-              environment_information.modules_targets[i] = calloc(targets_len, sizeof(char *));
-              if (environment_information.modules_targets[i] == NULL) {
-                PLOGE("malloc VexZygiskd%s module targets", MONITOR_ABI);
-
-                goto set_info_modules_cleanup;
-              }
-
-              for (uint32_t t = 0; t < targets_len; t++) {
-                environment_information.modules_targets[i][t] = read_socket_string("module target");
-                if (environment_information.modules_targets[i][t] == NULL) goto set_info_modules_cleanup;
-              }
-            }
-          }
-
-          LOGD("VexZygiskd%s module %zu: %s (%s)", MONITOR_ABI, i, environment_information.modules[i], environment_information.modules_zn[i] ? "next" : "zygisk");
-        }
-
-        update_status(NULL);
+        read_daemon_modules();
 
         break;
-
-        /* INFO: Reached from any failed read above. Every slot was calloc'ed,
-                  so free_environment_information can walk the full lists. */
-        set_info_modules_cleanup:
-          free(environment_information.root_impl);
-          environment_information.root_impl = NULL;
-
-          free_environment_information();
-
-          update_status(NULL);
-
-          break;
       }
       case CMD_DAEMON_SET_ERROR_INFO: {
         LOGD("Received VexZygiskd%s error info", MONITOR_ABI);
