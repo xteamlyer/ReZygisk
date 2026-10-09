@@ -307,12 +307,14 @@ void rezygiskd_listener_callback() {
           LOGI("Continue tracing init");
 
           tracing_state = TRACING;
+          monitor_stop_reason = NULL;
         } else if (tracing_state == STOPPED) {
           LOGI("Start tracing init");
 
           ptrace(PTRACE_SEIZE, 1, 0, PTRACE_O_TRACEFORK);
 
           tracing_state = TRACING;
+          monitor_stop_reason = NULL;
         }
 
         update_status(NULL);
@@ -636,6 +638,16 @@ static bool ensure_daemon_created() {
               child handling, which no longer matches it against the pid below,
               and answers it as what it is - a process that already exited. */
     kill(stale_pid, SIGKILL);
+  }
+
+  /* INFO: A daemon that has just come up answers whatever the last one said on
+            its way out. The text is deliberately not cleared where it is set -
+            the first failure explains the most - so it is cleared here, at the
+            point it stops being true, instead of being reported for the rest of
+            the session. */
+  if (status.daemon_error_info) {
+    free(status.daemon_error_info);
+    status.daemon_error_info = NULL;
   }
 
   status.supported = true;
@@ -1336,20 +1348,36 @@ static void json_escape_into(char *dst, size_t cap, const char *src) {
 static void append_status_text(char *out, size_t cap) {
   #define STATUS_APPEND(text) strncat(out, (text), cap - strlen(out) - 1)
 
+  /* INFO: Read from the module's point of view rather than the monitor's. An
+            injection is a one-shot inside the zygote, and a monitor that stops
+            afterwards does not undo it - every application forked since already
+            carries it, and the modules keep working. The monitor's own state
+            therefore chooses the wording but never decides whether the module
+            counts as working: only "the injection never landed" is a failure.
+            Reporting the raw state as one is what made a working session read
+            as broken on the manager's card. */
+  const bool injected = status.zygote_injected;
+
   switch (tracing_state) {
     case TRACING: {
       STATUS_APPEND("✅");
 
       break;
     }
-    case STOPPING: [[fallthrough]];
+    case STOPPING: {
+      /* INFO: A transition rather than a verdict: the stop is in flight, and
+                the next update reports where it landed. */
+      STATUS_APPEND(injected ? "⏸" : "⏳");
+
+      break;
+    }
     case STOPPED: {
-      STATUS_APPEND("⛔");
+      STATUS_APPEND(injected ? "⏸" : "⛔");
 
       break;
     }
     case EXITING: {
-      STATUS_APPEND("❌");
+      STATUS_APPEND(injected ? "⏸" : "❌");
 
       break;
     }
@@ -1361,15 +1389,13 @@ static void append_status_text(char *out, size_t cap) {
     STATUS_APPEND("-bit: ");
 
     if (tracing_state == TRACING) {
-      if (status.zygote_injected && status.daemon_running) STATUS_APPEND("✅");
+      if (injected && status.daemon_running) STATUS_APPEND("✅");
       else STATUS_APPEND("⚠️");
-    } else if (status.zygote_injected) {
-      /* INFO: The injection is a one-shot that happens inside the zygote, and
-                a monitor that stopped afterwards does not undo it - every
-                application forked since already carries it, and the modules
-                keep working. Reporting a failure here is what made a working
-                session look broken on the manager's card. */
-      STATUS_APPEND("✅ injected (monitor paused)");
+    } else if (injected) {
+      /* INFO: "paused" is already said by the emoji at the start of this line,
+                and why by the reason appended at the end; repeating it here
+                pushed the line longer without adding anything. */
+      STATUS_APPEND("✅ injected");
     } else {
       STATUS_APPEND("❌");
     }
@@ -1383,6 +1409,14 @@ static void append_status_text(char *out, size_t cap) {
         STATUS_APPEND("(VexZygiskd: not running)");
       }
     }
+  }
+
+  /* INFO: Why the monitor is not tracing, once that is known. The state alone
+            says what happened but not why, and the reason is what tells a stop
+            that was asked for apart from one that went wrong. */
+  if (tracing_state != TRACING && monitor_stop_reason != NULL) {
+    STATUS_APPEND(" — ");
+    STATUS_APPEND(monitor_stop_reason);
   }
 
   #undef STATUS_APPEND
