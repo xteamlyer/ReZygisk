@@ -45,100 +45,43 @@
            and publishes a soinfo. This mirrors what the reference
            implementation does, and it is why adding Dobby there required no
            change to its injection code at all. */
-static bool dlopen_inject(int pid, struct user_regs_struct *regs, struct maps_info *map,
-                          struct maps_info *local_map, const char *lib_path, void *return_addr) {
-  void *dlopen_addr = find_func_addr(local_map, map, "libdl.so", "dlopen");
-  if (!dlopen_addr) {
-    LOGE("could not find dlopen in the target process");
+/* INFO: The message dlopen left in the target, read back out of it. It is the
+         only place the real reason (missing soname, bad ELF, denied namespace)
+         shows up - this side sees a NULL and nothing else.
 
-    return false;
-  }
+         Every step is best-effort: the point of calling it is that something
+         already failed, so a step that fails here is reported and the original
+         failure stands. */
+static void log_remote_dlerror(int pid, struct user_regs_struct *regs, struct maps_info *map,
+                               struct maps_info *local_map, void *return_addr) {
+  /* INFO: Read dlerror's message out of the target. It is the only place the
+            real reason (missing soname, bad ELF, denied namespace) shows up. */
+  void *dlerror_addr = find_func_addr(local_map, map, "libdl.so", "dlerror");
+  void *strlen_addr = find_func_addr(local_map, map, "libc.so", "strlen");
 
-  /* INFO: dlopen takes the path by pointer, so the string has to live in the
-            target. It goes on the target's own stack, well below the frame the
-            upcoming remote_call will use. */
-  size_t path_len = strlen(lib_path) + 1;
-  uintptr_t remote_path = regs->REG_SP - ALIGN_UP(path_len, 16);
+  if (dlerror_addr && strlen_addr) {
+    uintptr_t msg = remote_call(pid, regs, (uintptr_t)dlerror_addr, (uintptr_t)return_addr, NULL, 0);
 
-  if (write_proc(pid, remote_path, lib_path, path_len) != (ssize_t)path_len) {
-    LOGE("failed to write the library path into the target");
+    if (msg) {
+      long len_args[1] = { (long)msg };
+      uintptr_t len = remote_call(pid, regs, (uintptr_t)strlen_addr, (uintptr_t)return_addr, len_args, 1);
 
-    return false;
-  }
+      if (len > 0 && len < 512) {
+        char err[513];
 
-  regs->REG_SP = remote_path;
-
-  long args[2] = {
-    (long)remote_path,
-    (long)RTLD_NOW
-  };
-
-  uintptr_t handle = remote_call(pid, regs, (uintptr_t)dlopen_addr, (uintptr_t)return_addr, args, 2);
-  if (!handle) {
-    /* INFO: Read dlerror's message out of the target. It is the only place the
-              real reason (missing soname, bad ELF, denied namespace) shows up. */
-    void *dlerror_addr = find_func_addr(local_map, map, "libdl.so", "dlerror");
-    void *strlen_addr = find_func_addr(local_map, map, "libc.so", "strlen");
-
-    if (dlerror_addr && strlen_addr) {
-      uintptr_t msg = remote_call(pid, regs, (uintptr_t)dlerror_addr, (uintptr_t)return_addr, NULL, 0);
-
-      if (msg) {
-        long len_args[1] = { (long)msg };
-        uintptr_t len = remote_call(pid, regs, (uintptr_t)strlen_addr, (uintptr_t)return_addr, len_args, 1);
-
-        if (len > 0 && len < 512) {
-          char err[513];
-
-          if (read_proc(pid, msg, err, (size_t)len) == (ssize_t)len) {
-            err[len] = '\0';
-            LOGE("remote dlopen failed: %s", err);
-          } else {
-            LOGE("remote dlopen failed (could not read dlerror)");
-          }
+        if (read_proc(pid, msg, err, (size_t)len) == (ssize_t)len) {
+          err[len] = '\0';
+          LOGE("remote dlopen failed: %s", err);
+        } else {
+          LOGE("remote dlopen failed (could not read dlerror)");
         }
       }
     }
-
-    return false;
   }
+}
 
-  LOGI("remote dlopen succeeded, handle %p", (void *)handle);
-
-  void *dlsym_addr = find_func_addr(local_map, map, "libdl.so", "dlsym");
-  if (!dlsym_addr) {
-    LOGE("could not find dlsym in the target process");
-
-    return false;
-  }
-
-  /* INFO: "entry" is the injector's own export, the same symbol the manual
-            loader used to resolve by hand. */
-  static const char entry_sym[] = "entry";
-  uintptr_t remote_entry_name = regs->REG_SP - ALIGN_UP(sizeof(entry_sym), 16);
-
-  if (write_proc(pid, remote_entry_name, entry_sym, sizeof(entry_sym)) != (ssize_t)sizeof(entry_sym)) {
-    LOGE("failed to write the entry symbol name into the target");
-
-    return false;
-  }
-
-  regs->REG_SP = remote_entry_name;
-
-  long dlsym_args[2] = {
-    (long)handle,
-    (long)remote_entry_name
-  };
-
-  uintptr_t entry = remote_call(pid, regs, (uintptr_t)dlsym_addr, (uintptr_t)return_addr, dlsym_args, 2);
-  if (!entry) {
-    LOGE("dlsym(\"entry\") failed in the target");
-
-    return false;
-  }
-
-  LOGI("resolved injector entry at %p", (void *)entry);
-
+static bool find_injected_range(int pid, const char *lib_path,
+                                uintptr_t *out_base, size_t *out_size) {
   /* INFO: The entry keeps the (base, size) pair the manual loader used to hand
             it. With dlopen the mapping belongs to the linker, so the load bias
             is recovered from the target's own maps instead of from the manual
@@ -207,6 +150,88 @@ static bool dlopen_inject(int pid, struct user_regs_struct *regs, struct maps_in
 
     return false;
   }
+
+  *out_base = base;
+  *out_size = size;
+
+  return true;
+}
+
+static bool dlopen_inject(int pid, struct user_regs_struct *regs, struct maps_info *map,
+                          struct maps_info *local_map, const char *lib_path, void *return_addr) {
+  void *dlopen_addr = find_func_addr(local_map, map, "libdl.so", "dlopen");
+  if (!dlopen_addr) {
+    LOGE("could not find dlopen in the target process");
+
+    return false;
+  }
+
+  /* INFO: dlopen takes the path by pointer, so the string has to live in the
+            target. It goes on the target's own stack, well below the frame the
+            upcoming remote_call will use. */
+  size_t path_len = strlen(lib_path) + 1;
+  uintptr_t remote_path = regs->REG_SP - ALIGN_UP(path_len, 16);
+
+  if (write_proc(pid, remote_path, lib_path, path_len) != (ssize_t)path_len) {
+    LOGE("failed to write the library path into the target");
+
+    return false;
+  }
+
+  regs->REG_SP = remote_path;
+
+  long args[2] = {
+    (long)remote_path,
+    (long)RTLD_NOW
+  };
+
+  uintptr_t handle = remote_call(pid, regs, (uintptr_t)dlopen_addr, (uintptr_t)return_addr, args, 2);
+  if (!handle) {
+    log_remote_dlerror(pid, regs, map, local_map, return_addr);
+
+    return false;
+  }
+
+  LOGI("remote dlopen succeeded, handle %p", (void *)handle);
+
+  void *dlsym_addr = find_func_addr(local_map, map, "libdl.so", "dlsym");
+  if (!dlsym_addr) {
+    LOGE("could not find dlsym in the target process");
+
+    return false;
+  }
+
+  /* INFO: "entry" is the injector's own export, the same symbol the manual
+            loader used to resolve by hand. */
+  static const char entry_sym[] = "entry";
+  uintptr_t remote_entry_name = regs->REG_SP - ALIGN_UP(sizeof(entry_sym), 16);
+
+  if (write_proc(pid, remote_entry_name, entry_sym, sizeof(entry_sym)) != (ssize_t)sizeof(entry_sym)) {
+    LOGE("failed to write the entry symbol name into the target");
+
+    return false;
+  }
+
+  regs->REG_SP = remote_entry_name;
+
+  long dlsym_args[2] = {
+    (long)handle,
+    (long)remote_entry_name
+  };
+
+  uintptr_t entry = remote_call(pid, regs, (uintptr_t)dlsym_addr, (uintptr_t)return_addr, dlsym_args, 2);
+  if (!entry) {
+    LOGE("dlsym(\"entry\") failed in the target");
+
+    return false;
+  }
+
+  LOGI("resolved injector entry at %p", (void *)entry);
+
+  uintptr_t base = 0;
+  size_t size = 0;
+
+  if (!find_injected_range(pid, lib_path, &base, &size)) return false;
 
   LOGI("injected library base %p size %zu", (void *)base, size);
 
