@@ -999,9 +999,9 @@ static bool refresh_module_dir_cache(const struct stat *dir_st) {
     zn_dir_cache_len++;
   }
 
-  closedir(dir);
-  zn_dir_st = dir_st;
-  zn_dir_valid = true;
+    closedir(dir);
+    zn_dir_st = *dir_st;
+    zn_dir_valid = true;
 
   return true;
 }
