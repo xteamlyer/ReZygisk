@@ -53,16 +53,11 @@ The on-device verifier checks these signatures, so a signer that merely compiles
 is not good enough: it has to feed Ed25519 exactly the bytes the previous
 implementation fed it. The block is `name`, a NUL, the file size as a
 little-endian `i64`, then the contents — reproduced rather than tidied up, and
-pinned by tests.
+pinned by the tests in `src/bin/sign.rs`.
 
-`compare_sign.py` cross-checks the signer against the Python one it replaced,
-artefact by artefact:
-
-```sh
-cargo build --release
-python compare_sign.py
-```
-
-It builds a module tree twice, signs it with each, and fails unless every output
-is byte identical. Run it whenever the signing path is touched; it is the only
-check that catches a change no compiler would.
+The migration was verified against the implementation it replaced by signing a
+module tree with both and comparing every artefact; that comparison tool went
+with the Python signer, since it has nothing left to compare against. What
+remains is the unit tests in `src/bin/sign.rs`, which is what makes the property
+checkable at all: they pin the sign block's exact bytes and the walk order, so a
+change no compiler would catch still fails the build.
