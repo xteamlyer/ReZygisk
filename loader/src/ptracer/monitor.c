@@ -1029,6 +1029,87 @@ static void respawn_stale_targets(void) {
   }
 }
 
+/* INFO: A child this monitor traces rather than one it spawned: the init it
+         seized. Two things matter here - the forks init makes, which is how the
+         monitor learns about the processes worth injecting, and the stop signals
+         it receives, which have to be passed through with the signal intact, or
+         suppressed when they are the job-control ones the zygote has no handler
+         for.
+
+         Every return in here means this child is done with, which is what the
+         loop this was lifted out of did with a continue. */
+static void handle_init_event(long sigchld_status) {
+  if (STOPPED_WITH(sigchld_status, SIGTRAP, PTRACE_EVENT_FORK)) {
+    /* INFO: Initialised and checked: the call fills this in only on
+              success, and the line below would otherwise print whatever
+              the stack held. It is a debug line, so nothing acts on the
+              value - but a pid out of nowhere costs a search. */
+    long child_pid = 0;
+    if (ptrace(PTRACE_GETEVENTMSG, pid, 0, &child_pid) == -1)
+      PLOGE("read the pid of the process %d forked", pid);
+
+    LOGV("Forked %ld", child_pid);
+  } else if (STOPPED_WITH(sigchld_status, SIGTRAP, PTRACE_EVENT_STOP) && tracing_state == STOPPING) {
+    if (ptrace(PTRACE_DETACH, 1, 0, 0) == -1) PLOGE("failed to detach init");
+
+    tracing_state = STOPPED;
+
+    LOGI("Stopped tracing init");
+
+    return;
+  }
+
+  if (WIFSTOPPED(sigchld_status)) {
+    if (WPTEVENT(sigchld_status) == 0) {
+      if (WSTOPSIG(sigchld_status) != SIGSTOP && WSTOPSIG(sigchld_status) != SIGTSTP && WSTOPSIG(sigchld_status) != SIGTTIN && WSTOPSIG(sigchld_status) != SIGTTOU) {
+        LOGW("Injecting signal sent to init: %s %d", sigabbrev_np(WSTOPSIG(sigchld_status)), WSTOPSIG(sigchld_status));
+
+        ptrace(PTRACE_CONT, pid, 0, WSTOPSIG(sigchld_status));
+
+        return;
+      } else {
+        LOGW("Suppressing stop signal sent to init: %s %d", sigabbrev_np(WSTOPSIG(sigchld_status)), WSTOPSIG(sigchld_status));
+      }
+    }
+
+    ptrace(PTRACE_CONT, pid, 0, 0);
+  }
+
+  return;
+}
+
+/* INFO: The daemon this monitor forked, reporting its own exit.
+
+         False means the pass should be abandoned. That is the one case where
+         something went wrong on this side rather than on the child's: the text
+         explaining the exit could not be kept, and walking the rest of the list
+         would go on reporting an exit nothing recorded. */
+static bool handle_daemon_exit(int pid, long sigchld_status) {
+  char status_str[64];
+  parse_status(sigchld_status, status_str, sizeof(status_str));
+
+  LOGW("daemon%s pid %d exited: %s", MONITOR_ABI, pid, status_str);
+  status.daemon_running = false;
+
+  /* INFO: Resetting the pid lets ensure_daemon_created fork a fresh
+            daemon at the next zygote start instead of reporting "already
+            running" forever; without it a single daemon crash disabled
+            injection until reboot. */
+  status.daemon_pid = -1;
+
+  if (!status.daemon_error_info) {
+    status.daemon_error_info = strdup(status_str);
+    if (!status.daemon_error_info) {
+      LOGE("malloc daemon%s error info failed", MONITOR_ABI);
+
+      return false;
+    }
+  }
+
+  return true;
+}
+
+
 void sigchld_listener_callback() {
   while (1) {
     ssize_t s = read(sigchld_signal_fd, &sigchld_fdsi, sizeof(sigchld_fdsi));
@@ -1066,66 +1147,13 @@ void sigchld_listener_callback() {
       }
 
       if (pid == 1) {
-        if (STOPPED_WITH(sigchld_status, SIGTRAP, PTRACE_EVENT_FORK)) {
-          /* INFO: Initialised and checked: the call fills this in only on
-                    success, and the line below would otherwise print whatever
-                    the stack held. It is a debug line, so nothing acts on the
-                    value - but a pid out of nowhere costs a search. */
-          long child_pid = 0;
-          if (ptrace(PTRACE_GETEVENTMSG, pid, 0, &child_pid) == -1)
-            PLOGE("read the pid of the process %d forked", pid);
-
-          LOGV("Forked %ld", child_pid);
-        } else if (STOPPED_WITH(sigchld_status, SIGTRAP, PTRACE_EVENT_STOP) && tracing_state == STOPPING) {
-          if (ptrace(PTRACE_DETACH, 1, 0, 0) == -1) PLOGE("failed to detach init");
-
-          tracing_state = STOPPED;
-
-          LOGI("Stopped tracing init");
-
-          continue;
-        }
-
-        if (WIFSTOPPED(sigchld_status)) {
-          if (WPTEVENT(sigchld_status) == 0) {
-            if (WSTOPSIG(sigchld_status) != SIGSTOP && WSTOPSIG(sigchld_status) != SIGTSTP && WSTOPSIG(sigchld_status) != SIGTTIN && WSTOPSIG(sigchld_status) != SIGTTOU) {
-              LOGW("Injecting signal sent to init: %s %d", sigabbrev_np(WSTOPSIG(sigchld_status)), WSTOPSIG(sigchld_status));
-
-              ptrace(PTRACE_CONT, pid, 0, WSTOPSIG(sigchld_status));
-
-              continue;
-            } else {
-              LOGW("Suppressing stop signal sent to init: %s %d", sigabbrev_np(WSTOPSIG(sigchld_status)), WSTOPSIG(sigchld_status));
-            }
-          }
-
-          ptrace(PTRACE_CONT, pid, 0, 0);
-        }
+        handle_init_event(sigchld_status);
 
         continue;
       }
 
       if (status.supported && pid == status.daemon_pid) {
-        char status_str[64];
-        parse_status(sigchld_status, status_str, sizeof(status_str));
-
-        LOGW("daemon%s pid %d exited: %s", MONITOR_ABI, pid, status_str);
-        status.daemon_running = false;
-
-        /* INFO: Resetting the pid lets ensure_daemon_created fork a fresh
-                  daemon at the next zygote start instead of reporting "already
-                  running" forever; without it a single daemon crash disabled
-                  injection until reboot. */
-        status.daemon_pid = -1;
-
-        if (!status.daemon_error_info) {
-          status.daemon_error_info = strdup(status_str);
-          if (!status.daemon_error_info) {
-            LOGE("malloc daemon%s error info failed", MONITOR_ABI);
-
-            return;
-          }
-        }
+        if (!handle_daemon_exit(pid, sigchld_status)) return;
 
         continue;
       }
