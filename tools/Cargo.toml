@@ -30,6 +30,24 @@ path = "src/bin/make_update_json.rs"
 name = "sign"
 path = "src/bin/sign.rs"
 
+# The host test suite's helpers. These replace the Python scripts under
+# tests/host/ and loader/src/injector/, and they run in CI on every build.
+[[bin]]
+name = "gen-jni-hooks"
+path = "src/bin/gen_jni_hooks.rs"
+
+[[bin]]
+name = "check-generated"
+path = "src/bin/check_generated.rs"
+
+[[bin]]
+name = "check-protocol"
+path = "src/bin/check_protocol.rs"
+
+[[bin]]
+name = "make-debugdata"
+path = "src/bin/make_debugdata.rs"
+
 # The tracer CLI is the front end of the C engine and is linked into the same
 # shared object as it, so it cannot be built for the host: every symbol it calls
 # lives in the Android build. The `android` feature is what the NDK build turns
@@ -50,6 +68,10 @@ android = []
 # Both are no_std-friendly so the same lockfile works for the Android build.
 sha2 = { version = "0.10", default-features = false }
 ed25519-compact = { version = "2", default-features = false, features = ["traits"] }
+# XZ for the .gnu_debugdata fixture. The obvious alternative, xz2, is a binding
+# to liblzma and needs a C compiler to build; this one is pure Rust, which keeps
+# `cargo build` working with nothing but a Rust toolchain installed.
+lzma-rs = "0.3"
 
 [profile.release]
 # The tools ship inside CI, so a small binary is worth more than a fast one.
