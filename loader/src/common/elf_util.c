@@ -555,15 +555,21 @@ ElfImg *ElfImg_create(const char *elf, void *base) {
   ElfW(Shdr) *symtab_shdr = NULL;
 
   char *section_str = NULL;
+  size_t section_str_size = 0;
+
   if (img->section_header && img->header->e_shstrndx != SHN_UNDEF) {
     if (img->header->e_shstrndx < img->header->e_shnum) {
       ElfW(Shdr) *shstrtab_hdr = img->section_header + img->header->e_shstrndx;
 
       /* INFO: Every section name is read relative to this pointer, so the
-                string table has to be inside the map before it is used as one. */
+                string table has to be inside the map before it is used as one.
+                Its size is kept alongside it: each name is an offset into this
+                table, and an offset that leaves it would be read as a string
+                from whatever follows. */
       if (shstrtab_hdr->sh_offset <= img->size &&
           shstrtab_hdr->sh_size <= img->size - shstrtab_hdr->sh_offset) {
         section_str = offsetOf_char(img->header, shstrtab_hdr->sh_offset);
+        section_str_size = shstrtab_hdr->sh_size;
       } else {
         LOGW("Section header string table lies outside the file in %s", elf);
       }
@@ -591,7 +597,15 @@ ElfImg *ElfImg_create(const char *elf, void *base) {
         continue;
       }
 
-      char *sname = section_str ? (section_h->sh_name + section_str) : "<?>";
+      /* INFO: sh_name is an offset into the string table and comes out of the
+                file, so it is checked against that table's size before it is
+                turned into a pointer. A name pointing past the end would
+                otherwise be read as a string and compared - a read past the
+                mapped file, on a file this code did not produce. */
+      const char *sname = "<?>";
+      if (section_str != NULL && section_h->sh_name < section_str_size) {
+        sname = section_str + section_h->sh_name;
+      }
       size_t entsize = section_h->sh_entsize;
 
       switch (section_h->sh_type) {

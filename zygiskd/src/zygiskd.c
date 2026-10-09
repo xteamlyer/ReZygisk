@@ -248,7 +248,12 @@ static void load_modules(struct Context *restrict context) {
     if (access(zn_modules, F_OK) == 0) {
       LOGI("Found Zygisk Next module \"%s\"", name);
 
-      add_zn_module(context, name);
+      /* INFO: Its failure is reported rather than dropped: the module would
+                otherwise be absent from the list the injector reads, with
+                nothing on this side to say the record was never made. */
+      if (!add_zn_module(context, name)) {
+        LOGE("Failed to record the Zygisk Next module \"%s\"", name);
+      }
     }
 
     char so_path[PATH_MAX];

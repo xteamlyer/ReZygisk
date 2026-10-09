@@ -704,6 +704,12 @@ static void zn_hyos_install_hooks(void) {
     void *target = dlsym(RTLD_DEFAULT, "selinux_android_setcontext");
 
     if (target == NULL) {
+      /* INFO: The handle is deliberately not closed. Closing it would drop the
+                reference this dlopen took, and a process where nothing else
+                holds libselinux.so would have it unloaded - leaving the address
+                just resolved, and the inline hook written through it, pointing
+                into an unmapped library. One handle per spawner is the cheaper
+                side of that trade. */
       void *handle = dlopen("libselinux.so", RTLD_NOW);
       if (handle != NULL) target = dlsym(handle, "selinux_android_setcontext");
     }
@@ -723,6 +729,7 @@ static void zn_hyos_install_hooks(void) {
     void *target = dlsym(RTLD_DEFAULT, "pthread_setname_np");
 
     if (target == NULL) {
+      /* INFO: Not closed, for the reason given for libselinux.so above. */
       void *handle = dlopen("libc.so", RTLD_NOW);
       if (handle != NULL) target = dlsym(handle, "pthread_setname_np");
     }

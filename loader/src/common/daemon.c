@@ -176,7 +176,20 @@ void rezygiskd_get_info(struct rezygisk_info *info) {
     }
 
     char module_path[PATH_MAX];
-    snprintf(module_path, sizeof(module_path), "/data/adb/modules/%s/module.prop", module_name);
+    int written = snprintf(module_path, sizeof(module_path), "/data/adb/modules/%s/module.prop", module_name);
+
+    /* INFO: A name that does not fit is refused rather than truncated. The
+              truncated path is still a valid-looking one, so the fopen below
+              would report "no such file" for a path nobody ever asked for -
+              and the name came over a socket, so its length is not this
+              process's to assume. */
+    if (written < 0 || (size_t)written >= sizeof(module_path)) {
+      LOGE("module name is too long for a prop path (%d bytes)", written);
+
+      free(module_name);
+
+      goto info_cleanup;
+    }
 
     free(module_name);
 

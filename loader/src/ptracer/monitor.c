@@ -1040,9 +1040,13 @@ void sigchld_listener_callback() {
 
       if (pid == 1) {
         if (STOPPED_WITH(sigchld_status, SIGTRAP, PTRACE_EVENT_FORK)) {
-          long child_pid;
-
-          ptrace(PTRACE_GETEVENTMSG, pid, 0, &child_pid);
+          /* INFO: Initialised and checked: the call fills this in only on
+                    success, and the line below would otherwise print whatever
+                    the stack held. It is a debug line, so nothing acts on the
+                    value - but a pid out of nowhere costs a search. */
+          long child_pid = 0;
+          if (ptrace(PTRACE_GETEVENTMSG, pid, 0, &child_pid) == -1)
+            PLOGE("read the pid of the process %d forked", pid);
 
           LOGV("Forked %ld", child_pid);
         } else if (STOPPED_WITH(sigchld_status, SIGTRAP, PTRACE_EVENT_STOP) && tracing_state == STOPPING) {

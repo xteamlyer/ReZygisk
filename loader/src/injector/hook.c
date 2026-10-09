@@ -479,6 +479,17 @@ void hook_jni_methods(JNIEnv *env, const char *clz, JNINativeMethod *methods, in
     }
 
     jobject method = (*env)->ToReflectedMethod(env, clazz, mid, is_static);
+
+    /* INFO: Checked before it is used as a receiver: an allocation failure in
+              the reflected-method path answers NULL, and CallIntMethod on NULL
+              is what turns that into a crash in the zygote. */
+    if (method == NULL) {
+      (*env)->ExceptionClear(env);
+      nm->fnPtr = NULL;
+
+      continue;
+    }
+
     jint modifier = (*env)->CallIntMethod(env, method, member_getModifiers);
     if ((*env)->ExceptionCheck(env) || (modifier & MODIFIER_NATIVE) == 0) {
       (*env)->ExceptionClear(env);
@@ -507,7 +518,15 @@ void hook_jni_methods(JNIEnv *env, const char *clz, JNINativeMethod *methods, in
     return;
   }
 
-  (*env)->RegisterNatives(env, clazz, hooks, (jint)hooks_count);
+  /* INFO: Checked, because a registration that did not take leaves the module's
+            JNI hooks silently absent - the hook list is built here, applied
+            here, and nothing later revisits it. */
+  if ((*env)->RegisterNatives(env, clazz, hooks, (jint)hooks_count) != JNI_OK) {
+    (*env)->ExceptionClear(env);
+
+    LOGE("failed to register the JNI hooks for %s", clz);
+  }
+
   (*env)->DeleteLocalRef(env, clazz);
 }
 
@@ -597,10 +616,24 @@ static void api_plt_hook_register(const char *regex, const char *symbol, void *f
   regex_t re;
   if (regcomp(&re, regex, REG_NOSUB) != 0) return;
 
+  /* INFO: Copied before the lock, and its failure handled here rather than
+            left to the hooking pass: a NULL symbol would reach the strcmp that
+            matches registrations against modules and dereference it. A failed
+            copy also has to give the compiled regex back, which the early
+            return used to skip. */
+  char *symbol_copy = strdup(symbol);
+  if (symbol_copy == NULL) {
+    PLOGE("copy the symbol name");
+
+    regfree(&re);
+
+    return;
+  }
+
   pthread_mutex_lock(&g_ctx->hook_info_lock);
 
   g_ctx->register_info[g_ctx->register_info_count].regex = re;
-  g_ctx->register_info[g_ctx->register_info_count].symbol = strdup(symbol);
+  g_ctx->register_info[g_ctx->register_info_count].symbol = symbol_copy;
   g_ctx->register_info[g_ctx->register_info_count].callback = fn;
   g_ctx->register_info[g_ctx->register_info_count].backup = backup;
   g_ctx->register_info_count++;
@@ -952,6 +985,16 @@ static void mark_fds_allowed(struct zygisk_context *ctx, JNIEnv *env, jintArray 
   if (!fdsArray) return;
 
   jint *arr = (*env)->GetIntArrayElements(env, fdsArray, NULL);
+
+  /* INFO: An allocation failure answers NULL, and the loop below would read the
+            array through it on the fork path. Nothing is allowed rather than a
+            crash, and the array is left alone - there is nothing to release. */
+  if (arr == NULL) {
+    (*env)->ExceptionClear(env);
+
+    return;
+  }
+
   jint len = (*env)->GetArrayLength(env, fdsArray);
 
   for (jint i = 0; i < len; ++i) {
@@ -975,8 +1018,17 @@ static void rz_sanitize_fds(struct zygisk_context *ctx) {
       if (newArray) {
         if (fdsToIgnore && len > 0) {
           jint *arr = (*ctx->env)->GetIntArrayElements(ctx->env, fdsToIgnore, NULL);
-          (*ctx->env)->SetIntArrayRegion(ctx->env, newArray, 0, len, arr);
-          (*ctx->env)->ReleaseIntArrayElements(ctx->env, fdsToIgnore, arr, JNI_ABORT);
+
+          /* INFO: Same failure as above. The copied region is skipped rather
+                    than read through a NULL, which would take the fork down
+                    while it is only trying to exempt some fds. */
+          if (arr != NULL) {
+            (*ctx->env)->SetIntArrayRegion(ctx->env, newArray, 0, len, arr);
+            (*ctx->env)->ReleaseIntArrayElements(ctx->env, fdsToIgnore, arr, JNI_ABORT);
+          } else {
+            (*ctx->env)->ExceptionClear(ctx->env);
+          }
+
           (*ctx->env)->DeleteLocalRef(ctx->env, fdsToIgnore);
         }
 

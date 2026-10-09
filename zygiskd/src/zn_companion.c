@@ -178,6 +178,12 @@ void zn_companion_entry(int fd) {
     for (struct cmsghdr *header = CMSG_FIRSTHDR(&message); header != NULL; header = CMSG_NXTHDR(&message, header)) {
       if (header->cmsg_level != SOL_SOCKET || header->cmsg_type != SCM_RIGHTS) continue;
 
+      /* INFO: Checked before the copy: the length in the header is what says a
+                descriptor is actually there, and a request that arrived with the
+                rights truncated would otherwise be read past the end of the
+                control buffer. */
+      if (header->cmsg_len < CMSG_LEN(sizeof(connection_fd))) continue;
+
       memcpy(&connection_fd, CMSG_DATA(header), sizeof(connection_fd));
 
       break;
