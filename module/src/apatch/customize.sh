@@ -65,9 +65,8 @@ extract "$ZIPFILE" 'sepolicy.rule' "$TMPDIR"
 #         module.prop on every status change, and a write landing while this
 #         installer is replacing the file can leave a half-read copy behind.
 if [ "$BOOTMODE" ]; then
-  for tracer in /data/adb/modules/rezygisk/bin/zygisk-ptrace64; do
-    [ -f "$tracer" ] && "$tracer" ctl exit >/dev/null 2>&1
-  done
+  tracer=/data/adb/modules/rezygisk/bin/zygisk-ptrace64
+  [ -f "$tracer" ] && "$tracer" ctl exit >/dev/null 2>&1
 
   killall -9 zygisk-ptrace64 >/dev/null 2>&1 || true
 fi

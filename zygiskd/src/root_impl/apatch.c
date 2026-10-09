@@ -178,13 +178,6 @@ struct ap_config_cache {
 
 static struct ap_config_cache ap_config_cache;
 
-static bool ap_stat_unchanged(const struct stat *a, const struct stat *b) {
-  return a->st_dev == b->st_dev &&
-         a->st_ino == b->st_ino &&
-         a->st_size == b->st_size &&
-         a->st_mtime == b->st_mtime;
-}
-
 static struct ap_package_entry *ap_get_config_rows(size_t *rows) {
   struct stat st;
   if (stat(AP_CONFIG_FILE, &st) == -1) {
@@ -200,7 +193,7 @@ static struct ap_package_entry *ap_get_config_rows(size_t *rows) {
     return ap_config_cache.entries;
   }
 
-  if (!ap_config_cache.valid || !ap_stat_unchanged(&st, &ap_config_cache.stat)) {
+  if (!ap_config_cache.valid || !stat_identity_same(&st, &ap_config_cache.stat)) {
     size_t parsed = ap_read_package_config(ap_config_cache.entries, AP_MAX_ROWS);
 
     ap_config_cache.stat = st;

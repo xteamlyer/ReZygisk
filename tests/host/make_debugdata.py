@@ -88,7 +88,6 @@ def build_inner(names, offsets):
     shstrtab_offset = symtab_offset + len(symtab)
 
     # The section header table sits right after the section contents.
-    ehdr_size = 64
     shoff = ehdr_size + len(strtab) + len(symtab) + len(shstrtab)
 
     def shdr(name, kind, offset, size, link, entsize):

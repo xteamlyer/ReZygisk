@@ -15,6 +15,7 @@
 
 #include "daemon.h"
 #include "logging.h"
+#include "misc.h"
 #include "zygisk_paths.h"
 
 #include "zn_api.h"
@@ -65,18 +66,8 @@ static char *read_process_path(void) {
   ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
   if (len <= 0) return NULL;
 
+  len = (ssize_t)strip_deleted_suffix(buf, (size_t)len);
   buf[len] = '\0';
-
-  /* INFO: The kernel appends " (deleted)" when the on-disk binary was
-           replaced while running (an OTA, say), which would otherwise stop
-           hyos_spawner and friends from matching their expected path. */
-  static const char kDeletedSuffix[] = " (deleted)";
-
-  if ((size_t)len > sizeof(kDeletedSuffix) - 1 &&
-      memcmp(buf + len - (sizeof(kDeletedSuffix) - 1), kDeletedSuffix, sizeof(kDeletedSuffix) - 1) == 0) {
-    len -= (ssize_t)(sizeof(kDeletedSuffix) - 1);
-    buf[len] = '\0';
-  }
 
   return strdup(buf);
 }
@@ -290,16 +281,14 @@ static bool zn_already_loaded(const char *lib_path) {
 
 /* INFO: Loads the libraries the daemon resolved for this process. It is the
          only path that works for a target which cannot read /data/adb/modules,
-         since the daemon opens every file on its behalf.
-
-         Returns false only when the daemon itself could not be reached, which
-         is the one case where scanning the modules directly is worth trying.
-         An empty answer is a valid answer and must not trigger the fallback. */
-static bool load_modules_from_daemon(const char *process_name, const char *process_path, uint8_t connect_retry, uint32_t connect_delay_us) {
+         since the daemon opens every file on its behalf. An empty answer is a
+         valid answer: a target the daemon has no entry for loads nothing, which
+         is also the answer the reference gives. */
+static void load_modules_from_daemon(const char *process_name, const char *process_path, uint8_t connect_retry, uint32_t connect_delay_us) {
   struct zn_module_file *files = NULL;
   size_t files_len = 0;
 
-  if (!rezygiskd_read_zn_modules(process_name, process_path, connect_retry, connect_delay_us, &files, &files_len)) return false;
+  if (!rezygiskd_read_zn_modules(process_name, process_path, connect_retry, connect_delay_us, &files, &files_len)) return;
 
   LOGD("Got %zu Zygisk Next module(s) from VexZygiskd", files_len);
 
@@ -363,8 +352,6 @@ static bool load_modules_from_daemon(const char *process_name, const char *proce
   }
 
   free_zn_module_files(files, files_len);
-
-  return true;
 }
 
 /* INFO: Loads every Zygisk Next library whose target matches process_name.
@@ -376,29 +363,12 @@ static bool load_modules_from_daemon(const char *process_name, const char *proce
          child with that child's own process name — without the second call,
          per-application targets (name=com.foo) would never match anywhere.
 
-         The direct scan below is a zygote-shaped safety net: reading /data/adb
-         takes permissions only the zygote's domain holds, so for every other
-         target - the HyperOS spawner above all - a race lost against the
-         daemon's own startup is unrecoverable. That is why a caller whose
-         load is one-shot for a whole process tree passes a connection window
-         measured in seconds, and why an ordinary one still keeps the short
-         spacing it can afford. */
-static void zn_load_modules_for(const char *process_name, const char *process_path, uint8_t connect_retry, uint32_t connect_delay_us) {
-  /* INFO: The daemon is the only source of the module plan, as in the reference.
-            There used to be a fallback here that walked /data/adb/modules itself
-            and matched zn_modules.txt on the spot. It is gone for two reasons:
-            it cannot work where it matters - the HyperOS spawner and the apps it
-            forks sit outside the zygote's domain and cannot read that tree, so
-            the retry window it was paired with existed precisely to cover a
-            case it could not rescue - and a loader that reads the tree can
-            disagree with the daemon about what is installed, which is worse than
-            loading nothing.
-
-            A target that reaches here with the daemon down therefore loads no
-            module at all, which is the same answer the reference gives. */
-  (void) load_modules_from_daemon(process_name, process_path, connect_retry, connect_delay_us);
-}
-
+         The daemon is the only source of the module plan, so a target that
+         reaches here while the daemon is down loads no module at all. That is
+         why a caller whose load is one-shot for a whole process tree passes a
+         connection window measured in seconds, and why an ordinary one still
+         keeps the short spacing it can afford; zn_loader.h states the same
+         contract for those callers. */
 void zn_load_all_modules(uint8_t connect_retry, uint32_t connect_delay_us) {
   char *process_path = read_process_path();
   if (process_path == NULL) {
@@ -409,7 +379,7 @@ void zn_load_all_modules(uint8_t connect_retry, uint32_t connect_delay_us) {
 
   const char *process_name = get_process_name(process_path);
 
-  zn_load_modules_for(process_name, process_path, connect_retry, connect_delay_us);
+  load_modules_from_daemon(process_name, process_path, connect_retry, connect_delay_us);
 
   free(process_path);
 }
@@ -424,7 +394,7 @@ void zn_load_modules_for_process(const char *process_name) {
     return;
   }
 
-  zn_load_modules_for(process_name, process_path, 1, REZYGISKD_RETRY_DELAY_US);
+  load_modules_from_daemon(process_name, process_path, 1, REZYGISKD_RETRY_DELAY_US);
 
   free(process_path);
 }

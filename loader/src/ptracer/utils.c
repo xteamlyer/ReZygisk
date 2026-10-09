@@ -616,7 +616,6 @@ bool wait_linker_ready(int pid, uintptr_t *out_libc_init_resolved, uintptr_t *ou
   clock_gettime(CLOCK_MONOTONIC, &deadline);
   deadline.tv_sec += 5;
 
-  /* INFO: Loop till linker changes the value (resolves the symbol) */
   while (1) {
     uintptr_t current_value = 0;
     if (read_proc(pid, *out_libc_init_got_slot, &current_value, sizeof(current_value)) != sizeof(current_value)) {
@@ -625,7 +624,6 @@ bool wait_linker_ready(int pid, uintptr_t *out_libc_init_resolved, uintptr_t *ou
       return false;
     }
 
-    /* INFO: If value changed, linker has resolved the symbol */
     if (current_value != initial_value) {
       *out_libc_init_resolved = current_value;
 
@@ -891,8 +889,6 @@ void parse_status(int status, char *buf, size_t len) {
   }
 }
 
-static const char kDeletedSuffix[] = " (deleted)";
-
 int get_program(int pid, char *buf, size_t size) {
   char path[PATH_MAX];
   snprintf(path, sizeof(path), "/proc/%d/exe", pid);
@@ -910,14 +906,7 @@ int get_program(int pid, char *buf, size_t size) {
     sz = size - 1;
   }
 
-  /* INFO: The kernel marks an executable whose file was replaced under a
-           running process - an OTA is the usual cause - and the suffix is part
-           of the link target, so a plain comparison against the expected path
-           would miss it. Stripped here so every caller matches the real path. */
-  if ((size_t)sz >= sizeof(kDeletedSuffix) - 1 &&
-      memcmp(buf + sz - (sizeof(kDeletedSuffix) - 1), kDeletedSuffix, sizeof(kDeletedSuffix) - 1) == 0) {
-    sz -= (ssize_t)(sizeof(kDeletedSuffix) - 1);
-  }
+  sz = (ssize_t)strip_deleted_suffix(buf, (size_t)sz);
 
   buf[sz] = '\0';
 

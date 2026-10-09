@@ -112,8 +112,9 @@ static void send_zn_module_info(const struct ZnModule *module) {
 
 /* INFO: Reads zn_modules.txt and collects the targets, one per line ("name="
          or "path=" as the first token), plus whether any line asks for a
-         companion. Mirrors the loader's parse_line, "companion" is only
-         matched between the target and the library. */
+         companion, which is only matched between the target and the library.
+         The daemon is the only side that parses this file: the loader takes the
+         plan over the protocol. */
 static void parse_zn_module_file(const char *module_dir, struct ZnModule *module) {
   char zn_path[PATH_MAX];
   snprintf(zn_path, PATH_MAX, "%s/zn_modules.txt", module_dir);
@@ -713,7 +714,6 @@ static size_t zn_parse_cache_len;
          per-request check on purpose. */
 struct zn_dir_entry {
   char *name;
-  unsigned char d_type;
 };
 
 static struct zn_dir_entry *zn_dir_cache;
@@ -820,13 +820,6 @@ static void zn_parse_cache_clear(void) {
   zn_dir_valid = false;
 }
 
-static bool zn_same_file(const struct stat *a, const struct stat *b) {
-  return a->st_dev == b->st_dev &&
-         a->st_ino == b->st_ino &&
-         a->st_size == b->st_size &&
-         a->st_mtime == b->st_mtime;
-}
-
 static struct zn_cached_module *zn_parse_cache_get(const char *dir_name, const char *module_dir, const char *zn_file) {
   struct zn_cached_module *module = NULL;
 
@@ -867,7 +860,7 @@ static struct zn_cached_module *zn_parse_cache_get(const char *dir_name, const c
     return NULL;
   }
 
-  if (module->valid && zn_same_file(&module->st, &st)) return module;
+  if (module->valid && stat_identity_same(&module->st, &st)) return module;
 
   /* INFO: New or changed file: drop the old rows and parse afresh. */
   zn_parse_cache_free_lines(module);
@@ -980,9 +973,9 @@ static bool collect_zn_modules(const char *process_name, const char *process_pat
     return false;
   }
 
-  if (zn_dir_valid && zn_same_file(&dir_st, &zn_dir_st)) {
-    zn_dir_valid = true;  /* INFO: nothing to rebuild, keep the listing. */
-  } else {
+  /* INFO: Rebuilt in place when the directory is gone from the table or its
+            identity changed; otherwise the listing stays as it is. */
+  if (!zn_dir_valid || !stat_identity_same(&dir_st, &zn_dir_st)) {
     for (size_t i = 0; i < zn_dir_cache_len; i++) {
       free(zn_dir_cache[i].name);
     }
@@ -1014,7 +1007,6 @@ static bool collect_zn_modules(const char *process_name, const char *process_pat
       zn_dir_cache[zn_dir_cache_len].name = strdup(entry->d_name);
       if (zn_dir_cache[zn_dir_cache_len].name == NULL) break;
 
-      zn_dir_cache[zn_dir_cache_len].d_type = entry->d_type;
       zn_dir_cache_len++;
     }
 

@@ -147,10 +147,13 @@ def sign_misaki(module_dir: str, private_key_bytes: bytes, public_key_bytes: byt
 
   print("  Signed misaki.sig")
 
+def usage():
+  print("Usage: sign.py <module_dir> <private_key> <public_key>")
+  print("       sign.py --no-sign <module_dir>")
+
 def main():
   if len(sys.argv) < 3:
-    print("Usage: sign.py <module_dir> <private_key> <public_key>")
-    print("       sign.py --no-sign <module_dir>")
+    usage()
 
     sys.exit(1)
 
@@ -160,9 +163,8 @@ def main():
 
     print("No private_key and public_key found, this build will not be signed")
 
-    # INFO: Create empty machikado files
-    for name in ["machikado.arm64"]:
-      (root / name).touch()
+    # INFO: The module ships one architecture, so there is one placeholder.
+    (root / "machikado.arm64").touch()
 
     # INFO: Compute SHA256 hashes
     compute_sha256_hashes(module_dir)
@@ -172,7 +174,7 @@ def main():
     return
 
   if len(sys.argv) < 4:
-    print("Usage: sign.py <module_dir> <private_key> <public_key>")
+    usage()
 
     sys.exit(1)
 
@@ -187,7 +189,7 @@ def main():
 
   print("=== Guards the peace of Machikado ===")
 
-  # INFO: Sign machikado for each architecture
+  # INFO: Sign the shipped machikado file
   sign_machikado(module_dir, "machikado.arm64", private_key_bytes, public_key_bytes)
 
   # INFO: Compute SHA256 hashes for all files (including machikado)

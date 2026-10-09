@@ -257,7 +257,6 @@ bool inject_on_main(int pid, const char *lib_path, uintptr_t libc_init_target, u
     return false;
   }
 
-  /* Restore valid __libc_init pointer to RELRO GOT slot via PTRACE_POKEDATA fallback */
   if (!ptrace_poke_uintptr(pid, libc_init_got_slot, libc_init_target)) {
     LOGE("Failed to restore __libc_init GOT slot");
 

@@ -189,6 +189,22 @@ void monitor_events_loop() {
 
 static int monitor_sock_fd;
 
+/* INFO: The monitor's own socket address, which the listener and a one-shot
+         control sender both have to build. Only the path not fitting can fail,
+         and each caller turns that into its own error, so the length it returns
+         is all that has to travel back: the socklen to hand bind(2)/sendto(2),
+         or -1. */
+static int controller_addr(struct sockaddr_un *addr) {
+  memset(addr, 0, sizeof(*addr));
+
+  addr->sun_family = AF_UNIX;
+
+  int path_len = snprintf(addr->sun_path, sizeof(addr->sun_path), "%s", ZYGISK_CONTROLLER_SOCKET);
+  if (path_len < 0 || (size_t)path_len >= sizeof(addr->sun_path)) return -1;
+
+  return (int)(sizeof(sa_family_t) + (size_t)path_len);
+}
+
 bool rezygiskd_listener_init() {
   monitor_sock_fd = socket(PF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
   if (monitor_sock_fd == -1) {
@@ -197,13 +213,10 @@ bool rezygiskd_listener_init() {
     return false;
   }
 
-  struct sockaddr_un addr = {
-    .sun_family = AF_UNIX,
-    .sun_path = { 0 }
-  };
+  struct sockaddr_un addr = { 0 };
 
-  int sun_path_len = snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", ZYGISK_CONTROLLER_SOCKET);
-  if (sun_path_len < 0 || (size_t)sun_path_len >= sizeof(addr.sun_path)) {
+  int socklen = controller_addr(&addr);
+  if (socklen == -1) {
     LOGE("The monitor socket path does not fit into sockaddr_un");
 
     close(monitor_sock_fd);
@@ -212,8 +225,7 @@ bool rezygiskd_listener_init() {
     return false;
   }
 
-  socklen_t socklen = sizeof(sa_family_t) + sun_path_len;
-  if (bind(monitor_sock_fd, (struct sockaddr *)&addr, socklen) == -1) {
+  if (bind(monitor_sock_fd, (struct sockaddr *)&addr, (socklen_t)socklen) == -1) {
     PLOGE("bind socket");
 
     return false;
@@ -783,22 +795,22 @@ static void launch_tracer(pid_t pid, const char *tracer, bool is_spawner) {
     char pid_str[32];
     snprintf(pid_str, sizeof(pid_str), "%d", pid);
 
-    LOGI("exec tracer command: %s trace %s%s", tracer, pid_str,
-         (count_zygote > 1 && !is_spawner) ? " --restart" : "");
+    /* INFO: Only a later zygote exec restarts the companions: the first one
+              has none yet, and the spawner is not a zygote restart at all -
+              telling the daemon otherwise makes it drop every companion and
+              leaves the apps it already forked talking to nothing. */
+    bool restart = count_zygote > 1 && !is_spawner;
+
+    LOGI("exec tracer command: %s trace %s%s", tracer, pid_str, restart ? " --restart" : "");
 
     const char *tracer_name = position_after(tracer, '/');
 
-    /* INFO: Only restart companions if it's not the first time */
     char *exec_argv[6];
     int exec_argc = 0;
     exec_argv[exec_argc++] = (char *)tracer_name;
     exec_argv[exec_argc++] = "trace";
     exec_argv[exec_argc++] = pid_str;
-    /* INFO: The spawner is not a zygote restart. Telling the
-              daemon otherwise makes it drop every companion, and
-              the apps the spawner already forked are left talking
-              to nothing. */
-    if (count_zygote > 1 && !is_spawner) exec_argv[exec_argc++] = "--restart";
+    if (restart) exec_argv[exec_argc++] = "--restart";
     exec_argv[exec_argc] = NULL;
 
     execv(tracer, exec_argv);
@@ -821,11 +833,9 @@ static void launch_tracer(pid_t pid, const char *tracer, bool is_spawner) {
          readlink failure as an error. A /proc sweep is the opposite case -
          most entries are kernel threads, zombies or otherwise unreadable, and
          none of that is worth a line - so the bulk scan uses this silent
-         variant instead. The (deleted) suffix is stripped the same way, so a
-         program the kernel annotated still matches its expected path. */
+         variant instead. The (deleted) suffix is stripped by the shared
+         helper, so a program the kernel annotated still matches its path. */
 static bool program_matches(int pid, char *buf, size_t size) {
-  static const char kDeletedSuffix[] = " (deleted)";
-
   char path[PATH_MAX];
   snprintf(path, sizeof(path), "/proc/%d/exe", pid);
 
@@ -834,11 +844,7 @@ static bool program_matches(int pid, char *buf, size_t size) {
 
   if ((size_t)sz >= size) sz = (ssize_t)size - 1;
 
-  if ((size_t)sz >= sizeof(kDeletedSuffix) - 1 &&
-      memcmp(buf + sz - (sizeof(kDeletedSuffix) - 1), kDeletedSuffix, sizeof(kDeletedSuffix) - 1) == 0) {
-    sz -= (ssize_t)(sizeof(kDeletedSuffix) - 1);
-  }
-
+  sz = (ssize_t)strip_deleted_suffix(buf, (size_t)sz);
   buf[sz] = '\0';
 
   return true;
@@ -1604,22 +1610,17 @@ int send_control_command(enum rezygiskd_command cmd) {
   int sockfd = socket(PF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
   if (sockfd == -1) return -1;
 
-  struct sockaddr_un addr = {
-    .sun_family = AF_UNIX,
-    .sun_path = { 0 }
-  };
+  struct sockaddr_un addr = { 0 };
 
-  int sun_path_len = snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", ZYGISK_CONTROLLER_SOCKET);
-  if (sun_path_len < 0 || (size_t)sun_path_len >= sizeof(addr.sun_path)) {
+  int socklen = controller_addr(&addr);
+  if (socklen == -1) {
     close(sockfd);
 
     return -1;
   }
 
-  socklen_t socklen = sizeof(sa_family_t) + (size_t)sun_path_len;
-
   uint8_t cmd_op = cmd;
-  ssize_t nsend = sendto(sockfd, (void *)&cmd_op, sizeof(cmd_op), 0, (struct sockaddr *)&addr, socklen);
+  ssize_t nsend = sendto(sockfd, (void *)&cmd_op, sizeof(cmd_op), 0, (struct sockaddr *)&addr, (socklen_t)socklen);
 
   close(sockfd);
 

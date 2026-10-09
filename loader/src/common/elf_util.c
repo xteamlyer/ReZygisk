@@ -173,7 +173,6 @@ static bool parse_gnu_debugdata(ElfImg *img, const uint8_t *data, size_t size) {
 
     if (img->dd_symtab_start && img->dd_symtab_count > 0) {
       img->debugdata = out;
-      img->debugdata_size = out_size;
 
       LOGD("Loaded %zu mini-debug symbols from .gnu_debugdata of %s", img->dd_symtab_count, img->elf);
 

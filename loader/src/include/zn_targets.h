@@ -1,12 +1,11 @@
 #ifndef ZN_TARGETS_H
 #define ZN_TARGETS_H
 
-/* INFO: The zygote-class target names of zn_modules.txt, shared by the daemon
-         (which resolves the per-process set) and the loader (whose fallback
-         matcher must reach the same answer when the daemon is unreachable).
-         Both sides used to carry their own copy of this logic; the two halves
-         of the protocol drifting apart here would silently change which
-         modules load depending on daemon availability. */
+/* INFO: The zygote-class target names of zn_modules.txt, resolved by the
+         daemon when it builds the per-process set. It lives in the loader's
+         include tree because that is where the two halves of the protocol meet,
+         not because the loader matches these names: the daemon is the only
+         source of the module plan. */
 
 #include <string.h>
 
