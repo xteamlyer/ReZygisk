@@ -76,8 +76,14 @@ fn run(root: &Path) -> Result<bool, String> {
         println!("ACTION MISMATCH between the daemon and the loader:");
 
         for index in 0..daemon_actions.len().max(loader_actions.len()) {
-            let daemon = daemon_actions.get(index).map(String::as_str).unwrap_or("(missing)");
-            let loader = loader_actions.get(index).map(String::as_str).unwrap_or("(missing)");
+            let daemon = daemon_actions
+                .get(index)
+                .map(String::as_str)
+                .unwrap_or("(missing)");
+            let loader = loader_actions
+                .get(index)
+                .map(String::as_str)
+                .unwrap_or("(missing)");
 
             let marker = if daemon == loader { "  " } else { "! " };
             println!("{marker}{index:2}  daemon={daemon:24} loader={loader}");
@@ -94,8 +100,14 @@ fn run(root: &Path) -> Result<bool, String> {
 
         let names: BTreeSet<&String> = daemon_flags.keys().chain(loader_flags.keys()).collect();
         for name in names {
-            let daemon = daemon_flags.get(name).map(String::as_str).unwrap_or("(missing)");
-            let loader = loader_flags.get(name).map(String::as_str).unwrap_or("(missing)");
+            let daemon = daemon_flags
+                .get(name)
+                .map(String::as_str)
+                .unwrap_or("(missing)");
+            let loader = loader_flags
+                .get(name)
+                .map(String::as_str)
+                .unwrap_or("(missing)");
 
             if daemon != loader {
                 println!("! {name:26} daemon={daemon:14} loader={loader}");
@@ -110,8 +122,14 @@ fn run(root: &Path) -> Result<bool, String> {
         failed = true;
 
         println!("HELPER MISMATCH between the daemon and the loader:");
-        println!("  daemon only: {:?}", only_in(&daemon_helpers, &loader_helpers));
-        println!("  loader only: {:?}", only_in(&loader_helpers, &daemon_helpers));
+        println!(
+            "  daemon only: {:?}",
+            only_in(&daemon_helpers, &loader_helpers)
+        );
+        println!(
+            "  loader only: {:?}",
+            only_in(&loader_helpers, &daemon_helpers)
+        );
     }
 
     if !failed {
@@ -147,12 +165,11 @@ fn read(root: &Path, key: &str) -> Result<String, String> {
 /// A member is whatever sits between commas with the `= value` part dropped;
 /// an empty item is a trailing comma or a blank line, not a member.
 fn enum_members(text: &str, name: &str) -> Result<Vec<String>, String> {
-    let body = enum_body(text, name)
-        .ok_or_else(|| format!("cannot find enum {name}"))?;
+    // `enum_body` already stripped the comments out of the whole file, so the
+    // body it hands back needs no second pass.
+    let body = enum_body(text, name).ok_or_else(|| format!("cannot find enum {name}"))?;
 
-    let stripped = strip_comments(body);
-
-    Ok(stripped
+    Ok(body
         .split(',')
         .map(|item| item.trim())
         .filter(|item| !item.is_empty())
@@ -160,27 +177,28 @@ fn enum_members(text: &str, name: &str) -> Result<Vec<String>, String> {
         .collect())
 }
 
-/// The text between an enum's braces.
+/// The text between an enum's braces, with the comments already out of the way.
 ///
-/// The name has to be preceded by the `enum` keyword on a word boundary, or a
-/// comment mentioning the type would match first. The end is the first closing
-/// brace after the opening one, which is enough here: neither enum nests a struct
-/// or another enum, so that is the end of the enum rather than of something
-/// inside it.
-fn enum_body<'a>(text: &'a str, name: &str) -> Option<&'a str> {
+/// Searching the raw text would let a commented-out declaration match first:
+/// `/* enum rezygiskd_actions { FAKE, } */` names the type as convincingly as the
+/// real one does. Comments become single spaces rather than nothing, so the
+/// tokens either side of a removed comment stay separate.
+///
+/// The end is the first closing brace after the opening one, which is enough
+/// here: neither enum nests a struct or another enum, so that is the end of the
+/// enum rather than of something inside it.
+fn enum_body(text: &str, name: &str) -> Option<String> {
+    let stripped = strip_comments(text);
     let keyword = "enum";
 
     let mut from = 0;
-    while let Some(at) = text[from..].find(keyword) {
+    while let Some(at) = stripped[from..].find(keyword) {
         let keyword_at = from + at;
-        let after = &text[keyword_at + keyword.len()..];
+        let after = &stripped[keyword_at + keyword.len()..];
 
         // The type name has to be the next word, with any amount of space
         // between the keyword and it.
-        let trimmed = after.trim_start();
-        let skipped = after.len() - trimmed.len();
-
-        let rest = match trimmed.strip_prefix(name) {
+        let rest = match after.trim_start().strip_prefix(name) {
             Some(rest) => rest,
             None => {
                 from = keyword_at + keyword.len();
@@ -197,9 +215,8 @@ fn enum_body<'a>(text: &'a str, name: &str) -> Option<&'a str> {
             }
         };
 
-        let _ = skipped;
         let close = body.find('}')?;
-        return Some(&body[..close]);
+        return Some(body[..close].to_string());
     }
 
     None
@@ -338,7 +355,13 @@ fn helper_names(text: &str) -> BTreeSet<String> {
         }
     }
 
-    for helper in ["write_fd", "read_fd", "write_string", "write_loop", "read_loop"] {
+    for helper in [
+        "write_fd",
+        "read_fd",
+        "write_string",
+        "write_loop",
+        "read_loop",
+    ] {
         if declares_function(text, helper) {
             names.insert(helper.to_string());
         }
@@ -368,7 +391,8 @@ fn typed_family(text: &str, kind: &str) -> Vec<String> {
 
             let name_start = index;
             while index < text.len()
-                && (text.as_bytes()[index].is_ascii_alphanumeric() || text.as_bytes()[index] == b'_')
+                && (text.as_bytes()[index].is_ascii_alphanumeric()
+                    || text.as_bytes()[index] == b'_')
             {
                 index += 1;
             }
@@ -421,7 +445,8 @@ mod tests {
 
     #[test]
     fn enum_members_come_out_in_order() {
-        let text = "enum rezygiskd_actions {\n  DAEMON_SOCKET_CONNECT,\n  DAEMON_SOCKET_PING,\n};\n";
+        let text =
+            "enum rezygiskd_actions {\n  DAEMON_SOCKET_CONNECT,\n  DAEMON_SOCKET_PING,\n};\n";
         assert_eq!(
             enum_members(text, "rezygiskd_actions").unwrap(),
             vec!["DAEMON_SOCKET_CONNECT", "DAEMON_SOCKET_PING"]
@@ -449,7 +474,10 @@ mod tests {
     #[test]
     fn a_name_mentioned_in_a_comment_is_not_the_enum() {
         let text = "/* enum rezygiskd_actions { FAKE, } */\nenum rezygiskd_actions { REAL, };\n";
-        assert_eq!(enum_members(text, "rezygiskd_actions").unwrap(), vec!["REAL"]);
+        assert_eq!(
+            enum_members(text, "rezygiskd_actions").unwrap(),
+            vec!["REAL"]
+        );
     }
 
     #[test]
@@ -470,7 +498,10 @@ mod tests {
         let flags = flag_values(text);
 
         assert_eq!(flags.get("PROCESS_PID").map(String::as_str), Some("0"));
-        assert_eq!(flags.get("PROCESS_DENYLISTED").map(String::as_str), Some("1"));
+        assert_eq!(
+            flags.get("PROCESS_DENYLISTED").map(String::as_str),
+            Some("1")
+        );
         assert_eq!(flags.len(), 2);
     }
 
@@ -498,7 +529,8 @@ mod tests {
 
     #[test]
     fn both_helper_spellings_are_found() {
-        let text = "void write_func(int *);\nvoid write_func_def(long *);\nint read_func(char *);\n";
+        let text =
+            "void write_func(int *);\nvoid write_func_def(long *);\nint read_func(char *);\n";
         let names = helper_names(text);
 
         assert!(names.contains("write_int"));

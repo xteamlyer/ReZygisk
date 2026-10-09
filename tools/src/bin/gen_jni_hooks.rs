@@ -225,11 +225,7 @@ impl Method {
 
     /// The JNI descriptor: parameters then return.
     fn descriptor(&self) -> String {
-        let params: String = self
-            .args
-            .iter()
-            .map(|a| a.type_.descriptor())
-            .collect();
+        let params: String = self.args.iter().map(|a| a.type_.descriptor()).collect();
 
         format!("({}){}", params, self.ret.type_.descriptor())
     }
@@ -276,7 +272,7 @@ impl Method {
         let _ = write!(out, "rz_{}_pre(&ctx);", self.base_name());
         out.push_str(&ind(1));
         out.push_str(&self.orig_call());
-        out.push_str("(");
+        out.push('(');
         out.push_str(&ind(2));
         let _ = write!(out, "env, clazz, {}", self.arg_names());
         out.push_str(&ind(1));
@@ -335,7 +331,11 @@ fn gen_jni_def(methods: &[Method]) -> String {
     }
 
     decl.push_str(&ind(0));
-    let _ = write!(decl, "static JNINativeMethod {}_methods[] = {{", first.base_name());
+    let _ = write!(
+        decl,
+        "static JNINativeMethod {}_methods[] = {{",
+        first.base_name()
+    );
     for method in methods {
         decl.push_str(&ind(1));
         decl.push('{');
@@ -409,66 +409,15 @@ static void do_hook_zygote(JNIEnv *env) {
 #endif /* JNI_HOOKS_H */
 "#;
 
-/// The shared parameters, in the order the platform declares them.
-fn shared_args() -> Vec<(&'static str, JType, bool)> {
-    vec![
-        ("uid", JType::JInt, false),
-        ("gid", JType::JInt, false),
-        ("gids", JType::Array(&JType::JInt), false),
-        ("runtime_flags", JType::JInt, false),
-        ("rlimits", JType::Array(&JType::Array(&JType::JInt)), false),
-        ("mount_external", JType::JInt, false),
-        ("se_info", JType::JString, false),
-        ("nice_name", JType::JString, false),
-        ("fds_to_close", JType::Array(&JType::JInt), false),
-        ("instruction_set", JType::JString, false),
-        ("app_data_dir", JType::JString, false),
-        // The ones the body does copy into the args struct.
-        ("fds_to_ignore", JType::Array(&JType::JInt), true),
-        ("is_child_zygote", JType::JBoolean, true),
-        ("is_top_app", JType::JBoolean, true),
-        ("pkg_data_info_list", JType::Array(&JType::JString), true),
-        ("whitelisted_data_info_list", JType::Array(&JType::JString), true),
-        ("mount_data_dirs", JType::JBoolean, true),
-        ("mount_storage_dirs", JType::JBoolean, true),
-        ("mount_sysprop_overrides", JType::JBoolean, true),
-    ]
-}
-
+/// An argument the hooked body does not copy into the args struct.
 fn arg(name: &str, type_: JType) -> Arg {
     Arg::new(name, type_)
 }
 
+/// An argument the body does copy: the struct holds pointers, so these are the
+/// ones it wires up.
 fn arg_set(name: &str, type_: JType) -> Arg {
     Arg::set_arg(name, type_)
-}
-
-/// `uid gid gids runtime_flags rlimits mount_external se_info nice_name
-///  fds_to_close` - the prefix every forkAndSpecialize signature starts with.
-///
-/// The two type-name arguments are part of the prefix rather than the tail: the
-/// platform declares them right after `is_child_zygote`, and only the flags that
-/// came later sit after them. Getting this order wrong produces a signature that
-/// compiles and a hook that never fires.
-fn fas_prefix() -> Vec<Arg> {
-    vec![
-        arg("uid", JType::JInt),
-        arg("gid", JType::JInt),
-        arg("gids", JType::Array(&JType::JInt)),
-        arg("runtime_flags", JType::JInt),
-        arg("rlimits", JType::Array(&JType::Array(&JType::JInt))),
-        arg("mount_external", JType::JInt),
-        arg("se_info", JType::JString),
-        arg("nice_name", JType::JString),
-        arg("fds_to_close", JType::Array(&JType::JInt)),
-    ]
-}
-
-/// `instruction_set` and `app_data_dir`, which every version from `l` onwards
-/// carries in this position.
-fn instruction_and_data_dir() -> Vec<Arg> {
-    vec![
-    ]
 }
 
 /// Builds one forkAndSpecialize variant.
@@ -500,11 +449,12 @@ fn generate() -> String {
     ANON_COUNT.with(|count| count.set(0));
 
     let jint_array = || JType::Array(&JType::JInt);
-    let jstring_array = || JType::Array(&JType::JString);
 
     let fork_and_specialize = vec![
         // fas_l
-        fas("l", vec![
+        fas(
+            "l",
+            vec![
                 arg("uid", JType::JInt),
                 arg("gid", JType::JInt),
                 arg("gids", JType::Array(&JType::JInt)),
@@ -516,9 +466,12 @@ fn generate() -> String {
                 arg("fds_to_close", JType::Array(&JType::JInt)),
                 arg("instruction_set", JType::JString),
                 arg("app_data_dir", JType::JString),
-            ]),
+            ],
+        ),
         // fas_o
-        fas("o", vec![
+        fas(
+            "o",
+            vec![
                 arg("uid", JType::JInt),
                 arg("gid", JType::JInt),
                 arg("gids", JType::Array(&JType::JInt)),
@@ -531,9 +484,12 @@ fn generate() -> String {
                 arg_set("fds_to_ignore", JType::Array(&JType::JInt)),
                 arg("instruction_set", JType::JString),
                 arg("app_data_dir", JType::JString),
-            ]),
+            ],
+        ),
         // fas_p
-        fas("p", vec![
+        fas(
+            "p",
+            vec![
                 arg("uid", JType::JInt),
                 arg("gid", JType::JInt),
                 arg("gids", JType::Array(&JType::JInt)),
@@ -547,9 +503,12 @@ fn generate() -> String {
                 arg_set("is_child_zygote", JType::JBoolean),
                 arg("instruction_set", JType::JString),
                 arg("app_data_dir", JType::JString),
-            ]),
+            ],
+        ),
         // fas_q_alt
-        fas("q_alt", vec![
+        fas(
+            "q_alt",
+            vec![
                 arg("uid", JType::JInt),
                 arg("gid", JType::JInt),
                 arg("gids", JType::Array(&JType::JInt)),
@@ -564,9 +523,12 @@ fn generate() -> String {
                 arg("instruction_set", JType::JString),
                 arg("app_data_dir", JType::JString),
                 arg_set("is_top_app", JType::JBoolean),
-            ]),
+            ],
+        ),
         // fas_r
-        fas("r", vec![
+        fas(
+            "r",
+            vec![
                 arg("uid", JType::JInt),
                 arg("gid", JType::JInt),
                 arg("gids", JType::Array(&JType::JInt)),
@@ -585,9 +547,12 @@ fn generate() -> String {
                 arg_set("whitelisted_data_info_list", JType::Array(&JType::JString)),
                 arg_set("mount_data_dirs", JType::JBoolean),
                 arg_set("mount_storage_dirs", JType::JBoolean),
-            ]),
+            ],
+        ),
         // fas_u
-        fas("u", vec![
+        fas(
+            "u",
+            vec![
                 arg("uid", JType::JInt),
                 arg("gid", JType::JInt),
                 arg("gids", JType::Array(&JType::JInt)),
@@ -607,9 +572,12 @@ fn generate() -> String {
                 arg_set("mount_data_dirs", JType::JBoolean),
                 arg_set("mount_storage_dirs", JType::JBoolean),
                 arg_set("mount_sysprop_overrides", JType::JBoolean),
-            ]),
+            ],
+        ),
         // fas_c
-        fas("c", vec![
+        fas(
+            "c",
+            vec![
                 arg("uid", JType::JInt),
                 Arg::anon(JType::JInt),
                 arg("gid", JType::JInt),
@@ -631,9 +599,12 @@ fn generate() -> String {
                 arg_set("mount_data_dirs", JType::JBoolean),
                 arg_set("mount_storage_dirs", JType::JBoolean),
                 arg_set("mount_sysprop_overrides", JType::JBoolean),
-            ]),
+            ],
+        ),
         // fas_samsung_m
-        fas("samsung_m", vec![
+        fas(
+            "samsung_m",
+            vec![
                 arg("uid", JType::JInt),
                 arg("gid", JType::JInt),
                 arg("gids", JType::Array(&JType::JInt)),
@@ -647,9 +618,12 @@ fn generate() -> String {
                 arg("fds_to_close", JType::Array(&JType::JInt)),
                 arg("instruction_set", JType::JString),
                 arg("app_data_dir", JType::JString),
-            ]),
+            ],
+        ),
         // fas_samsung_n
-        fas("samsung_n", vec![
+        fas(
+            "samsung_n",
+            vec![
                 arg("uid", JType::JInt),
                 arg("gid", JType::JInt),
                 arg("gids", JType::Array(&JType::JInt)),
@@ -664,9 +638,12 @@ fn generate() -> String {
                 arg("instruction_set", JType::JString),
                 arg("app_data_dir", JType::JString),
                 Arg::anon(JType::JInt),
-            ]),
+            ],
+        ),
         // fas_samsung_o
-        fas("samsung_o", vec![
+        fas(
+            "samsung_o",
+            vec![
                 arg("uid", JType::JInt),
                 arg("gid", JType::JInt),
                 arg("gids", JType::Array(&JType::JInt)),
@@ -681,9 +658,12 @@ fn generate() -> String {
                 arg_set("fds_to_ignore", JType::Array(&JType::JInt)),
                 arg("instruction_set", JType::JString),
                 arg("app_data_dir", JType::JString),
-            ]),
+            ],
+        ),
         // fas_samsung_p
-        fas("samsung_p", vec![
+        fas(
+            "samsung_p",
+            vec![
                 arg("uid", JType::JInt),
                 arg("gid", JType::JInt),
                 arg("gids", JType::Array(&JType::JInt)),
@@ -699,9 +679,12 @@ fn generate() -> String {
                 arg_set("is_child_zygote", JType::JBoolean),
                 arg("instruction_set", JType::JString),
                 arg("app_data_dir", JType::JString),
-            ]),
+            ],
+        ),
         // fas_samsung_b
-        fas("samsung_b", vec![
+        fas(
+            "samsung_b",
+            vec![
                 arg("uid", JType::JInt),
                 arg("gid", JType::JInt),
                 arg("gids", JType::Array(&JType::JInt)),
@@ -722,9 +705,12 @@ fn generate() -> String {
                 arg_set("mount_data_dirs", JType::JBoolean),
                 arg_set("mount_storage_dirs", JType::JBoolean),
                 arg_set("mount_sysprop_overrides", JType::JBoolean),
-            ]),
+            ],
+        ),
         // fas_grapheneos_u
-        fas("grapheneos_u", vec![
+        fas(
+            "grapheneos_u",
+            vec![
                 arg("uid", JType::JInt),
                 arg("gid", JType::JInt),
                 arg("gids", JType::Array(&JType::JInt)),
@@ -745,9 +731,12 @@ fn generate() -> String {
                 arg_set("mount_storage_dirs", JType::JBoolean),
                 arg_set("mount_sysprop_overrides", JType::JBoolean),
                 Arg::anon(JType::Array(&JType::JLong)),
-            ]),
+            ],
+        ),
         // fas_grapheneos_u_alt
-        fas("grapheneos_u_alt", vec![
+        fas(
+            "grapheneos_u_alt",
+            vec![
                 arg("uid", JType::JInt),
                 arg("gid", JType::JInt),
                 arg("gids", JType::Array(&JType::JInt)),
@@ -769,9 +758,12 @@ fn generate() -> String {
                 arg_set("mount_storage_dirs", JType::JBoolean),
                 arg_set("mount_sysprop_overrides", JType::JBoolean),
                 Arg::anon(JType::Array(&JType::JLong)),
-            ]),
+            ],
+        ),
         // fas_grapheneos_c
-        fas("grapheneos_c", vec![
+        fas(
+            "grapheneos_c",
+            vec![
                 Arg::anon(JType::Array(&JType::JLong)),
                 arg("uid", JType::JInt),
                 arg("gid", JType::JInt),
@@ -793,12 +785,15 @@ fn generate() -> String {
                 arg_set("mount_data_dirs", JType::JBoolean),
                 arg_set("mount_storage_dirs", JType::JBoolean),
                 arg_set("mount_sysprop_overrides", JType::JBoolean),
-            ]),
+            ],
+        ),
     ];
 
     let specialize = vec![
         // spec_q
-        spec("q", vec![
+        spec(
+            "q",
+            vec![
                 arg("uid", JType::JInt),
                 arg("gid", JType::JInt),
                 arg("gids", JType::Array(&JType::JInt)),
@@ -810,9 +805,12 @@ fn generate() -> String {
                 arg_set("is_child_zygote", JType::JBoolean),
                 arg("instruction_set", JType::JString),
                 arg("app_data_dir", JType::JString),
-            ]),
+            ],
+        ),
         // spec_q_alt
-        spec("q_alt", vec![
+        spec(
+            "q_alt",
+            vec![
                 arg("uid", JType::JInt),
                 arg("gid", JType::JInt),
                 arg("gids", JType::Array(&JType::JInt)),
@@ -825,9 +823,12 @@ fn generate() -> String {
                 arg("instruction_set", JType::JString),
                 arg("app_data_dir", JType::JString),
                 arg_set("is_top_app", JType::JBoolean),
-            ]),
+            ],
+        ),
         // spec_r
-        spec("r", vec![
+        spec(
+            "r",
+            vec![
                 arg("uid", JType::JInt),
                 arg("gid", JType::JInt),
                 arg("gids", JType::Array(&JType::JInt)),
@@ -844,9 +845,12 @@ fn generate() -> String {
                 arg_set("whitelisted_data_info_list", JType::Array(&JType::JString)),
                 arg_set("mount_data_dirs", JType::JBoolean),
                 arg_set("mount_storage_dirs", JType::JBoolean),
-            ]),
+            ],
+        ),
         // spec_u
-        spec("u", vec![
+        spec(
+            "u",
+            vec![
                 arg("uid", JType::JInt),
                 arg("gid", JType::JInt),
                 arg("gids", JType::Array(&JType::JInt)),
@@ -864,9 +868,12 @@ fn generate() -> String {
                 arg_set("mount_data_dirs", JType::JBoolean),
                 arg_set("mount_storage_dirs", JType::JBoolean),
                 arg_set("mount_sysprop_overrides", JType::JBoolean),
-            ]),
+            ],
+        ),
         // spec_c
-        spec("c", vec![
+        spec(
+            "c",
+            vec![
                 arg("uid", JType::JInt),
                 Arg::anon(JType::JInt),
                 arg("gid", JType::JInt),
@@ -885,9 +892,12 @@ fn generate() -> String {
                 arg_set("mount_data_dirs", JType::JBoolean),
                 arg_set("mount_storage_dirs", JType::JBoolean),
                 arg_set("mount_sysprop_overrides", JType::JBoolean),
-            ]),
+            ],
+        ),
         // spec_samsung_q
-        spec("samsung_q", vec![
+        spec(
+            "samsung_q",
+            vec![
                 arg("uid", JType::JInt),
                 arg("gid", JType::JInt),
                 arg("gids", JType::Array(&JType::JInt)),
@@ -901,9 +911,12 @@ fn generate() -> String {
                 arg_set("is_child_zygote", JType::JBoolean),
                 arg("instruction_set", JType::JString),
                 arg("app_data_dir", JType::JString),
-            ]),
+            ],
+        ),
         // spec_grapheneos_u
-        spec("grapheneos_u", vec![
+        spec(
+            "grapheneos_u",
+            vec![
                 arg("uid", JType::JInt),
                 arg("gid", JType::JInt),
                 arg("gids", JType::Array(&JType::JInt)),
@@ -922,9 +935,12 @@ fn generate() -> String {
                 arg_set("mount_storage_dirs", JType::JBoolean),
                 arg_set("mount_sysprop_overrides", JType::JBoolean),
                 Arg::anon(JType::Array(&JType::JLong)),
-            ]),
+            ],
+        ),
         // spec_grapheneos_c
-        spec("grapheneos_c", vec![
+        spec(
+            "grapheneos_c",
+            vec![
                 Arg::anon(JType::Array(&JType::JLong)),
                 arg("uid", JType::JInt),
                 arg("gid", JType::JInt),
@@ -943,7 +959,8 @@ fn generate() -> String {
                 arg_set("mount_data_dirs", JType::JBoolean),
                 arg_set("mount_storage_dirs", JType::JBoolean),
                 arg_set("mount_sysprop_overrides", JType::JBoolean),
-            ]),
+            ],
+        ),
     ];
 
     let server = vec![
@@ -1006,8 +1023,9 @@ fn main() -> ExitCode {
         Some(path) => PathBuf::from(path),
         // The header lands in the loader's injector directory, which is where
         // hook.c includes it from, so the generator can be run from anywhere.
-        None => PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../loader/src/injector/jni_hooks.h"),
+        None => {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../loader/src/injector/jni_hooks.h")
+        }
     };
 
     let header = generate();
@@ -1034,7 +1052,9 @@ mod tests {
     #[test]
     fn the_header_starts_with_its_guard() {
         let header = generate();
-        assert!(header.starts_with("/* Generated by gen_jni_hooks.py */\n#ifndef JNI_HOOKS_H\n#define JNI_HOOKS_H\n\n"));
+        assert!(header.starts_with(
+            "/* Generated by gen_jni_hooks.py */\n#ifndef JNI_HOOKS_H\n#define JNI_HOOKS_H\n\n"
+        ));
         assert!(header.trim_end().ends_with("#endif /* JNI_HOOKS_H */"));
     }
 
@@ -1054,11 +1074,12 @@ mod tests {
         // The typedef's return type comes from the first method of each table,
         // and specializeAppProcess is the one that returns void.
         for base in ["nativeForkAndSpecialize", "nativeForkSystemServer"] {
-            assert!(header.contains(&format!("typedef jint (*{base}_fn)(JNIEnv *, jclass, ...);")));
+            assert!(header.contains(&format!(
+                "typedef jint (*{base}_fn)(JNIEnv *, jclass, ...);"
+            )));
         }
-        assert!(header.contains(
-            "typedef void (*nativeSpecializeAppProcess_fn)(JNIEnv *, jclass, ...);"
-        ));
+        assert!(header
+            .contains("typedef void (*nativeSpecializeAppProcess_fn)(JNIEnv *, jclass, ...);"));
     }
 
     #[test]
@@ -1076,7 +1097,11 @@ mod tests {
         );
 
         assert_eq!(method.descriptor(), "(ILjava/lang/String;[I)I");
-        assert_eq!(method.cpp_args(), "jint uid, jstring se_info, jint *gids");
+        // jintArray, not jint *: the signature names the type jni.h declares.
+        assert_eq!(
+            method.cpp_args(),
+            "jint uid, jstring se_info, jintArray gids"
+        );
     }
 
     #[test]
@@ -1088,7 +1113,10 @@ mod tests {
         assert_eq!(JType::Array(&JType::JBoolean).cpp(), "jbooleanArray");
         assert_eq!(JType::Array(&JType::JString).cpp(), "jobjectArray");
         // Two levels deep is still a jobjectArray.
-        assert_eq!(JType::Array(&JType::Array(&JType::JInt)).cpp(), "jobjectArray");
+        assert_eq!(
+            JType::Array(&JType::Array(&JType::JInt)).cpp(),
+            "jobjectArray"
+        );
     }
 
     #[test]
@@ -1096,7 +1124,10 @@ mod tests {
         assert_eq!(JType::Array(&JType::JInt).descriptor(), "[I");
         assert_eq!(JType::Array(&JType::JLong).descriptor(), "[J");
         assert_eq!(JType::Array(&JType::JBoolean).descriptor(), "[Z");
-        assert_eq!(JType::Array(&JType::JString).descriptor(), "[Ljava/lang/String;");
+        assert_eq!(
+            JType::Array(&JType::JString).descriptor(),
+            "[Ljava/lang/String;"
+        );
     }
 
     #[test]
@@ -1139,7 +1170,11 @@ mod tests {
     fn the_install_function_names_all_three_tables() {
         let header = generate();
 
-        for base in ["nativeForkAndSpecialize", "nativeSpecializeAppProcess", "nativeForkSystemServer"] {
+        for base in [
+            "nativeForkAndSpecialize",
+            "nativeSpecializeAppProcess",
+            "nativeForkSystemServer",
+        ] {
             assert!(header.contains(&format!("hook_jni_methods(env, clz, {base}_methods,")));
             assert!(header.contains(&format!("{base}_orig = {base}_methods[i].fnPtr;")));
         }

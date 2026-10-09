@@ -76,7 +76,10 @@ fn main() -> ExitCode {
     // does not. Both layouts are fixtures, so both are written.
     let crc = crc32(&inner);
 
-    for (suffix, payload) in [("-plain.elf", stream.clone()), ("-crc.elf", with_prefix(crc, &stream))] {
+    for (suffix, payload) in [
+        ("-plain.elf", stream.clone()),
+        ("-crc.elf", with_prefix(crc, &stream)),
+    ] {
         let path = with_suffix(&prefix, suffix);
 
         if let Some(parent) = path.parent() {
@@ -180,19 +183,24 @@ fn push_u64(out: &mut Vec<u8>, value: u64) {
     out.extend_from_slice(&value.to_le_bytes());
 }
 
-/// One section header, all ten fields.
+/// One section header, all ten fields in the order the ELF defines them.
+///
+/// `sh_flags` and `sh_addr` are eight bytes each, not four: writing them as u32
+/// makes every field after them land eight bytes early, and the loader then reads
+/// the section's offset out of its alignment field.
 fn shdr(name_offset: u32, kind: u32, offset: u64, size: u64, link: u32, entsize: u64) -> Vec<u8> {
     let mut out = Vec::with_capacity(SHDR_SIZE);
     push_u32(&mut out, name_offset);
     push_u32(&mut out, kind);
-    push_u32(&mut out, 0); // sh_flags
-    push_u32(&mut out, 0); // sh_addr
+    push_u64(&mut out, 0); // sh_flags
+    push_u64(&mut out, 0); // sh_addr
     push_u64(&mut out, offset);
     push_u64(&mut out, size);
     push_u32(&mut out, link);
     push_u32(&mut out, 0); // sh_info
     push_u64(&mut out, 1); // sh_addralign
     push_u64(&mut out, entsize);
+    debug_assert_eq!(out.len(), SHDR_SIZE);
     out
 }
 
@@ -341,7 +349,10 @@ mod tests {
         assert_eq!(crc32(b""), 0x0000_0000);
         assert_eq!(crc32(b"a"), 0xe8b7_be43);
         assert_eq!(crc32(b"123456789"), 0xcbf4_3926);
-        assert_eq!(crc32(b"The quick brown fox jumps over the lazy dog"), 0x414f_a339);
+        assert_eq!(
+            crc32(b"The quick brown fox jumps over the lazy dog"),
+            0x414f_a339
+        );
     }
 
     #[test]
@@ -406,8 +417,14 @@ mod tests {
         // And each probe symbol carries the address the tests assert on.
         for (index, (_, _, value, sym_size)) in SYMBOLS.iter().enumerate() {
             let entry = &inner[offset + (index + 1) * SYMENT..offset + (index + 2) * SYMENT];
-            assert_eq!(u64::from_le_bytes(entry[8..0x10].try_into().unwrap()), *value);
-            assert_eq!(u64::from_le_bytes(entry[0x10..0x18].try_into().unwrap()), *sym_size);
+            assert_eq!(
+                u64::from_le_bytes(entry[8..0x10].try_into().unwrap()),
+                *value
+            );
+            assert_eq!(
+                u64::from_le_bytes(entry[0x10..0x18].try_into().unwrap()),
+                *sym_size
+            );
         }
     }
 
@@ -450,7 +467,10 @@ mod tests {
             with_suffix(Path::new("/tmp/out.bin"), "-crc.elf"),
             PathBuf::from("/tmp/out.bin-crc.elf")
         );
-        assert_eq!(with_suffix(Path::new("out"), "-plain.elf"), PathBuf::from("out-plain.elf"));
+        assert_eq!(
+            with_suffix(Path::new("out"), "-plain.elf"),
+            PathBuf::from("out-plain.elf")
+        );
     }
 
     #[test]
