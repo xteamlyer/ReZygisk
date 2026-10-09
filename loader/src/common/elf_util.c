@@ -832,9 +832,6 @@ static bool _load_symtabs(ElfImg *img) {
 
       if (!zn_collectable_symbol(current_sym, symtab_str_shdr != NULL ? symtab_str_shdr->sh_size : SIZE_MAX)) continue;
 
-      const char *st_name = symtab_strings + current_sym->st_name;
-      if (!st_name) continue;
-
       img->symtabs_[current_valid_index] = current_sym;
 
       current_valid_index++;

@@ -171,15 +171,13 @@ static const char *find_module_loop_source(const struct mount_list *all) {
   return NULL;
 }
 
+/* INFO: Kept as the name this file and its test call, but the decision itself
+         lives in root_mounts.h now: the daemon asks the same question while
+         building the clean namespace, and the two answers have to be the same
+         set. Only the shape of the argument differs - this walker carries a
+         struct, so it unwraps it here. */
 static bool carries_root_trace(const struct mount_info *info, const char *loop_source) {
-  if (mount_path_at_or_under(info->root, ROOT_MODULES_ROOT)) return true;
-  if (mount_path_at_or_under(info->target, ROOT_MODULES_DIR)) return true;
-
-  for (size_t i = 0; i < ROOT_SOURCE_COUNT; i++) {
-    if (strcmp(info->source, kRootSources[i]) == 0) return true;
-  }
-
-  return loop_source != NULL && strcmp(info->source, loop_source) == 0;
+  return mount_carries_root_trace(info->root, info->target, info->source, loop_source);
 }
 
 static int compare_by_id_descending(const void *a, const void *b) {

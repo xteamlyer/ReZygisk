@@ -63,4 +63,30 @@ static inline bool mount_is_module_loop_source(const char *target, const char *s
   #define ROOT_SOURCE_COUNT 1
 #endif
 
+/* INFO: The whole decision, in one place: whether this mount is one the
+         process loses. The loader asks it while reverting, the daemon while
+         building the clean namespace, and the two answers have to be the same
+         set - a mount dropped by one walker and kept by the other is a process
+         that is half hidden. It is written once here for that reason; both
+         walkers used to spell the four conditions out themselves, in two
+         different orders, which is exactly the drift this header exists to
+         prevent.
+
+         `loop_source` is the module store's loop device, which each walker
+         looks up before it starts deciding (KernelSU mounts the modules from
+         it, and its name shows up as the source of every mount under the module
+         directory). It is NULL when there is no such mount, which is the APatch
+         case - hence the NULL check rather than a strcmp against it. */
+static inline bool mount_carries_root_trace(const char *root, const char *target,
+                                            const char *source, const char *loop_source) {
+  if (mount_path_at_or_under(root, ROOT_MODULES_ROOT)) return true;
+  if (mount_path_at_or_under(target, ROOT_MODULES_DIR)) return true;
+
+  for (size_t i = 0; i < ROOT_SOURCE_COUNT; i++) {
+    if (strcmp(source, kRootSources[i]) == 0) return true;
+  }
+
+  return loop_source != NULL && strcmp(source, loop_source) == 0;
+}
+
 #endif /* ROOT_MOUNTS_H */

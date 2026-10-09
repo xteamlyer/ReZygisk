@@ -37,8 +37,6 @@ const char *position_after(const char *str, const char needle);
 
 void *find_module_return_addr(struct maps_info *map, const char *suffix);
 
-void *find_module_base(struct maps_info *map, const char *file);
-
 void *find_func_addr(struct maps_info *local_info, struct maps_info *remote_info, const char *module, const char *func);
 
 /* INFO: Translates a virtual address into its file offset through the PT_LOAD
@@ -56,8 +54,6 @@ bool wait_linker_ready(int pid, uintptr_t *out_libc_init_resolved, uintptr_t *ou
 bool ptrace_poke_uintptr(pid_t pid, uintptr_t addr, uintptr_t value);
 
 bool wait_for_ptrace_syscall_stop(int pid, int *status);
-
-long remote_syscall(int pid, struct user_regs_struct *regs, uintptr_t syscall_gadget, long sysnr, long *args, size_t args_size);
 
 /* INFO: Returns false when the tracee's registers could not be rewritten;
           the caller must not continue the trapped syscall in that case. */

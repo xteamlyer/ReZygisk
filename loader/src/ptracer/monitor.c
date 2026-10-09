@@ -678,6 +678,7 @@ static int sigchld_status;
 
 static pid_t *sigchld_process;
 static size_t sigchld_process_count = 0;
+static size_t sigchld_process_capacity = 0;
 
 /* INFO: Who holds init right now, or 0 when nobody does. Read out of
          /proc/1/status instead of inferred, because it answers the only
@@ -755,6 +756,8 @@ static bool claim_init_tracer() {
 
 bool sigchld_listener_init() {
   sigchld_process = NULL;
+  sigchld_process_count = 0;
+  sigchld_process_capacity = 0;
 
   sigset_t mask;
   sigemptyset(&mask);
@@ -1141,24 +1144,37 @@ void sigchld_listener_callback() {
           goto ptrace_process;
         }
 
-        pid_t *new_sigchld_process = (pid_t *)realloc(sigchld_process, sizeof(pid_t) * (sigchld_process_count + 1));
-        if (new_sigchld_process == NULL) {
-          PLOGE("realloc sigchld_process");
+        /* INFO: Grown in powers of two rather than one slot at a time. Every
+                  process the zygote forks passes through here, and they arrive
+                  in bursts - an application launch is one - so growing by a
+                  single element made each of those pay for a realloc and a copy
+                  of the whole array. The array only ever holds the pids of live
+                  processes, so the water mark it reaches is the high-water mark
+                  of a burst, not of the session. */
+        if (sigchld_process_count == sigchld_process_capacity) {
+          size_t capacity = sigchld_process_capacity == 0 ? 64 : sigchld_process_capacity * 2;
 
-          /* INFO: This process is stopped and under this monitor's control, and
-                    the slot it would have been recorded in is exactly what just
-                    failed to allocate - so nothing later in the loop will pick
-                    it up. Continuing without it leaves it stopped for good,
-                    which is one hung application per allocation failure. It is
-                    detached and let run instead: this monitor loses track of the
-                    process, which the failed allocation already cost, but the
-                    process itself survives and the fork it was making
-                    completes. */
-          ptrace(PTRACE_DETACH, pid, 0, 0);
+          pid_t *new_sigchld_process = (pid_t *)realloc(sigchld_process, sizeof(pid_t) * capacity);
+          if (new_sigchld_process == NULL) {
+            PLOGE("realloc sigchld_process");
 
-          continue;
+            /* INFO: This process is stopped and under this monitor's control,
+                      and the slot it would have been recorded in is exactly what
+                      just failed to allocate - so nothing later in the loop will
+                      pick it up. Continuing without it leaves it stopped for
+                      good, which is one hung application per allocation failure.
+                      It is detached and let run instead: this monitor loses track
+                      of the process, which the failed allocation already cost,
+                      but the process itself survives and the fork it was making
+                      completes. */
+            ptrace(PTRACE_DETACH, pid, 0, 0);
+
+            continue;
+          }
+
+          sigchld_process = new_sigchld_process;
+          sigchld_process_capacity = capacity;
         }
-        sigchld_process = new_sigchld_process;
 
         sigchld_process[sigchld_process_count] = pid;
         sigchld_process_count++;
@@ -1280,6 +1296,7 @@ void sigchld_listener_stop() {
   if (sigchld_process != NULL) free(sigchld_process);
   sigchld_process = NULL;
   sigchld_process_count = 0;
+  sigchld_process_capacity = 0;
 }
 
 static char pre_section[1024];

@@ -838,15 +838,12 @@ bool umount_root(void) {
   for (size_t i = 0; i < mounts.length; i++) {
     struct mountinfo mount = mounts.mounts[i];
 
-    bool should_unmount = false;
-    for (size_t s = 0; s < ROOT_SOURCE_COUNT && !should_unmount; s++) {
-      if (strcmp(mount.source, kRootSources[s]) == 0) should_unmount = true;
-    }
-    if (mount_path_at_or_under(mount.target, ROOT_MODULES_DIR)) should_unmount = true;
-    if (mount_path_at_or_under(mount.root, ROOT_MODULES_ROOT)) should_unmount = true;
-    if (loop_source != NULL && strcmp(mount.source, loop_source) == 0) should_unmount = true;
-
-    if (!should_unmount) continue;
+    /* INFO: The same question the loader asks while reverting, through the same
+              function. It used to be spelled out here as four conditions in a
+              different order, which is precisely the drift that makes one
+              walker drop a mount the other keeps - a process that is half
+              hidden. */
+    if (!mount_carries_root_trace(mount.root, mount.target, mount.source, loop_source)) continue;
 
     char **tmp_targets = realloc(targets_to_unmount, (num_targets + 1) * sizeof(char*));
     if (tmp_targets == NULL) {

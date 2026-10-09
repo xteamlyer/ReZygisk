@@ -153,12 +153,6 @@ static const struct map_entry *find_module_entry(const struct maps_info *map, co
   return NULL;
 }
 
-void *find_module_base(struct maps_info *map, const char *file) {
-  const struct map_entry *m = find_module_entry(map, file);
-
-  return m ? (void *)m->start : NULL;
-}
-
 /* INFO: The symbol is looked up in the image the local process has `module`
            mapped from, and the path for that comes from the maps entry itself
            rather than from the name the caller used.
@@ -256,8 +250,8 @@ uintptr_t remote_call(int pid, struct user_regs_struct *regs, uintptr_t func_add
              makes the CPU treat the branch as a JOP attempt and raise SIGILL
              instead of running the function.
 
-             remote_syscall clears the same field for the vDSO svc a few lines
-             below; this is the equivalent for an ordinary function call. */
+             Every remote call in this file clears it, whatever the branch is
+             about to reach: an ordinary function here, a vDSO entry elsewhere. */
   regs->pstate &= ~AARCH64_PSTATE_BTYPE_MASK;
 
   LOGV("calling remote function %" PRIxPTR " args %zu", func_addr, args_size);
@@ -724,73 +718,6 @@ bool wait_for_ptrace_syscall_stop(int pid, int *status) {
 
     return false;
   }
-}
-
-long remote_syscall(int pid, struct user_regs_struct *regs, uintptr_t syscall_gadget, long sysnr, long *args, size_t args_size) {
-  LOGV("Remote syscall %ld args %zu at gadget %p", sysnr, args_size, (void *)syscall_gadget);
-
-  long ret = -1;
-
-  /* Save tracee's current register state (all architectures) */
-  struct user_regs_struct saved_regs;
-  if (!get_regs(pid, &saved_regs)) {
-    LOGE("Failed to get regs for save");
-
-    return -1;
-  }
-
-  /* Use *regs as scratch for syscall setup */
-  /* x8 = syscall number, x0-x5 = args */
-  regs->regs[8] = sysnr;
-  for (size_t i = 0; i < 6; i++) {
-    regs->regs[i] = 0;
-  }
-  for (size_t i = 0; i < args_size && i < 6; i++) {
-    regs->regs[i] = args[i];
-  }
-  regs->REG_IP = syscall_gadget;
-  /* INFO: BTYPE so stepping the aarch64 vDSO svc will be accepted by the CPU */
-  regs->pstate &= ~AARCH64_PSTATE_BTYPE_MASK;
-
-  if (!set_regs(pid, regs)) {
-    LOGE("Failed to set regs for syscall");
-
-    goto restore_regs;
-  }
-
-  /* INFO: We must perform this code twice. The first time is to step into the syscall entry,
-             and the second time is to step out of the syscall exit. */
-  for (int i = 0; i < 2; i++) {
-    if (ptrace(PTRACE_SYSCALL, pid, 0, 0) == -1) {
-      PLOGE("PTRACE_SYSCALL");
-
-      ret = -1;
-      goto restore_regs;
-    }
-
-    int status;
-    if (!wait_for_ptrace_syscall_stop(pid, &status)) goto restore_regs;
-
-    if (i == 0)
-      LOGV("Remote syscall %ld got PTRACE_SYSCALL entry-stop, continuing to exit-stop", sysnr);
-  }
-
-  if (!get_regs(pid, regs)) {
-    LOGE("Failed to get regs after PTRACE_SYSCALL");
-
-    ret = -1;
-    goto restore_regs;
-  }
-
-  ret = (long)regs->REG_RET;
-
-  LOGV("Remote syscall %ld succeeded: %ld", sysnr, ret);
-
-  restore_regs:
-    *regs = saved_regs;
-    if (!set_regs(pid, regs)) LOGE("Failed to restore regs after syscall");
-
-    return ret;
 }
 
 bool tracee_skip_syscall(int pid) {
