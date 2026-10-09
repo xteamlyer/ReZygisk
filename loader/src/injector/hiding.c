@@ -201,6 +201,12 @@ bool hide_module_maps(void) {
   if (!scan_maps_safe("self", collect_one_map, &state)) {
     LOGE("Failed to read the maps of this process");
 
+    /* INFO: The visitor can have collected entries, and their paths, before the
+              stream failed - nothing else holds them, and this returns before
+              the loop that would have freed them. */
+    for (size_t i = 0; i < state.count; i++) free(state.targets[i].path);
+    free(state.targets);
+
     return false;
   }
 

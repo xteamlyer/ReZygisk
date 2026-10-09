@@ -228,6 +228,11 @@ bool rezygiskd_listener_init() {
   if (bind(monitor_sock_fd, (struct sockaddr *)&addr, (socklen_t)socklen) == -1) {
     PLOGE("bind socket");
 
+    /* INFO: Closed here as on the path above that also gives up, so the fd does
+              not outlive the function that decided it is useless. */
+    close(monitor_sock_fd);
+    monitor_sock_fd = -1;
+
     return false;
   }
 
@@ -311,10 +316,17 @@ void rezygiskd_listener_callback() {
         } else if (tracing_state == STOPPED) {
           LOGI("Start tracing init");
 
-          ptrace(PTRACE_SEIZE, 1, 0, PTRACE_O_TRACEFORK);
-
-          tracing_state = TRACING;
-          monitor_stop_reason = NULL;
+          /* INFO: Checked here the way claim_init_tracer() checks it. A seize
+                    that failed would leave this monitor believing it was tracing
+                    init, and every later decision - the fork handling, the
+                    status line the manager reads - made on that belief. Staying
+                    where it is the honest answer, and the status reports it. */
+          if (ptrace(PTRACE_SEIZE, 1, 0, PTRACE_O_TRACEFORK) == -1) {
+            PLOGE("seize init");
+          } else {
+            tracing_state = TRACING;
+            monitor_stop_reason = NULL;
+          }
         }
 
         update_status(NULL);
@@ -1121,6 +1133,17 @@ void sigchld_listener_callback() {
         if (new_sigchld_process == NULL) {
           PLOGE("realloc sigchld_process");
 
+          /* INFO: This process is stopped and under this monitor's control, and
+                    the slot it would have been recorded in is exactly what just
+                    failed to allocate - so nothing later in the loop will pick
+                    it up. Continuing without it leaves it stopped for good,
+                    which is one hung application per allocation failure. It is
+                    detached and let run instead: this monitor loses track of the
+                    process, which the failed allocation already cost, but the
+                    process itself survives and the fork it was making
+                    completes. */
+          ptrace(PTRACE_DETACH, pid, 0, 0);
+
           continue;
         }
         sigchld_process = new_sigchld_process;
@@ -1268,15 +1291,32 @@ static bool has_zn_twin(const char *name) {
 
 /* INFO: Folds the detected Zygisk modules into the module description so the
          manager shows them right on the module card, Mountify-style. */
+/* INFO: Appends to a bounded buffer and keeps the offset inside it. snprintf
+         reports the length it would have written rather than the length it did,
+         so a truncated append advances the offset past the end of the buffer -
+         and the next call would then be handed a negative size as a size_t,
+         along with a pointer past the array, and write into whatever follows it
+         in memory. Every append goes through here for that reason. */
+static void append_bounded(char *buf, size_t cap, size_t *off, const char *text) {
+  if (*off >= cap) return;
+
+  int written = snprintf(buf + *off, cap - *off, "%s", text);
+  if (written > 0) *off += (size_t)written;
+
+  if (*off >= cap) *off = cap - 1;
+}
+
 static void build_module_text(void) {
   module_text[0] = '\0';
 
   if (environment_information.modules == NULL || environment_information.modules_len == 0) return;
 
-  size_t off = snprintf(module_text, sizeof(module_text), "Modules: ");
+  size_t off = 0;
+  append_bounded(module_text, sizeof(module_text), &off, "Modules: ");
+
   bool first = true;
 
-  for (uint32_t i = 0; i < environment_information.modules_len && off < sizeof(module_text); i++) {
+  for (uint32_t i = 0; i < environment_information.modules_len && off < sizeof(module_text) - 1; i++) {
     const char *name = environment_information.modules[i];
     if (name == NULL) continue;
 
@@ -1284,17 +1324,15 @@ static void build_module_text(void) {
 
     if (!is_next && has_zn_twin(name)) continue;
 
-    if (!first) off += snprintf(module_text + off, sizeof(module_text) - off, ", ");
+    if (!first) append_bounded(module_text, sizeof(module_text), &off, ", ");
     first = false;
 
-    off += snprintf(module_text + off, sizeof(module_text) - off, "%s%s", name, is_next ? " (Next)" : "");
+    append_bounded(module_text, sizeof(module_text), &off, name);
+
+    if (is_next) append_bounded(module_text, sizeof(module_text), &off, " (Next)");
   }
 
-  /* INFO: snprintf reports what it would have written, so off can point past
-            the buffer after a truncated append; clamp before the final one. */
-  if (off > sizeof(module_text) - 2) off = sizeof(module_text) - 2;
-
-  snprintf(module_text + off, sizeof(module_text) - off, " · ");
+  append_bounded(module_text, sizeof(module_text), &off, " \u00b7 ");
 }
 
 /* INFO: JSON string writer used by the state file below; quotes, backslashes
