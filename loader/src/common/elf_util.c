@@ -822,7 +822,9 @@ static bool _load_symtabs(ElfImg *img) {
   size_t current_valid_index = 0;
 
   if (has_file_symtab) {
-    char *symtab_strings = offsetOf_char(img->header, img->symstr_offset_for_symtab);
+    /* INFO: The symtab's own string table is not walked here; each symbol this
+              loop keeps is a pointer, and the name is read when someone asks
+              for it. Only the header is needed, to bound the check below. */
     ElfW(Shdr) *symtab_str_shdr = (img->symtab && img->section_header && img->symtab->sh_link < img->header->e_shnum)
                                   ? img->section_header + img->symtab->sh_link
                                   : NULL;
