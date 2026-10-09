@@ -381,44 +381,20 @@ void ElfImg_destroy(ElfImg *img) {
   free(img);
 }
 
-ElfImg *ElfImg_create(const char *elf, void *base) {
-  ElfImg *img = (ElfImg *)calloc(1, sizeof(ElfImg));
-  if (!img) {
-    LOGE("Failed to allocate memory for ElfImg");
-
-    return NULL;
-  }
-
-  img->elf = strdup(elf);
-  if (!img->elf) {
-    LOGE("Failed to duplicate elf path string");
-
-    free(img);
-
-    return NULL;
-  }
-
-  /* INFO: Two callers hand in a base and they mean two things unless the
-            convention is pinned down. img->base is always the runtime address
-            the ELF header is mapped at; when no base is given, the maps yield
-            the load bias, which is that address minus the bias computed further
-            down — so the found value is normalized by the bias as soon as it is
-            known. */
-  bool base_provided = base != NULL;
-
-  if (base_provided) {
-    img->base = base;
-
-    LOGD("Using provided base address 0x%p for %s", base, elf);
-  }
-
+/* INFO: Opens the image, maps it, and checks what it says it is before a byte
+         is read through the mapping. The load base is resolved before the mmap
+         and never after: that mapping adds a whole-file view of this same path
+         to the maps, which sorts below the real loaded image often enough to be
+         picked as the base - and every address derived from it would be
+         garbage. */
+static bool elf_map_file(ElfImg *img, const char *elf, bool base_provided) {
   int fd = open(elf, O_RDONLY | O_CLOEXEC);
   if (fd == -1) {
     LOGE("failed to open %s", elf);
 
     ElfImg_destroy(img);
 
-    return NULL;
+    return false;
   }
 
   struct stat st;
@@ -428,7 +404,7 @@ ElfImg *ElfImg_create(const char *elf, void *base) {
     close(fd);
     ElfImg_destroy(img);
 
-    return NULL;
+    return false;
   }
 
   img->size = st.st_size;
@@ -439,7 +415,7 @@ ElfImg *ElfImg_create(const char *elf, void *base) {
     close(fd);
     ElfImg_destroy(img);
 
-    return NULL;
+    return false;
   }
 
   /* INFO: Resolved before the mmap below, and never after it. That mapping adds
@@ -454,7 +430,7 @@ ElfImg *ElfImg_create(const char *elf, void *base) {
     close(fd);
     ElfImg_destroy(img);
 
-    return NULL;
+    return false;
   }
 
   img->header = (ElfW(Ehdr) *)mmap(NULL, img->size, PROT_READ, MAP_PRIVATE, fd, 0);
@@ -467,7 +443,7 @@ ElfImg *ElfImg_create(const char *elf, void *base) {
     img->header = NULL;
     ElfImg_destroy(img);
 
-    return NULL;
+    return false;
   }
 
   if (memcmp(img->header->e_ident, ELFMAG, SELFMAG) != 0) {
@@ -475,7 +451,7 @@ ElfImg *ElfImg_create(const char *elf, void *base) {
 
     ElfImg_destroy(img);
 
-    return NULL;
+    return false;
   }
 
   /* INFO: The class has to match the ElfW() types every later access is spelled
@@ -487,9 +463,17 @@ ElfImg *ElfImg_create(const char *elf, void *base) {
 
     ElfImg_destroy(img);
 
-    return NULL;
+    return false;
   }
 
+  return true;
+}
+
+/* INFO: The first PT_LOAD at offset 0 carries the header, and the difference
+         between where it asks to be and where it sits is the bias. It has to be
+         known before the base found in the maps means anything, which is why it
+         is computed here rather than after the section walk. */
+static void elf_compute_bias(ElfImg *img, const char *elf, bool base_provided) {
   /* INFO: The bias has to be known before the base found above can be
             normalized, so it is computed here rather than after the section
             walk. */
@@ -532,6 +516,18 @@ ElfImg *ElfImg_create(const char *elf, void *base) {
     LOGE("Failed to calculate bias for %s. Assuming bias is 0.", elf);
 
   if (!base_provided && img->base != NULL) img->base = (void *)((uintptr_t)img->base + img->bias);
+}
+
+/* INFO: Walks the section table once and records where each table it needs
+         lives: the two symbol tables, the string table their names come from,
+         the two hash tables, and the mini-debug payload if there is one. The
+         two symbol table headers are handed back because their linked string
+         tables are resolved in a second pass, after this loop has seen every
+         section. */
+static void elf_walk_sections(ElfImg *img, const char *elf,
+                              ElfW(Shdr) **out_dynsym_shdr, ElfW(Shdr) **out_symtab_shdr) {
+  *out_dynsym_shdr = NULL;
+  *out_symtab_shdr = NULL;
 
   /* INFO: e_shentsize is required to be the structure's own size as well,
             because the table is walked by adding it to a section pointer - any
@@ -551,8 +547,8 @@ ElfImg *ElfImg_create(const char *elf, void *base) {
     LOGW("Program header table missing or invalid in %s", elf);
   }
 
-  ElfW(Shdr) *dynsym_shdr = NULL;
-  ElfW(Shdr) *symtab_shdr = NULL;
+  
+  
 
   char *section_str = NULL;
   size_t section_str_size = 0;
@@ -610,7 +606,7 @@ ElfImg *ElfImg_create(const char *elf, void *base) {
 
       switch (section_h->sh_type) {
         case SHT_DYNSYM: {
-          dynsym_shdr = section_h;
+          *out_dynsym_shdr = section_h;
           img->dynsym_offset = section_h->sh_offset;
           img->dynsym_start = offsetOf_Sym(img->header, img->dynsym_offset);
           /* INFO: A zero sh_entsize would divide by zero below; such a section
@@ -621,7 +617,7 @@ ElfImg *ElfImg_create(const char *elf, void *base) {
         }
         case SHT_SYMTAB: {
           if (strcmp(sname, ".symtab") == 0) {
-            symtab_shdr = section_h;
+            *out_symtab_shdr = section_h;
             img->symtab_offset = section_h->sh_offset;
             img->symtab_size = section_h->sh_size;
 
@@ -702,7 +698,12 @@ ElfImg *ElfImg_create(const char *elf, void *base) {
       }
     }
   }
+}
 
+/* INFO: Each symbol table names its string table by section index, and that
+         index is only valid once the whole section table has been seen - which
+         is why this runs after the walk rather than inside it. */
+static void elf_link_string_tables(ElfImg *img, ElfW(Shdr) *dynsym_shdr, ElfW(Shdr) *symtab_shdr) {
   ElfW(Shdr) *shdr_base = img->section_header;
 
   if (dynsym_shdr && shdr_base) {
@@ -747,6 +748,48 @@ ElfImg *ElfImg_create(const char *elf, void *base) {
     img->symtab_count = 0;
     img->symstr_offset_for_symtab = 0;
   }
+}
+
+ElfImg *ElfImg_create(const char *elf, void *base) {
+  ElfImg *img = (ElfImg *)calloc(1, sizeof(ElfImg));
+  if (!img) {
+    LOGE("Failed to allocate memory for ElfImg");
+
+    return NULL;
+  }
+
+  img->elf = strdup(elf);
+  if (!img->elf) {
+    LOGE("Failed to duplicate elf path string");
+
+    free(img);
+
+    return NULL;
+  }
+
+  /* INFO: Two callers hand in a base and they mean two things unless the
+            convention is pinned down. img->base is always the runtime address
+            the ELF header is mapped at; when no base is given, the maps yield
+            the load bias, which is that address minus the bias computed further
+            down — so the found value is normalized by the bias as soon as it is
+            known. */
+  bool base_provided = base != NULL;
+
+  if (base_provided) {
+    img->base = base;
+
+    LOGD("Using provided base address 0x%p for %s", base, elf);
+  }
+
+  if (!elf_map_file(img, elf, base_provided)) return NULL;
+
+  elf_compute_bias(img, elf, base_provided);
+
+  ElfW(Shdr) *dynsym_shdr = NULL;
+  ElfW(Shdr) *symtab_shdr = NULL;
+
+  elf_walk_sections(img, elf, &dynsym_shdr, &symtab_shdr);
+  elf_link_string_tables(img, dynsym_shdr, symtab_shdr);
 
   if (!img->dynsym_start || !img->strtab_start) {
     if (img->header->e_type == ET_DYN) LOGE("Failed to find .dynsym or its string table (.dynstr) in %s", elf);
