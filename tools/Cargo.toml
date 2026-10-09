@@ -1,0 +1,60 @@
+[workspace]
+resolver = "2"
+members = ["."]
+
+# The three build-time tools that used to be Python scripts, plus the tracer
+# CLI front end. Everything that runs on the device is cross-compiled through
+# the NDK; everything that runs in CI is a host binary.
+[package]
+name = "vex-tools"
+version = "2.2.0"
+edition = "2021"
+rust-version = "1.75"
+description = "VexZygisk build tools and tracer CLI"
+license = "GPL-3.0-or-later"
+publish = false
+
+[lib]
+name = "vex_tools"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ci-size-budget"
+path = "src/bin/ci_size_budget.rs"
+
+[[bin]]
+name = "make-update-json"
+path = "src/bin/make_update_json.rs"
+
+[[bin]]
+name = "sign"
+path = "src/bin/sign.rs"
+
+# The tracer CLI is the front end of the C engine and is linked into the same
+# shared object as it, so it cannot be built for the host: every symbol it calls
+# lives in the Android build. The `android` feature is what the NDK build turns
+# on, and it is off by default so `cargo test` and `cargo build` on a
+# workstation keep working.
+[[bin]]
+name = "zygisk-ptrace64"
+path = "src/bin/zygisk_ptrace64.rs"
+required-features = ["android"]
+
+[features]
+default = []
+android = []
+
+[dependencies]
+# Host tools only. Kept deliberately small: every dependency is something the
+# Python scripts did with the standard library or with `cryptography`.
+# Both are no_std-friendly so the same lockfile works for the Android build.
+sha2 = { version = "0.10", default-features = false }
+ed25519-compact = { version = "2", default-features = false, features = ["traits"] }
+
+[profile.release]
+# The tools ship inside CI, so a small binary is worth more than a fast one.
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

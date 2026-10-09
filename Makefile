@@ -78,19 +78,34 @@ MODULE_DONE = $(BUILD_DIR)/module-$(BUILD_TYPE).done
 LOADER_INPUTS = common.mk loader/Makefile \
         $(shell find loader/src -type f | sort)
 
-# INFO: zygiskd compiles against the headers in loader/src/include (see the
-#       -I in zygiskd/Makefile), so a change there has to rebuild it as well.
-#       Only the headers are listed: the rest of loader/src reaches zygiskd
-#       through LOADER_DONE, which already depends on all of it.
 ZYGISKD_INPUTS = common.mk zygiskd/Makefile \
-        $(shell find zygiskd/src -type f | sort) \
-        $(shell find loader/src/include -type f 2>/dev/null | sort)
+        $(shell find zygiskd/src -type f | sort)
 
-MODULE_INPUTS = scripts/sign.py \
+# INFO: The build tools are Rust now. They are built once into a shared
+#       location and then used by name, so a `make` that only repacks does not
+#       pay for a cargo build it already has.
+TOOLS_DIR = $(CURDIR)/tools
+TOOLS_BIN = $(TOOLS_DIR)/target/release
+
+SIGN = $(TOOLS_BIN)/sign
+
+TOOLS_INPUTS = $(TOOLS_DIR)/Cargo.toml $(TOOLS_DIR)/Cargo.lock \
+        $(shell find $(TOOLS_DIR)/src -type f | sort)
+
+MODULE_INPUTS = $(TOOLS_INPUTS) \
         $(shell find module/src -type f | sort) \
         $(wildcard module/private_key module/public_key)
 
-.PHONY: debug release all apatch apatch-debug build clean install installAndReboot
+.PHONY: debug release all apatch apatch-debug build clean install installAndReboot tools tools-test
+
+# INFO: The Rust tools the packaging step calls. `cargo build --release` from the
+#       crate root is what puts them at $(TOOLS_BIN); the stamp keeps a package
+#       that is already up to date from paying for it again.
+tools:
+	@$(MAKE) -C $(TOOLS_DIR) build-host
+
+tools-test:
+	@$(MAKE) -C $(TOOLS_DIR) test-host
 
 debug:
 	$(MAKE) BUILD_TYPE=debug BUILD_DIR=$(BUILD_DIR) build
@@ -152,12 +167,12 @@ $(MODULE_DONE): $(LOADER_DONE) $(ZYGISKD_DONE) $(MODULE_INPUTS)
 	@cp $(OBJ_DIR)/loader/$(ARCH)/stripped/libzygisk.so $(MODULE_OUT)/lib/$(ARCH)/libzygisk.so
 	@cp $(OBJ_DIR)/loader/$(ARCH)/stripped/libzygisk_ptrace.so $(MODULE_OUT)/lib/$(ARCH)/libzygisk_ptrace.so
 
-	@if [ -f module/private_key ] && [ -f module/public_key ]; then                 \
+	@if [ -f module/private_key ]; then                                             \
 		echo "Signing module...";                                                   \
-		python3 scripts/sign.py $(MODULE_OUT) module/private_key module/public_key; \
+		$(SIGN) $(MODULE_OUT) module/private_key module/public_key;                  \
 	else                                                                            \
 	    echo "No private key found, skipping signing...";                           \
-		python3 scripts/sign.py --no-sign $(MODULE_OUT);                            \
+		$(SIGN) --no-sign $(MODULE_OUT);                                            \
 	fi
 
 	@mkdir -p $(dir $@)
@@ -177,6 +192,6 @@ installAndReboot: install
 	$(REBOOT_CMD)
 
 clean:
-	rm -rf $(CURDIR)/build $(CURDIR)/build-apatch
+	rm -rf $(BUILD_DIR)
 	$(MAKE) -C loader clean BUILD_DIR=$(BUILD_DIR)
 	$(MAKE) -C zygiskd clean BUILD_DIR=$(BUILD_DIR)
