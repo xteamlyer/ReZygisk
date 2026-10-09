@@ -3,7 +3,12 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
+
+#include <limits.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 /* INFO: Every uid is userId * 100000 + appId, and it is the appId that root
          implementations key off. A later user - Private Space included - shifts
@@ -29,6 +34,33 @@ static inline size_t strip_deleted_suffix(const char *path, size_t len) {
   if (len > suffix_len && memcmp(path + len - suffix_len, kDeletedSuffix, suffix_len) == 0) {
     return len - suffix_len;
   }
+
+  return len;
+}
+
+/* INFO: Reads the target of /proc/<pid>/exe into `buf` with the " (deleted)"
+         suffix dropped and a terminator written, and returns its length, or -1
+         when the link could not be read.
+
+         This whole sequence - the path, the readlink, the clamp at the end of
+         the buffer, the suffix strip, the terminating write - was written out
+         once per reader, and they drifted: one of them never stripped the
+         suffix at all, so a binary replaced under it stopped matching its own
+         path. Only what a failure means stays with the caller, because that is
+         the one part that genuinely differs: a sweep of /proc stays silent,
+         since most entries there are kernel threads and zombies, while a reader
+         that was handed one specific pid reports it. */
+static inline ssize_t read_exe_path(int pid, char *buf, size_t size) {
+  char path[PATH_MAX];
+  snprintf(path, sizeof(path), "/proc/%d/exe", pid);
+
+  ssize_t len = readlink(path, buf, size);
+  if (len <= 0) return -1;
+
+  if ((size_t)len >= size) len = (ssize_t)size - 1;
+
+  len = (ssize_t)strip_deleted_suffix(buf, (size_t)len);
+  buf[len] = '\0';
 
   return len;
 }

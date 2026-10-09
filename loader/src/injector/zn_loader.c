@@ -63,11 +63,7 @@ static void *dlopen_from_fd(int fd, const char *name, int flags) {
 
 static char *read_process_path(void) {
   char buf[PATH_MAX];
-  ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-  if (len <= 0) return NULL;
-
-  len = (ssize_t)strip_deleted_suffix(buf, (size_t)len);
-  buf[len] = '\0';
+  if (read_exe_path((int)getpid(), buf, sizeof(buf)) <= 0) return NULL;
 
   return strdup(buf);
 }

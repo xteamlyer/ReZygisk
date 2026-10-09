@@ -817,25 +817,11 @@ void parse_status(int status, char *buf, size_t len) {
 }
 
 int get_program(int pid, char *buf, size_t size) {
-  char path[PATH_MAX];
-  snprintf(path, sizeof(path), "/proc/%d/exe", pid);
-
-  ssize_t sz = readlink(path, buf, size);
-  if (sz == -1) {
+  if (read_exe_path(pid, buf, size) == -1) {
     PLOGE("readlink /proc/%d/exe", pid);
 
     return -1;
   }
-
-  if ((size_t)sz >= size) {
-    LOGW("Program path truncated (%zd >= %zu)", sz, size);
-
-    sz = size - 1;
-  }
-
-  sz = (ssize_t)strip_deleted_suffix(buf, (size_t)sz);
-
-  buf[sz] = '\0';
 
   return 0;
 }

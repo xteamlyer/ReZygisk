@@ -9,11 +9,65 @@
           walk itself stays per-binary, since only the loader needs the mount id. */
 
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 
 #define MOUNT_SOURCE_LOOP "/dev/block/loop"
 #define ROOT_MODULES_DIR "/data/adb/modules"
 #define ROOT_MODULES_ROOT "/adb/modules"
+
+/* INFO: How long a path field in one mountinfo line can be, and how long the
+         filesystem type can be. Both walkers read lines into buffers of this
+         size, so the limit lives with the reader rather than being spelled out
+         twice. */
+#define MOUNT_FIELD_MAX 4096
+#define MOUNT_TYPE_MAX 128
+
+/* INFO: One parsed mountinfo line. The mount id is carried whether or not the
+         caller needs it - only the loader's revert orders by it, since nested
+         mounts come down in the reverse order of their ids - and paying the
+         four bytes keeps one struct for both walkers instead of two that have
+         to be kept in step by hand. */
+struct mount_entry {
+  unsigned int id;
+  char *root;
+  char *target;
+  char *source;
+};
+
+/* INFO: Splits one mountinfo line in place and reads the fields out of it.
+         Both walkers read the same file and each had its own copy of this; a
+         line the two disagreed on - a field read one way here and another way
+         there, a length one of them raised - is a mount one side reverts and
+         the other keeps, which is the half-hidden process this header exists
+         to prevent.
+
+         The line is cut at " - ", the only delimiter that cannot appear inside
+         a field, so the head never has to be copied into a fixed buffer and a
+         long path is not dropped as oversized:
+
+           36 35 98:0 /root /target rw,... - type source rw,...
+
+         The mount id is read into `id`; the parent id and the major:minor
+         device are skipped, nothing here needs them.
+
+         Returns false for a line that is not a mount, which is routine rather
+         than an error: the separator is missing, or the part after it carries
+         no source because the mount is a pseudo-filesystem. The caller decides
+         whether that is worth a log line. */
+static inline bool mount_entry_split(char *line, unsigned int *id,
+                                     char *root, char *target,
+                                     char *type, char *source) {
+  char *separator = strstr(line, " - ");
+  if (separator == NULL) return false;
+
+  *separator = '\0';
+
+  if (sscanf(line, "%u %*u %*u:%*u %4095s %4095s", id, root, target) != 3) return false;
+  if (sscanf(separator + 3, "%127s %4095s", type, source) != 2) return false;
+
+  return true;
+}
 
 /* INFO: True when `path` equals `prefix` or sits directly underneath it (the
           next byte is '/'). A bare prefix test would also match a sibling such
@@ -49,6 +103,26 @@ static inline bool mount_is_module_loop_source(const char *target, const char *s
   return strcmp(target, ROOT_MODULES_DIR) == 0 &&
          strncmp(source, MOUNT_SOURCE_LOOP, strlen(MOUNT_SOURCE_LOOP)) == 0;
 #endif
+}
+
+/* INFO: The first mount whose source is the module store's loop device, which
+         is what both walkers look up before they start deciding: without it the
+         clean namespace would miss every mount whose source is the loop device
+         rather than the overlay name. NULL when there is no such mount, as on
+         APatch, where the modules are a plain overlay.
+
+         The two walkers used to spell this search out themselves, one logging
+         at LOGV and the other at LOGD, over containers whose only difference
+         was the name of the field holding the array. Taking the array and its
+         length keeps the search here and leaves the log line to the caller. */
+static inline const char *mount_find_loop_source(const struct mount_entry *entries, size_t count) {
+  for (size_t i = 0; i < count; i++) {
+    if (!mount_is_module_loop_source(entries[i].target, entries[i].source)) continue;
+
+    return entries[i].source;
+  }
+
+  return NULL;
 }
 
 /* INFO: The overlay source each root solution reports: KernelSU mounts as

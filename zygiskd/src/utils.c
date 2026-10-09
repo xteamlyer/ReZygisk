@@ -675,16 +675,12 @@ void stringify_root_impl_name(struct root_impl impl, char *restrict output) {
 #endif
 }
 
-/* INFO: Only the fields consumed by umount_root are kept: the mount point
-         itself plus the source and root it matches against. */
-struct mountinfo {
-  char *root;
-  char *target;
-  char *source;
-};
-
+/* INFO: The fields of one mountinfo line are `struct mount_entry` in
+         root_mounts.h, shared with the loader's walker. Only the mount point
+         and the source and root it matches against are read here; the id the
+         struct also carries is the loader's, which orders the revert by it. */
 struct mountinfos {
-  struct mountinfo *mounts;
+  struct mount_entry *mounts;
   size_t length;
 };
 
@@ -698,26 +694,18 @@ void free_mounts(struct mountinfos *restrict mounts) {
   free(mounts->mounts);
 }
 
-/* INFO: One mountinfo line, split on the " - " separator, which is the only
-         delimiter that cannot appear inside a field. The line is cut in place
-         so arbitrarily long paths cost nothing beyond the getline buffer:
+/* INFO: One mountinfo line. The split and the field reads are shared with the
+         loader's walker (root_mounts.h); this side only copies what it keeps,
+         and skips a line that is not a mount without a word about it - a
+         pseudo-filesystem with no source is routine in this file. */
+static bool mountinfo_parse_line(char *line, struct mount_entry *out) {
+  unsigned int id = 0;
+  char root[MOUNT_FIELD_MAX], target[MOUNT_FIELD_MAX];
+  char source[MOUNT_FIELD_MAX], type[MOUNT_TYPE_MAX];
 
-           36 35 98:0 /root /target rw,... - type source rw,...
-*/
-static bool mountinfo_parse_line(char *line, struct mountinfo *out) {
-  char *separator = strstr(line, " - ");
-  if (separator == NULL) return false;
+  if (!mount_entry_split(line, &id, root, target, type, source)) return false;
 
-  *separator = '\0';
-
-  char root[4096], target[4096], source[4096], type[128];
-
-  if (sscanf(line, "%*u %*u %*u:%*u %4095s %4095s", root, target) != 2) return false;
-
-  /* INFO: After the separator come the filesystem type and the source; some
-            pseudo-filesystems carry no source and cannot be a root mount. */
-  if (sscanf(separator + 3, "%127s %4095s", type, source) != 2) return false;
-
+  out->id = id;
   out->root = strdup(root);
   out->target = strdup(target);
   out->source = strdup(source);
@@ -759,7 +747,7 @@ bool parse_mountinfo(const char *restrict pid, struct mountinfos *restrict mount
     size_t length = strlen(line);
     while (length > 0 && (line[length - 1] == '\n' || line[length - 1] == '\r')) line[--length] = '\0';
 
-    struct mountinfo *tmp_mounts = (struct mountinfo *)realloc(mounts->mounts, (i + 1) * sizeof(struct mountinfo));
+    struct mount_entry *tmp_mounts = (struct mount_entry *)realloc(mounts->mounts, (i + 1) * sizeof(struct mount_entry));
     if (!tmp_mounts) {
       LOGE("Failed to allocate memory for mounts->mounts");
 
@@ -767,7 +755,7 @@ bool parse_mountinfo(const char *restrict pid, struct mountinfos *restrict mount
     }
     mounts->mounts = tmp_mounts;
 
-    struct mountinfo *mount = &mounts->mounts[i];
+    struct mount_entry *mount = &mounts->mounts[i];
 
     if (!mountinfo_parse_line(line, mount)) {
       /* INFO: Lines without a source (pseudo-filesystems) are routine here,
@@ -795,20 +783,13 @@ bool parse_mountinfo(const char *restrict pid, struct mountinfos *restrict mount
     return false;
 }
 
-/* INFO: Without this the clean namespace would miss every mount whose source
-         is the loop device rather than the "KSU" overlay name. */
 static const char *find_module_loop_source(const struct mountinfos *all) {
-  for (size_t i = 0; i < all->length; i++) {
-    const struct mountinfo *info = &all->mounts[i];
+  const char *source = mount_find_loop_source(all->mounts, all->length);
+  if (source == NULL) return NULL;
 
-    if (!mount_is_module_loop_source(info->target, info->source)) continue;
+  LOGD("Detected the KernelSU module loop source: %s", source);
 
-    LOGD("Detected the KernelSU module loop source: %s", info->source);
-
-    return info->source;
-  }
-
-  return NULL;
+  return source;
 }
 
 bool umount_root(void) {
@@ -836,7 +817,7 @@ bool umount_root(void) {
   const char *loop_source = find_module_loop_source(&mounts);
 
   for (size_t i = 0; i < mounts.length; i++) {
-    struct mountinfo mount = mounts.mounts[i];
+    struct mount_entry mount = mounts.mounts[i];
 
     /* INFO: The same question the loader asks while reverting, through the same
               function. It used to be spelled out here as four conditions in a

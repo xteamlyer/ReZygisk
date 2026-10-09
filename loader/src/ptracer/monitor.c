@@ -880,18 +880,7 @@ static void launch_tracer(pid_t pid, const char *tracer, bool is_spawner) {
          variant instead. The (deleted) suffix is stripped by the shared
          helper, so a program the kernel annotated still matches its path. */
 static bool program_matches(int pid, char *buf, size_t size) {
-  char path[PATH_MAX];
-  snprintf(path, sizeof(path), "/proc/%d/exe", pid);
-
-  ssize_t sz = readlink(path, buf, size);
-  if (sz <= 0) return false;
-
-  if ((size_t)sz >= size) sz = (ssize_t)size - 1;
-
-  sz = (ssize_t)strip_deleted_suffix(buf, (size_t)sz);
-  buf[sz] = '\0';
-
-  return true;
+  return read_exe_path(pid, buf, size) > 0;
 }
 
 /* INFO: The parent of a pid, or 0 when it cannot be determined. Field four of
@@ -1379,6 +1368,18 @@ static void append_bounded(char *buf, size_t cap, size_t *off, const char *text)
   if (*off >= cap) *off = cap - 1;
 }
 
+/* INFO: The same append for a caller that only holds the buffer, taking the
+         offset from the string itself. Both forms exist because a loop wants to
+         carry the offset and a single statement does not, and writing either
+         one out by hand is where the strncat calls below went wrong: with the
+         string already filling the buffer, `cap - strlen(buf) - 1` underflows
+         into a size_t so large that strncat stops bounding anything. */
+static void str_append_bounded(char *buf, size_t cap, const char *text) {
+  size_t off = strlen(buf);
+
+  append_bounded(buf, cap, &off, text);
+}
+
 static void build_module_text(void) {
   module_text[0] = '\0';
 
@@ -1457,7 +1458,7 @@ static void json_escape_into(char *dst, size_t cap, const char *src) {
          capacity: the daemon error text arrives over a socket and can be
          longer than the line is allowed to hold. */
 static void append_status_text(char *out, size_t cap) {
-  #define STATUS_APPEND(text) strncat(out, (text), cap - strlen(out) - 1)
+  #define STATUS_APPEND(text) str_append_bounded(out, cap, (text))
 
   /* INFO: Read from the module's point of view rather than the monitor's. An
             injection is a one-shot inside the zygote, and a monitor that stops
@@ -1669,18 +1670,19 @@ static bool prepare_environment() {
 
   char line[1024];
   while (fgets(line, sizeof(line), orig_prop) != NULL) {
-    /* INFO: strncat keeps every append inside the buffers even if a module.prop
-              carries lines longer than expected. */
+    /* INFO: The appends go through the same bounded helper as the status line,
+              so a module.prop with lines longer than expected cannot walk
+              either section past its end. */
     if (strncmp(line, "description=", strlen("description=")) == 0) {
-      strncat(pre_section, "description=", sizeof(pre_section) - strlen(pre_section) - 1);
-      strncat(post_section, line + strlen("description="), sizeof(post_section) - strlen(post_section) - 1);
+      str_append_bounded(pre_section, sizeof(pre_section), "description=");
+      str_append_bounded(post_section, sizeof(post_section), line + strlen("description="));
       after_description = true;
 
       continue;
     }
 
-    if (after_description) strncat(post_section, line, sizeof(post_section) - strlen(post_section) - 1);
-    else strncat(pre_section, line, sizeof(pre_section) - strlen(pre_section) - 1);
+    if (after_description) str_append_bounded(post_section, sizeof(post_section), line);
+    else str_append_bounded(pre_section, sizeof(pre_section), line);
   }
 
   fclose(orig_prop);

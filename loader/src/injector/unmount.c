@@ -16,17 +16,12 @@
 
 #define PRODUCT_MOUNT "/product"
 
-/* INFO: The fields of one /proc/<pid>/mountinfo line. Only what the trace
-         selection and the unmount actually need is kept. */
-struct mount_info {
-  unsigned int id;
-  char *root;
-  char *target;
-  char *source;
-};
-
+/* INFO: The fields of one mountinfo line live in root_mounts.h, as
+         `struct mount_entry`, because the daemon's walker fills in the same
+         ones. What is local is the container: this walker grows it and hands
+         entries over to the trace list, which is why it needs a capacity. */
 struct mount_list {
-  struct mount_info *items;
+  struct mount_entry *items;
   size_t len;
   size_t cap;
 };
@@ -51,7 +46,7 @@ static bool mount_list_reserve(struct mount_list *list, size_t wanted) {
   size_t cap = list->cap ? list->cap * 2 : 16;
   if (cap < wanted) cap = wanted;
 
-  struct mount_info *items = realloc(list->items, cap * sizeof(struct mount_info));
+  struct mount_entry *items = realloc(list->items, cap * sizeof(struct mount_entry));
   if (items == NULL) {
     LOGE("Failed growing the mount list to %zu entries", cap);
 
@@ -64,38 +59,16 @@ static bool mount_list_reserve(struct mount_list *list, size_t wanted) {
   return true;
 }
 
-/* INFO: One mountinfo line, split on the " - " separator, which is the only
-         delimiter that cannot appear inside a field. The separator is cut in
-         place so the head is never copied into a fixed buffer — long paths
-         used to be dropped as "oversized" and their mounts silently skipped:
-
-           36 35 98:0 /root /target rw,... - type source rw,...
-
-         The mount id has to be parsed out because nested mounts only come
-         down in the reverse order of their ids. */
-static bool mount_info_parse(char *line, struct mount_info *out) {
-  char *separator = strstr(line, " - ");
-  if (separator == NULL) {
-    LOGV("Skipping malformed mountinfo line (no separator)");
-
-    return false;
-  }
-
-  *separator = '\0';
-
-  /* INFO: The parent id and the "major:minor" device are skipped, nothing
-            here needs them. */
+/* INFO: One mountinfo line. The split and the field reads are shared with the
+         daemon's walker (root_mounts.h); what stays here is the copying, since
+         only this walker owns what it parses, and the log line. */
+static bool mount_info_parse(char *line, struct mount_entry *out) {
   unsigned int id = 0;
-  char root[4096], target[4096], source[4096], type[128];
+  char root[MOUNT_FIELD_MAX], target[MOUNT_FIELD_MAX];
+  char source[MOUNT_FIELD_MAX], type[MOUNT_TYPE_MAX];
 
-  if (sscanf(line, "%u %*u %*u:%*u %4095s %4095s", &id, root, target) != 3) {
+  if (!mount_entry_split(line, &id, root, target, type, source)) {
     LOGV("Skipping malformed mountinfo line: %s", line);
-
-    return false;
-  }
-
-  if (sscanf(separator + 3, "%127s %4095s", type, source) != 2) {
-    LOGV("Skipping mountinfo line without a source: %s", line);
 
     return false;
   }
@@ -144,7 +117,7 @@ static bool mount_list_parse(const char *path, struct mount_list *out) {
       break;
     }
 
-    struct mount_info info = { 0 };
+    struct mount_entry info = { 0 };
     if (mount_info_parse(line, &info)) {
       out->items[out->len] = info;
       out->len++;
@@ -158,17 +131,12 @@ static bool mount_list_parse(const char *path, struct mount_list *out) {
 }
 
 static const char *find_module_loop_source(const struct mount_list *all) {
-  for (size_t i = 0; i < all->len; i++) {
-    const struct mount_info *info = &all->items[i];
+  const char *source = mount_find_loop_source(all->items, all->len);
+  if (source == NULL) return NULL;
 
-    if (!mount_is_module_loop_source(info->target, info->source)) continue;
+  LOGV("Detected the KernelSU module loop source: %s", source);
 
-    LOGV("Detected the KernelSU module loop source: %s", info->source);
-
-    return info->source;
-  }
-
-  return NULL;
+  return source;
 }
 
 /* INFO: Kept as the name this file and its test call, but the decision itself
@@ -176,13 +144,13 @@ static const char *find_module_loop_source(const struct mount_list *all) {
          building the clean namespace, and the two answers have to be the same
          set. Only the shape of the argument differs - this walker carries a
          struct, so it unwraps it here. */
-static bool carries_root_trace(const struct mount_info *info, const char *loop_source) {
+static bool carries_root_trace(const struct mount_entry *info, const char *loop_source) {
   return mount_carries_root_trace(info->root, info->target, info->source, loop_source);
 }
 
 static int compare_by_id_descending(const void *a, const void *b) {
-  const struct mount_info *left = (const struct mount_info *)a;
-  const struct mount_info *right = (const struct mount_info *)b;
+  const struct mount_entry *left = (const struct mount_entry *)a;
+  const struct mount_entry *right = (const struct mount_entry *)b;
 
   if (left->id == right->id) return 0;
 
@@ -281,7 +249,7 @@ bool revert_root_traces_here(void) {
     return false;
   }
 
-  qsort(traces.items, traces.len, sizeof(struct mount_info), compare_by_id_descending);
+  qsort(traces.items, traces.len, sizeof(struct mount_entry), compare_by_id_descending);
 
   bool complete = true;
 

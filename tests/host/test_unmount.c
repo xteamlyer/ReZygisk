@@ -264,7 +264,7 @@ static void check_revert_stays_detached(void) {
 static void check_abort_refusals(void) {
   printf("-- /product abort refusals\n");
 
-  struct mount_info entries[3] = { 0 };
+  struct mount_entry entries[3] = { 0 };
   struct mount_list traces = { .items = entries, .len = 0, .cap = 3 };
 
   /* INFO: An empty trace list means "nothing to do", which is an abort. */
@@ -287,7 +287,7 @@ static void check_abort_refusals(void) {
 static void check_id_ordering(void) {
   printf("-- descending mount id ordering\n");
 
-  struct mount_info entries[3] = { 0 };
+  struct mount_entry entries[3] = { 0 };
   struct mount_list traces = { .items = entries, .len = 3, .cap = 3 };
 
   for (size_t i = 0; i < 3; i++) {
@@ -297,7 +297,7 @@ static void check_id_ordering(void) {
     traces.items[i].source = NULL;
   }
 
-  qsort(traces.items, traces.len, sizeof(struct mount_info), compare_by_id_descending);
+  qsort(traces.items, traces.len, sizeof(struct mount_entry), compare_by_id_descending);
 
   CHECK(traces.items[0].id == 5 && traces.items[1].id == 3 && traces.items[2].id == 1,
         "not sorted by descending id: %u %u %u",

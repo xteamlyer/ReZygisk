@@ -831,7 +831,7 @@ static bool zn_hyos_process_is_spawner(void) {
            actually needed for: getting the (dev, inode) pair that identifies
            the image to the PLT hooks. */
   char path[PATH_MAX];
-  ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
+  ssize_t len = read_exe_path((int)getpid(), path, sizeof(path));
 
   if (len <= 0) {
     /* INFO: Left uncached on purpose: a failed read is not an answer. */
@@ -839,8 +839,6 @@ static bool zn_hyos_process_is_spawner(void) {
 
     return false;
   }
-
-  path[len] = '\0';
 
   is_spawner = zn_hyos_path_is_spawner(path) ? 1 : 0;
 
