@@ -15,9 +15,10 @@ set -eu
 
 cd "$(dirname "$0")/../.."
 
-# INFO: The Rust tools. Built here rather than expected to be present, so a
-#       fresh checkout runs this suite with nothing but a Rust toolchain and a C
-#       compiler. `cargo build` is a no-op once they are up to date.
+# INFO: The tools the checks below call. Built here rather than expected to
+#       already be there, so a fresh checkout runs this suite with nothing but a
+#       Rust toolchain and a C compiler; the build is a no-op once they are up
+#       to date.
 cargo build --release --locked --manifest-path tools/Cargo.toml
 
 # INFO: The loader and the daemon implement their own halves of the wire
@@ -40,10 +41,22 @@ done
 # INFO: -Werror on everything written in this tree, -w on the vendored XZ
 #       decompressor: it is upstream code that is not maintained here, and
 #       its warnings are not actionable.
+#
+#       elf_util.c reads the process maps to find a library's load base, so the
+#       maps reader is linked in alongside it. misc.c pulls in socket_utils.c
+#       for its logging path, hence the three together.
 cc -std=c18 -D_GNU_SOURCE -Wall -Wextra -Werror \
    -Itests/host -Iloader/src/include -Iloader/src/common \
    -Iloader/src/external/lzma \
    -c loader/src/common/elf_util.c -o /tmp/elf_util.o
+
+cc -std=c18 -D_GNU_SOURCE -Wall -Wextra -Werror \
+   -Itests/host -Iloader/src/include -Iloader/src/common \
+   -c loader/src/common/misc.c -o /tmp/misc.o
+
+cc -std=c18 -D_GNU_SOURCE -Wall -Wextra -Werror \
+   -Itests/host -Iloader/src/include -Iloader/src/common \
+   -c loader/src/common/socket_utils.c -o /tmp/socket_utils.o
 
 cc -std=c18 -D_GNU_SOURCE -w \
    -DXZ_DEC_DYNALLOC=1 -DXZ_DEC_ANY_CHECK=1 -DXZ_INTERNAL_CRC32=1 \
@@ -66,8 +79,8 @@ cc -std=c18 -D_GNU_SOURCE -w \
 cc -std=c18 -D_GNU_SOURCE -Wall -Wextra -Werror \
    -Itests/host -Iloader/src/include -Iloader/src/common \
    -Iloader/src/external/lzma \
-   tests/host/test_elf_util.c /tmp/elf_util.o /tmp/xz_lzma2.o \
-   /tmp/xz_stream.o /tmp/xz_bcj.o \
+   tests/host/test_elf_util.c /tmp/elf_util.o /tmp/misc.o /tmp/socket_utils.o \
+   /tmp/xz_lzma2.o /tmp/xz_stream.o /tmp/xz_bcj.o \
    -o /tmp/test_elf_util
 
 ./tools/target/release/make-debugdata /tmp/debugdata

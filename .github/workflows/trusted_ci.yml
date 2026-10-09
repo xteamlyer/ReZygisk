@@ -19,6 +19,11 @@ jobs:
         with:
           fetch-depth: 1
 
+      # INFO: The suite builds the tools itself, so this job needs the toolchain
+      #       too - the same one the build job uses.
+      - name: Setup Rust
+        run: rustup default "${RUST_TOOLCHAIN:-stable}"
+
       - name: Host unit tests
         # INFO: Shared with the Untrusted CI through tests/host/run.sh, so a
         #       pull request is judged by the very same commands that run here
@@ -40,20 +45,74 @@ jobs:
           private_key: ${{ secrets.ORG_PRIVATE_KEY }}
           public_key: ${{ secrets.ORG_PUBLIC_KEY }}
         run: |
+          # INFO: Without the keys the build selects its unsigned flavour, and
+          #       that flavour still creates the signature files - empty ones -
+          #       so a missing secret used to produce a green run whose archives
+          #       only looked signed. A repository may legitimately not sign, so
+          #       this is a warning rather than a failure; what it may not be is
+          #       unmentioned.
           if [ -z "$private_key" ] || [ -z "$public_key" ]; then
-            echo "Private or public key is not set."
-          else
-            echo "$private_key" | base64 -d > module/private_key
-            echo "$public_key" | base64 -d > module/public_key
+            echo "::warning::ORG_PRIVATE_KEY / ORG_PUBLIC_KEY are not configured; this build will be UNSIGNED"
+            exit 0
           fi
 
-      - name: Setup NDK_PATH
-        run: echo "NDK_PATH=$ANDROID_NDK_LATEST_HOME" >> $GITHUB_ENV
+          # INFO: A key that is present but does not decode is a different
+          #       thing: the secret exists and is wrong, and the build would go
+          #       on to produce an unsigned archive out of it.
+          if ! printf '%s' "$private_key" | base64 -d > module/private_key 2>/dev/null || [ ! -s module/private_key ]; then
+            echo "::error::ORG_PRIVATE_KEY is set but does not decode into a usable key"
+            exit 1
+          fi
 
-      # INFO: The packaging tools are Rust (tools/), so the signer and the size
-      #       budget have to exist before `make` runs. `rustup` is on the image
-      #       already, but pinning the toolchain here is what keeps the tools
-      #       building the same way when the image moves on.
+          if ! printf '%s' "$public_key" | base64 -d > module/public_key 2>/dev/null || [ ! -s module/public_key ]; then
+            echo "::error::ORG_PUBLIC_KEY is set but does not decode into a usable key"
+            exit 1
+          fi
+
+          echo "Signing keys installed"
+
+      - name: Setup NDK_PATH
+        # INFO: NDK_VERSION in common.mk names the toolchain this build is meant
+        #       to use, and NDK_PATH was being overridden with
+        #       ANDROID_NDK_LATEST_HOME - so the pin never took effect and the
+        #       build ran on whatever "-latest" happened to be that week. The
+        #       pinned release is used when the runner has it. When it does not,
+        #       the run continues on the newest one it does have, and says so:
+        #       swapping the toolchain silently is the thing this step exists to
+        #       stop, not a hard failure nobody asked for.
+        run: |
+          set -euo pipefail
+
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          if [ -z "$sdk" ]; then
+            echo "::error::Neither ANDROID_SDK_ROOT nor ANDROID_HOME is set"
+            exit 1
+          fi
+
+          pinned=$(sed -n 's/^NDK_VERSION ?= *//p' common.mk)
+          if [ -z "$pinned" ]; then
+            echo "::error::NDK_VERSION is not pinned in common.mk"
+            exit 1
+          fi
+
+          echo "ANDROID_HOME=$sdk" >> "$GITHUB_ENV"
+
+          if [ -d "$sdk/ndk/$pinned" ]; then
+            echo "Using the pinned NDK $pinned"
+            exit 0
+          fi
+
+          newest=$(ls -1 "$sdk/ndk" 2>/dev/null | sort -V | tail -1)
+          if [ -z "$newest" ]; then
+            echo "::error::No NDK is installed under $sdk/ndk"
+            exit 1
+          fi
+
+          echo "::warning::The pinned NDK $pinned is not installed; building on $newest instead (installed: $(ls "$sdk/ndk" | tr '\n' ' '))"
+          echo "NDK_VERSION=$newest" >> "$GITHUB_ENV"
+
+      # INFO: The packaging tools are Rust, and `make` calls the signer, so they
+      #       have to exist before the build.
       - name: Setup Rust
         run: |
           rustup default "${RUST_TOOLCHAIN:-stable}"
@@ -64,6 +123,8 @@ jobs:
         run: make -C tools build-host
 
       - name: Tool unit tests
+        # INFO: The signer pins the exact bytes it feeds Ed25519, which is the
+        #       one thing a release cannot get wrong by compiling.
         run: make -C tools test-host
 
       - name: Build
@@ -74,6 +135,85 @@ jobs:
 
       - name: Binary size budget
         run: tools/target/release/ci-size-budget build build-apatch
+
+      - name: Verify the builds are signed
+        # INFO: The build selects its unsigned flavour whenever the keys are
+        #       absent, and that flavour still creates the signature files - so
+        #       their presence proves nothing. A real Ed25519 signature followed
+        #       by the public key is 96 bytes; the placeholder is zero. When a
+        #       key was installed the archives must carry one, on every variant.
+        run: |
+          set -euo pipefail
+
+          if [ ! -s module/private_key ]; then
+            echo "::warning::No signing key in this run, so the archives are unsigned"
+            ls -l build/module/*/misaki.sig build-apatch/module/*/misaki.sig 2>/dev/null || true
+            exit 0
+          fi
+
+          status=0
+          for sig in build/module/*/machikado.arm64 build/module/*/misaki.sig \
+                     build-apatch/module/*/machikado.arm64 build-apatch/module/*/misaki.sig; do
+            if [ ! -f "$sig" ]; then
+              echo "::error::$sig was never produced"
+              status=1
+              continue
+            fi
+
+            size=$(stat -c%s "$sig")
+            if [ "$size" -lt 96 ]; then
+              echo "::error::$sig is $size bytes - the build is not signed"
+              status=1
+            fi
+          done
+
+          [ "$status" -eq 0 ] && echo "All signature files carry a signature"
+          exit $status
+
+      - name: Check the published update channel
+        # INFO: module.prop points the KernelSU manager at update.json on main,
+        #       and a zipUrl that names an archive its release does not hold
+        #       fails silently - the file itself looks fine in the repository,
+        #       and only the device notices. It has drifted before: the channel
+        #       named build 768 while the release held 770.
+        #
+        #       update-apatch.json is checked too. It named an archive the
+        #       v2.2.0 release had never been given - the APatch flavour was
+        #       built and archived by CI, but only the KernelSU archives were
+        #       attached to the release - so the channel answered 404 to every
+        #       device that read it. The archives are attached now, which is
+        #       what this check is here to keep true.
+        run: |
+          python3 - <<'PY'
+          import json
+          import sys
+          import urllib.error
+          import urllib.request
+
+          failed = False
+
+          for path in ("update.json", "update-apatch.json"):
+              with open(path, encoding="utf-8") as file:
+                  channel = json.load(file)
+
+              url = channel["zipUrl"]
+
+              try:
+                  status = urllib.request.urlopen(
+                      urllib.request.Request(url, method="HEAD"), timeout=30).status
+              except urllib.error.HTTPError as error:
+                  status = error.code
+              except Exception as error:
+                  status = f"{type(error).__name__}: {error}"
+
+              if status != 200:
+                  print(f"::error::{path} names {url}, which answers {status}")
+                  failed = True
+              else:
+                  print(f"{path}: {url} -> {status}")
+
+          sys.exit(1 if failed else 0)
+          PY
 
       - name: Generate update.json
         run: |
@@ -86,6 +226,7 @@ jobs:
           name: update.json
           path: "build/out/update.json"
           archive: false
+          if-no-files-found: error
 
       - name: Upload APatch update.json
         uses: actions/upload-artifact@v7
@@ -93,30 +234,35 @@ jobs:
           name: update-apatch.json
           path: "build-apatch/out/update-apatch.json"
           archive: false
+          if-no-files-found: error
 
       - name: Upload release
         uses: actions/upload-artifact@v7
         with:
           path: "build/out/VexZygisk-v*-release.zip"
           archive: false
+          if-no-files-found: error
 
       - name: Upload APatch release
         uses: actions/upload-artifact@v7
         with:
           path: "build-apatch/out/VexZygisk-APatch-v*-release.zip"
           archive: false
+          if-no-files-found: error
 
       - name: Upload debug
         uses: actions/upload-artifact@v7
         with:
           path: "build/out/VexZygisk-v*-debug.zip"
           archive: false
+          if-no-files-found: error
 
       - name: Upload APatch debug
         uses: actions/upload-artifact@v7
         with:
           path: "build-apatch/out/VexZygisk-APatch-v*-debug.zip"
           archive: false
+          if-no-files-found: error
 
       - name: Publish artifacts to Telegram
         env:

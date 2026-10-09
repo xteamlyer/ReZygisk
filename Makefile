@@ -78,12 +78,16 @@ MODULE_DONE = $(BUILD_DIR)/module-$(BUILD_TYPE).done
 LOADER_INPUTS = common.mk loader/Makefile \
         $(shell find loader/src -type f | sort)
 
+# INFO: zygiskd compiles against the headers in loader/src/include (see the
+#       -I in zygiskd/Makefile), so a change there has to rebuild it as well.
+#       Only the headers are listed: the rest of loader/src reaches zygiskd
+#       through LOADER_DONE, which already depends on all of it.
 ZYGISKD_INPUTS = common.mk zygiskd/Makefile \
-        $(shell find zygiskd/src -type f | sort)
+        $(shell find zygiskd/src -type f | sort) \
+        $(shell find loader/src/include -type f 2>/dev/null | sort)
 
-# INFO: The build tools are Rust now. They are built once into a shared
-#       location and then used by name, so a `make` that only repacks does not
-#       pay for a cargo build it already has.
+# INFO: The build tools are Rust now, built once into the crate's target
+#       directory and then called by path.
 TOOLS_DIR = $(CURDIR)/tools
 TOOLS_BIN = $(TOOLS_DIR)/target/release
 
@@ -98,9 +102,9 @@ MODULE_INPUTS = $(TOOLS_INPUTS) \
 
 .PHONY: debug release all apatch apatch-debug build clean install installAndReboot tools tools-test
 
-# INFO: The Rust tools the packaging step calls. `cargo build --release` from the
-#       crate root is what puts them at $(TOOLS_BIN); the stamp keeps a package
-#       that is already up to date from paying for it again.
+# INFO: The Rust tools the packaging step calls. `cargo build --release` is what
+#       puts them at $(TOOLS_BIN); a developer who already built them pays only
+#       for the up-to-date check.
 tools:
 	@$(MAKE) -C $(TOOLS_DIR) build-host
 
@@ -167,7 +171,7 @@ $(MODULE_DONE): $(LOADER_DONE) $(ZYGISKD_DONE) $(MODULE_INPUTS)
 	@cp $(OBJ_DIR)/loader/$(ARCH)/stripped/libzygisk.so $(MODULE_OUT)/lib/$(ARCH)/libzygisk.so
 	@cp $(OBJ_DIR)/loader/$(ARCH)/stripped/libzygisk_ptrace.so $(MODULE_OUT)/lib/$(ARCH)/libzygisk_ptrace.so
 
-	@if [ -f module/private_key ]; then                                             \
+	@if [ -f module/private_key ] && [ -f module/public_key ]; then                 \
 		echo "Signing module...";                                                   \
 		$(SIGN) $(MODULE_OUT) module/private_key module/public_key;                  \
 	else                                                                            \
@@ -192,6 +196,6 @@ installAndReboot: install
 	$(REBOOT_CMD)
 
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf $(CURDIR)/build $(CURDIR)/build-apatch
 	$(MAKE) -C loader clean BUILD_DIR=$(BUILD_DIR)
 	$(MAKE) -C zygiskd clean BUILD_DIR=$(BUILD_DIR)

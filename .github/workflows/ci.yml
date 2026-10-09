@@ -9,7 +9,7 @@ jobs:
   build:
     # INFO: Pinned rather than ubuntu-latest: the -latest label moves to 26.04
     #       in November 2026 on GitHub's schedule, and this build (NDK, GCC
-    #       cross-toolchain, the Python scripts) should move when we choose to.
+    #       cross-toolchain, the Rust tools) should move when we choose to.
     runs-on: ubuntu-26.04
     steps:
       - name: Checkout
@@ -19,11 +19,44 @@ jobs:
           fetch-depth: 0
 
       - name: Setup NDK_PATH
-        run: echo "NDK_PATH=$ANDROID_NDK_LATEST_HOME" >> $GITHUB_ENV
+        # INFO: Same resolution as the Trusted CI - the version is pinned in
+        #       common.mk, this only points ANDROID_HOME at the runner's SDK -
+        #       and the same fallback: build on the newest NDK the runner has
+        #       when the pinned one is missing, and say so out loud.
+        run: |
+          set -euo pipefail
 
-      # INFO: The packaging tools are Rust, so they are built before `make` -
-      #       `make` calls the signer. Same commands the Trusted CI runs on main,
-      #       so a pull request is judged by what will actually run there.
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          if [ -z "$sdk" ]; then
+            echo "::error::Neither ANDROID_SDK_ROOT nor ANDROID_HOME is set"
+            exit 1
+          fi
+
+          pinned=$(sed -n 's/^NDK_VERSION ?= *//p' common.mk)
+          if [ -z "$pinned" ]; then
+            echo "::error::NDK_VERSION is not pinned in common.mk"
+            exit 1
+          fi
+
+          echo "ANDROID_HOME=$sdk" >> "$GITHUB_ENV"
+
+          if [ -d "$sdk/ndk/$pinned" ]; then
+            echo "Using the pinned NDK $pinned"
+            exit 0
+          fi
+
+          newest=$(ls -1 "$sdk/ndk" 2>/dev/null | sort -V | tail -1)
+          if [ -z "$newest" ]; then
+            echo "::error::No NDK is installed under $sdk/ndk"
+            exit 1
+          fi
+
+          echo "::warning::The pinned NDK $pinned is not installed; building on $newest instead (installed: $(ls "$sdk/ndk" | tr '\n' ' '))"
+          echo "NDK_VERSION=$newest" >> "$GITHUB_ENV"
+
+      # INFO: The packaging tools are Rust, and `make` calls the signer, so they
+      #       have to exist before the build. Same commands the Trusted CI runs on
+      #       main, so a pull request is judged by what will actually run there.
       - name: Setup Rust
         run: |
           rustup default "${RUST_TOOLCHAIN:-stable}"
@@ -32,21 +65,135 @@ jobs:
       - name: Build the tools
         run: make -C tools build-host
 
+      # INFO: The tools' own tests. The signer in particular pins the exact
+      #       bytes it feeds Ed25519, which is the one thing a release cannot
+      #       get wrong by compiling.
+      - name: Tool unit tests
+        run: make -C tools test-host
+
       - name: Build
+        # INFO: The same set the Trusted CI builds, not just the KernelSU
+        #       flavour: a pull request that breaks the APatch build used to
+        #       merge green, because nothing here ever built it.
         run: |
           make all -j$(nproc)
+          make apatch -j$(nproc)
+          make apatch-debug -j$(nproc)
+
+      - name: Binary size budget
+        run: tools/target/release/ci-size-budget build build-apatch
+
+      - name: Generate update.json
+        # INFO: Runs here as well so a change to the archive names or the
+        #       tool itself is caught by the pull request rather than by the
+        #       release that follows the merge.
+        run: |
+          tools/target/release/make-update-json --tree build --output build/out/update.json --pattern "VexZygisk-v*-release.zip"
+          tools/target/release/make-update-json --tree build-apatch --output build-apatch/out/update-apatch.json --pattern "VexZygisk-APatch-v*-release.zip"
 
       - name: Upload release
         uses: actions/upload-artifact@v7
         with:
           path: "build/out/VexZygisk-v*-release.zip"
           archive: false
+          if-no-files-found: error
+
+      - name: Upload APatch release
+        uses: actions/upload-artifact@v7
+        with:
+          path: "build-apatch/out/VexZygisk-APatch-v*-release.zip"
+          archive: false
+          if-no-files-found: error
 
       - name: Upload debug
         uses: actions/upload-artifact@v7
         with:
           path: "build/out/VexZygisk-v*-debug.zip"
           archive: false
+          if-no-files-found: error
+
+      - name: Upload APatch debug
+        uses: actions/upload-artifact@v7
+        with:
+          path: "build-apatch/out/VexZygisk-APatch-v*-debug.zip"
+          archive: false
+          if-no-files-found: error
+
+      - name: Publish artifacts to Telegram
+        # INFO: The pull request side of the delivery the Trusted CI already
+        #       runs on main, so a change is seen on its way in rather than
+        #       only after the merge. Same guard: a run without the secrets -
+        #       every pull request from a fork - skips this instead of failing.
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TG_THREAD_ID: ${{ secrets.TG_THREAD_ID }}
+          WORKFLOW_NAME: ${{ github.workflow }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$TG_BOT_TOKEN" ] || [ -z "$TG_CHAT_ID" ]; then
+            echo "::warning::Telegram secrets not configured, skipping publish"
+            exit 0
+          fi
+
+          zips=$(ls build/out/VexZygisk-v*-release.zip build/out/VexZygisk-v*-debug.zip \
+                     build-apatch/out/VexZygisk-APatch-v*-release.zip \
+                     build-apatch/out/VexZygisk-APatch-v*-debug.zip 2>/dev/null || true)
+          if [ -z "$zips" ]; then
+            echo "::error::No build zips found in build/out and build-apatch/out"
+            exit 1
+          fi
+
+          escape_html() {
+            sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+          }
+
+          COMMIT_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$COMMIT_SHA"
+
+          message=$(git log -1 --pretty=%B "$COMMIT_SHA" \
+            | python3 -c "import sys; sys.stdout.write(sys.stdin.read().strip()[:600])" \
+            | escape_html)
+
+          echo "publishing from $(pwd)"
+          ls -la build/out/ build-apatch/out/
+
+          # INFO: Every zip of the build travels as ONE media group, the same
+          #       shape the Trusted CI sends, so the channel reads both the
+          #       same way.
+          count=0
+          doc_args=()
+          for zip in $zips; do
+            doc_args+=(-F "doc$count=@$GITHUB_WORKSPACE/$zip")
+            count=$((count + 1))
+          done
+
+          CAPTION="<b>VexZygisk</b> ($WORKFLOW_NAME)"$'\n'"Run: #ci_$RUN_NUMBER"$'\n\n'"<blockquote>$message</blockquote>"$'\n\n'"<a href=\"$COMMIT_URL\">Commit</a>"$'\n'"<a href=\"$RUN_URL\">Workflow run</a>" \
+            python3 -c 'import json, sys, os; n = int(sys.argv[1]); m = [{"type": "document", "media": "attach://doc%d" % i} for i in range(n)]; m[-1]["caption"] = os.environ["CAPTION"]; m[-1]["parse_mode"] = "HTML"; open(sys.argv[2], "w").write(json.dumps(m))' "$count" "$GITHUB_WORKSPACE/tg_media.json"
+
+          curl_args=(-sS -o tg_response.json -w '%{http_code}'
+                     --form-string "chat_id=$TG_CHAT_ID"
+                     -F 'media=<tg_media.json'
+                     "${doc_args[@]}")
+
+          if [ -n "$TG_THREAD_ID" ]; then
+            curl_args+=(--form-string "message_thread_id=$TG_THREAD_ID")
+          fi
+
+          curl_args+=("https://api.telegram.org/bot$TG_BOT_TOKEN/sendMediaGroup")
+
+          http=$(curl "${curl_args[@]}" 2>curl_err.txt) || http="curl-failed"
+
+          if [ "$http" != "200" ]; then
+            echo "::warning::Telegram upload failed ($http)"
+            [ -s curl_err.txt ] && echo "::warning::curl: $(cat curl_err.txt)"
+            [ -s tg_response.json ] && echo "::warning::Telegram said: $(head -c 400 tg_response.json)"
+          else
+            echo "Sent $count zips as one media group: $(head -c 160 tg_response.json)"
+          fi
 
   host-test:
     # INFO: Kept on the same image as the build job so the suite a pull request
@@ -58,16 +205,12 @@ jobs:
         with:
           fetch-depth: 1
 
+      # INFO: The suite builds the tools itself, so this job needs the toolchain
+      #       too - the same one the build job uses.
+      - name: Setup Rust
+        run: rustup default "${RUST_TOOLCHAIN:-stable}"
+
       # INFO: The same suite the Trusted CI runs on main, so a regression
       #       fails the pull request instead of the merge that follows it.
       - name: Host unit tests
         run: bash tests/host/run.sh
-
-      - name: Setup Rust
-        run: rustup default "${RUST_TOOLCHAIN:-stable}"
-
-      # INFO: The tools' own tests. The signer in particular has a test that
-      #       pins the exact bytes fed to Ed25519, which is the one thing a
-      #       release cannot get wrong by compiling.
-      - name: Tool unit tests
-        run: make -C tools test-host
