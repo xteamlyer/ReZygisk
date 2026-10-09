@@ -889,44 +889,77 @@ bool umount_root(void) {
   return true;
 }
 
-int save_mns_fd(int pid) {
-  /* INFO: Every denylisted process that falls back to the clean namespace asks
-            for it, so it is cached for the daemon's lifetime instead of being
-            forked per process. */
-  static int clean_namespace_fd = -1;
+/* INFO: The helper child: enters the target's mount namespace, forks a private
+         copy of the tree, and strips the root traces out of it. That copy is
+         what a denylisted process is switched into when the in-place revert
+         could not be applied, and it is not optional - without it the umount
+         would run against the target's own namespace and take the mounts out
+         from under the process this exists to protect.
 
-  if (clean_namespace_fd != -1) return clean_namespace_fd;
+         Every failure writes the byte the parent waits for and falls to the
+         same place, which is why they share a label instead of repeating the
+         three lines. It never returns: both paths end in _exit. */
+static void mns_helper_run(int pid, int socket_child) {
+  if (switch_mount_namespace(pid) == false) {
+    LOGE("Failed to switch mount namespace");
 
-  int sockets[2];
-  if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sockets) == -1) {
-    LOGE("socketpair: %s", strerror(errno));
+    if (write_uint8_t(socket_child, 0) == -1)
+      LOGE("Failed to write to socket_child: %s", strerror(errno));
 
-    return -1;
+    goto finalize_mns_fork;
   }
 
-  int socket_parent = sockets[0];
-  int socket_child = sockets[1];
+  /* INFO: The helper forks a private copy of the mount tree and strips the
+            root traces out of it. That copy is what a denylisted process is
+            switched into when the in-place revert could not be applied.
+            The copy is not optional: without it the umount below would run
+            against the target's own namespace and strip the mounts out from
+            under the process this is meant to protect. */
+  if (unshare(CLONE_NEWNS) == -1) {
+    LOGE("Failed to unshare the mount namespace: %s", strerror(errno));
 
-  /* INFO: The handshake runs inside a request handler; a helper wedged on a
-            strange /proc entry must not block the daemon for good. On a
-            timeout the socket is closed, which makes the child's next write
-            fail and lets it exit for the reap below. */
-  struct timeval timeout = { .tv_sec = 5, .tv_usec = 0 };
-  setsockopt(socket_parent, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-  setsockopt(socket_parent, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    if (write_uint8_t(socket_child, 0) == -1)
+      LOGE("Failed to write to socket_child: %s", strerror(errno));
 
-  pid_t fork_pid = fork();
-  if (fork_pid < 0) {
-    LOGE("fork: %s", strerror(errno));
+    goto finalize_mns_fork;
+  }
 
-    close(socket_parent);
+  if (!umount_root()) {
+    LOGE("Failed to umount root");
+
+    if (write_uint8_t(socket_child, 0) == -1)
+      LOGE("Failed to write to socket_child: %s", strerror(errno));
+
+    goto finalize_mns_fork;
+  }
+
+  if (write_uint8_t(socket_child, 1) == -1) {
+    LOGE("Failed to write to socket_child: %s", strerror(errno));
+
     close(socket_child);
 
-    return -1;
+    _exit(1);
   }
 
-  /* INFO: Every early return below leaves the helper child running or dead;
-            reaping it keeps a long-lived daemon from collecting zombies. */
+  uint8_t has_opened = 0;
+  if (read_uint8_t(socket_child, &has_opened) == -1)
+    LOGE("Failed to read from socket_child: %s", strerror(errno));
+
+  finalize_mns_fork:
+    close(socket_child);
+
+    _exit(0);
+}
+
+/* INFO: The parent side of the handshake, up to the namespace fd being ready.
+
+         FAIL_MNS is defined here rather than above because both of the things it
+         closes are parameters of this function. It reaps the helper on every way
+         out, which is what keeps a long-lived daemon from collecting zombies.
+
+         The fd itself is the caller's to keep: that is the cache, and it is the
+         only part of this that outlives the call. */
+static int mns_parent_collect(pid_t fork_pid, int socket_parent) {
   #define FAIL_MNS(message)                                    \
     do {                                                       \
       LOGE("%s: %s", message, strerror(errno));                \
@@ -936,62 +969,6 @@ int save_mns_fd(int pid) {
                                                                  \
       return -1;                                               \
     } while (0)
-
-  if (fork_pid == 0) {
-    close(socket_parent);
-
-    if (switch_mount_namespace(pid) == false) {
-      LOGE("Failed to switch mount namespace");
-
-      if (write_uint8_t(socket_child, 0) == -1)
-        LOGE("Failed to write to socket_child: %s", strerror(errno));
-
-      goto finalize_mns_fork;
-    }
-
-    /* INFO: The helper forks a private copy of the mount tree and strips the
-              root traces out of it. That copy is what a denylisted process is
-              switched into when the in-place revert could not be applied.
-              The copy is not optional: without it the umount below would run
-              against the target's own namespace and strip the mounts out from
-              under the process this is meant to protect. */
-    if (unshare(CLONE_NEWNS) == -1) {
-      LOGE("Failed to unshare the mount namespace: %s", strerror(errno));
-
-      if (write_uint8_t(socket_child, 0) == -1)
-        LOGE("Failed to write to socket_child: %s", strerror(errno));
-
-      goto finalize_mns_fork;
-    }
-
-    if (!umount_root()) {
-      LOGE("Failed to umount root");
-
-      if (write_uint8_t(socket_child, 0) == -1)
-        LOGE("Failed to write to socket_child: %s", strerror(errno));
-
-      goto finalize_mns_fork;
-    }
-
-    if (write_uint8_t(socket_child, 1) == -1) {
-      LOGE("Failed to write to socket_child: %s", strerror(errno));
-
-      close(socket_child);
-
-      _exit(1);
-    }
-
-    uint8_t has_opened = 0;
-    if (read_uint8_t(socket_child, &has_opened) == -1)
-      LOGE("Failed to read from socket_child: %s", strerror(errno));
-
-    finalize_mns_fork:
-      close(socket_child);
-
-      _exit(0);
-  }
-
-  close(socket_child);
 
   uint8_t has_succeeded = 0;
   if (read_uint8_t(socket_parent, &has_succeeded) == -1) FAIL_MNS("Failed to read from socket_parent");
@@ -1041,11 +1018,62 @@ int save_mns_fd(int pid) {
     return -1;
   }
 
-  /* INFO: The helper is gone by now, but the namespace it named survives: the
-            fd taken from /proc holds it for the daemon's lifetime. */
-  clean_namespace_fd = ns_fd;
-
   return ns_fd;
 
   #undef FAIL_MNS
+}
+
+
+int save_mns_fd(int pid) {
+  /* INFO: Every denylisted process that falls back to the clean namespace asks
+            for it, so it is cached for the daemon's lifetime instead of being
+            forked per process. */
+  static int clean_namespace_fd = -1;
+
+  if (clean_namespace_fd != -1) return clean_namespace_fd;
+
+  int sockets[2];
+  if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sockets) == -1) {
+    LOGE("socketpair: %s", strerror(errno));
+
+    return -1;
+  }
+
+  int socket_parent = sockets[0];
+  int socket_child = sockets[1];
+
+  /* INFO: The handshake runs inside a request handler; a helper wedged on a
+            strange /proc entry must not block the daemon for good. On a
+            timeout the socket is closed, which makes the child's next write
+            fail and lets it exit for the reap below. */
+  struct timeval timeout = { .tv_sec = 5, .tv_usec = 0 };
+  setsockopt(socket_parent, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+  setsockopt(socket_parent, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
+  pid_t fork_pid = fork();
+  if (fork_pid < 0) {
+    LOGE("fork: %s", strerror(errno));
+
+    close(socket_parent);
+    close(socket_child);
+
+    return -1;
+  }
+
+  if (fork_pid == 0) {
+    close(socket_parent);
+
+    mns_helper_run(pid, socket_child);
+  }
+
+  close(socket_child);
+
+  int ns_fd = mns_parent_collect(fork_pid, socket_parent);
+  if (ns_fd == -1) return -1;
+
+  /* INFO: The helper is gone by now, but the namespace it named survives:
+            the fd taken from /proc holds it for the daemon's lifetime. */
+  clean_namespace_fd = ns_fd;
+
+  return ns_fd;
 }
