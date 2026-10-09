@@ -22,11 +22,6 @@ use std::process::{Command, ExitCode};
 const GENERATED: &[(&str, &str)] = &[("gen-jni-hooks", "jni_hooks.h")];
 
 fn main() -> ExitCode {
-    let root = std::env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-
     let mut failed = false;
 
     for (generator, produced) in GENERATED {
@@ -42,7 +37,7 @@ fn main() -> ExitCode {
             continue;
         };
 
-        let Some(fresh) = collect(&root, generator, produced) else {
+        let Some(fresh) = collect(generator, produced) else {
             failed = true;
             continue;
         };
@@ -59,7 +54,10 @@ fn main() -> ExitCode {
     }
 
     if !failed {
-        println!("generated sources check ok: {} file(s) in sync", GENERATED.len());
+        println!(
+            "generated sources check ok: {} file(s) in sync",
+            GENERATED.len()
+        );
     }
 
     if failed {
@@ -69,18 +67,13 @@ fn main() -> ExitCode {
     }
 }
 
-fn tools_dir(root: &Path) -> PathBuf {
-    // The generator's own source lives in the crate; find it from the working
-    // directory so the check runs the same build the tools come from.
-    let local = root.join("tools");
-    if local.is_dir() {
-        return local;
-    }
-
-    // Running from inside the crate (cargo test), one level up is the root.
-    root.parent()
-        .map(|parent| parent.join("tools"))
-        .unwrap_or(local)
+fn tools_dir() -> PathBuf {
+    // The generator's own source lives in this crate, so its build output is
+    // beside it. `CARGO_MANIFEST_DIR` is where cargo is actually building, which
+    // matters because the target directory can be pointed elsewhere - the host
+    // suite builds with `--manifest-path`, and CI sets no CARGO_TARGET_DIR but a
+    // developer may.
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
 /// Reads a generated file and normalises its line endings.
@@ -103,8 +96,8 @@ fn read_source(path: &Path) -> Result<String, std::io::Error> {
 /// The generator is run as a cargo subcommand of the same crate, which is what
 /// makes it identical to the one a developer would run by hand - a second
 /// implementation of the generator would defeat the entire check.
-fn collect(root: &Path, generator: &str, produced: &str) -> Option<String> {
-    let tools = tools_dir(root);
+fn collect(generator: &str, produced: &str) -> Option<String> {
+    let tools = tools_dir();
     let binary = tools
         .join("target")
         .join("release")
@@ -126,7 +119,10 @@ fn collect(root: &Path, generator: &str, produced: &str) -> Option<String> {
 
     let out_path = scratch.join(produced);
 
-    let output = Command::new(&binary).arg(&out_path).current_dir(&tools).output();
+    let output = Command::new(&binary)
+        .arg(&out_path)
+        .current_dir(&tools)
+        .output();
 
     let output = match output {
         Ok(output) => output,
@@ -144,11 +140,14 @@ fn collect(root: &Path, generator: &str, produced: &str) -> Option<String> {
         if message.is_empty() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stdout = stdout.trim();
-            println!("{}", if stdout.is_empty() {
-                format!("exit code {}", output.status)
-            } else {
-                stdout.to_string()
-            });
+            println!(
+                "{}",
+                if stdout.is_empty() {
+                    format!("exit code {}", output.status)
+                } else {
+                    stdout.to_string()
+                }
+            );
         } else {
             println!("{message}");
         }
@@ -171,7 +170,11 @@ fn collect(root: &Path, generator: &str, produced: &str) -> Option<String> {
 }
 
 fn exe_suffix() -> &'static str {
-    if cfg!(windows) { ".exe" } else { "" }
+    if cfg!(windows) {
+        ".exe"
+    } else {
+        ""
+    }
 }
 
 /// A unified diff of the two texts, with two lines of context.
