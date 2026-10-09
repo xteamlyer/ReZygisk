@@ -1038,7 +1038,7 @@ static void respawn_stale_targets(void) {
 
          Every return in here means this child is done with, which is what the
          loop this was lifted out of did with a continue. */
-static void handle_init_event(long sigchld_status) {
+static void handle_init_event(int pid, long sigchld_status) {
   if (STOPPED_WITH(sigchld_status, SIGTRAP, PTRACE_EVENT_FORK)) {
     /* INFO: Initialised and checked: the call fills this in only on
               success, and the line below would otherwise print whatever
@@ -1147,7 +1147,7 @@ void sigchld_listener_callback() {
       }
 
       if (pid == 1) {
-        handle_init_event(sigchld_status);
+        handle_init_event(pid, sigchld_status);
 
         continue;
       }
