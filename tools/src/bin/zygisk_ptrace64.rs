@@ -16,10 +16,10 @@
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::process::ExitCode;
 
-/// The version banner, `ZKSU_VERSION` from the C side.
-///
-/// Passed in by the build rather than duplicated: two spellings of the version
-/// in one binary is exactly the drift this file exists to remove.
+// The version banner, `ZKSU_VERSION` from the C side.
+//
+// Passed in by the build rather than duplicated: two spellings of the version
+// in one binary is exactly the drift this file exists to remove.
 extern "C" {
     static ZKSU_VERSION: *const c_char;
 }
@@ -251,7 +251,10 @@ fn dispatch_ctl(args: &[String]) -> ExitCode {
 }
 
 fn dispatch_info() -> ExitCode {
-    let mut info = std::mem::zeroed::<RezygiskInfo>();
+    // SAFETY: RezygiskInfo is a plain repr(C) struct with no invalid bit
+    // patterns, so an all-zero value is a valid one - which is what the C's
+    // `= { 0 }` produced before this file took the subcommand over.
+    let mut info = unsafe { std::mem::zeroed::<RezygiskInfo>() };
 
     // SAFETY: info is a correctly laid out, zeroed struct of the size the C
     // expects, and free_rezygisk_info is the C's own release for it.
@@ -281,7 +284,7 @@ fn dispatch_info() -> ExitCode {
             for index in 0..modules.modules_count.min(MAX_MODULES) {
                 // SAFETY: the daemon wrote these pointers and the count says how
                 // many are valid; each is a NUL-terminated string it owns.
-                let name = unsafe { CStr::from_ptr(modules.modules[index]) };
+                let name = CStr::from_ptr(modules.modules[index]);
                 println!(" - {}", name.to_string_lossy());
             }
         } else {

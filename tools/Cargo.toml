@@ -2,9 +2,11 @@
 resolver = "2"
 members = ["."]
 
-# The three build-time tools that used to be Python scripts, plus the tracer
-# CLI front end. Everything that runs on the device is cross-compiled through
-# the NDK; everything that runs in CI is a host binary.
+# The build tools that used to be Python scripts, plus the two things that run
+# on the device. The device-side bins carry a `required-features` marker so a
+# plain `cargo build` or `cargo test` here builds only what a workstation can
+# link; `device-target.sh` is what builds the rest, and it is the only thing
+# that does - see the note on the tracer below for what happens otherwise.
 [package]
 name = "vex-tools"
 version = "2.2.0"
@@ -53,14 +55,37 @@ path = "src/bin/make_debugdata.rs"
 # lives in the Android build. The `android` feature is what the NDK build turns
 # on, and it is off by default so `cargo test` and `cargo build` on a
 # workstation keep working.
+#
+# `tools/device-target.sh` is what turns it on, and it is the only thing that
+# ever compiles this bin - it lived here for a while without anything building
+# it, and rotted: by the time it was wired up, `zeroed()` had become an error
+# and the doc comment on the `extern` block had stopped being legal. Anything
+# added here for the device needs the same treatment, or it will do it again.
 [[bin]]
 name = "zygisk-ptrace64"
 path = "src/bin/zygisk_ptrace64.rs"
 required-features = ["android"]
 
+# The two halves of the size probe, one linked against std and one no_std. They
+# exist to produce a number, not to run: `device-target.sh` builds them for the
+# device target and prints the result next to the CI size budgets, so the
+# question "does Rust fit in this budget" is answered by measurement rather
+# than by argument. Off by default, so neither the host build nor the test run
+# sees them.
+[[bin]]
+name = "probe-std"
+path = "src/bin/probe_std.rs"
+required-features = ["probe"]
+
+[[bin]]
+name = "probe-no-std"
+path = "src/bin/probe_no_std.rs"
+required-features = ["probe"]
+
 [features]
 default = []
 android = []
+probe = []
 
 [dependencies]
 # Host tools only. Kept deliberately small: every dependency is something the

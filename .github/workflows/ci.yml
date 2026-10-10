@@ -214,3 +214,65 @@ jobs:
       #       fails the pull request instead of the merge that follows it.
       - name: Host unit tests
         run: bash tests/host/run.sh
+
+  rust-android:
+    # INFO: The Rust that runs on a device is compiled here, and only here.
+    #       `zygisk-ptrace64` carries an `android` feature that no build turned
+    #       on, so it sat in the tree uncompiled until it stopped compiling at
+    #       all - a doc comment where one is not allowed, and a call to
+    #       `zeroed()` that had stopped being accepted outside an `unsafe`
+    #       block. The same step measures what `std` costs on this target, so
+    #       whether another module can be Rust is a number from the toolchain
+    #       the release is built with instead of an opinion.
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # INFO: No submodules: nothing here compiles the engines, and the
+          #       probe bins pull in no dependency of their own.
+          fetch-depth: 1
+
+      - name: Setup NDK_PATH
+        # INFO: Same resolution and the same fallback as the build job - the
+        #       version is pinned in common.mk, and a runner that does not have
+        #       that one measures on the newest it does have, out loud. This job
+        #       needs the NDK for its linker, its size tool and its stripper.
+        run: |
+          set -euo pipefail
+
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          if [ -z "$sdk" ]; then
+            echo "::error::Neither ANDROID_SDK_ROOT nor ANDROID_HOME is set"
+            exit 1
+          fi
+
+          pinned=$(sed -n 's/^NDK_VERSION ?= *//p' common.mk)
+          if [ -z "$pinned" ]; then
+            echo "::error::NDK_VERSION is not pinned in common.mk"
+            exit 1
+          fi
+
+          echo "ANDROID_HOME=$sdk" >> "$GITHUB_ENV"
+
+          if [ -d "$sdk/ndk/$pinned" ]; then
+            echo "Using the pinned NDK $pinned"
+            exit 0
+          fi
+
+          newest=$(ls -1 "$sdk/ndk" 2>/dev/null | sort -V | tail -1)
+          if [ -z "$newest" ]; then
+            echo "::error::No NDK is installed under $sdk/ndk"
+            exit 1
+          fi
+
+          echo "::warning::The pinned NDK $pinned is not installed; measuring on $newest instead (installed: $(ls "$sdk/ndk" | tr '\n' ' '))"
+          echo "NDK_VERSION=$newest" >> "$GITHUB_ENV"
+
+      - name: Setup Rust
+        run: |
+          rustup default "${RUST_TOOLCHAIN:-stable}"
+          rustc --version
+
+      - name: Device-side Rust compiles, and what std costs there
+        run: bash tools/device-target.sh
