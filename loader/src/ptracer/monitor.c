@@ -39,46 +39,48 @@ static bool update_status(const char *message);
 
 static const char *monitor_stop_reason = NULL;
 
+/* INFO: One module as the daemon reported it. A record rather than the five
+         arrays this used to be: the name, whether it is a Zygisk Next module,
+         whether it wants a companion and the targets it asked for only mean
+         anything next to each other, and keeping them apart cost five
+         allocations that had to succeed together and five indices that had to
+         agree. */
+struct daemon_module {
+  char *name;
+  bool is_zn;
+  bool companion;
+  char **targets;
+  uint32_t targets_len;
+};
+
 struct environment_information {
   char *root_impl;
-  char **modules;
-  bool *modules_zn;
-  bool *modules_companion;
-  char ***modules_targets;
-  uint32_t *modules_targets_len;
+  struct daemon_module *modules;
   uint32_t modules_len;
 };
 
 static struct environment_information environment_information;
 
-/* INFO: Releases every module list of the environment. Safe on a zeroed or
-         partially filled state: the arrays are kept calloc'ed, so slots that
-         were never filled read as NULL. */
+/* INFO: Releases every module of the environment. Safe on a zeroed or partially
+         filled state: the array is kept calloc'ed, so a slot that was never
+         filled reads as an empty record. */
 static void free_environment_information(void) {
   if (environment_information.modules != NULL) {
     for (uint32_t i = 0; i < environment_information.modules_len; i++) {
-      free(environment_information.modules[i]);
+      struct daemon_module *module = &environment_information.modules[i];
 
-      if (environment_information.modules_targets != NULL && environment_information.modules_targets[i] != NULL) {
-        for (uint32_t t = 0; t < environment_information.modules_targets_len[i]; t++)
-          free(environment_information.modules_targets[i][t]);
+      free(module->name);
 
-        free(environment_information.modules_targets[i]);
+      if (module->targets != NULL) {
+        for (uint32_t t = 0; t < module->targets_len; t++) free(module->targets[t]);
+
+        free(module->targets);
       }
     }
   }
 
   free(environment_information.modules);
-  free(environment_information.modules_zn);
-  free(environment_information.modules_companion);
-  free(environment_information.modules_targets);
-  free(environment_information.modules_targets_len);
-
   environment_information.modules = NULL;
-  environment_information.modules_zn = NULL;
-  environment_information.modules_companion = NULL;
-  environment_information.modules_targets = NULL;
-  environment_information.modules_targets_len = NULL;
 }
 
 enum ptracer_tracing_state {
@@ -299,9 +301,9 @@ static char *read_socket_string(const char *what) {
          filled: the status line says so instead of naming modules that were
          never delivered. */
 static void read_daemon_modules(void) {
-  /* INFO: Read into a local first: the old lists are freed through the
-            length they were allocated with, so the stored length must
-            not be overwritten before that. */
+  /* INFO: Read into a local first: the old list is freed through the length it
+            was allocated with, so the stored length must not be overwritten
+            before that. */
   uint32_t modules_len;
   if (read_uint32_t(monitor_sock_fd, &modules_len) != sizeof(modules_len)) {
     LOGE("read VexZygiskd%s modules len", MONITOR_ABI);
@@ -315,17 +317,10 @@ static void read_daemon_modules(void) {
   free_environment_information();
 
   environment_information.modules_len = modules_len;
+  environment_information.modules = calloc(modules_len, sizeof(struct daemon_module));
 
-  environment_information.modules = calloc(modules_len, sizeof(char *));
-  environment_information.modules_zn = calloc(modules_len, sizeof(bool));
-  environment_information.modules_companion = calloc(modules_len, sizeof(bool));
-  environment_information.modules_targets = calloc(modules_len, sizeof(char **));
-  environment_information.modules_targets_len = calloc(modules_len, sizeof(uint32_t));
-
-  if (environment_information.modules == NULL || environment_information.modules_zn == NULL ||
-      environment_information.modules_companion == NULL || environment_information.modules_targets == NULL ||
-      environment_information.modules_targets_len == NULL) {
-    PLOGE("malloc VexZygiskd%s module lists", MONITOR_ABI);
+  if (environment_information.modules == NULL) {
+    PLOGE("malloc VexZygiskd%s module list", MONITOR_ABI);
 
     free(environment_information.root_impl);
     environment_information.root_impl = NULL;
@@ -336,8 +331,10 @@ static void read_daemon_modules(void) {
   }
 
   for (size_t i = 0; i < environment_information.modules_len; i++) {
-    environment_information.modules[i] = read_socket_string("module name");
-    if (environment_information.modules[i] == NULL) goto set_info_modules_cleanup;
+    struct daemon_module *module = &environment_information.modules[i];
+
+    module->name = read_socket_string("module name");
+    if (module->name == NULL) goto set_info_modules_cleanup;
 
     uint8_t module_type;
     if (read_uint8_t(monitor_sock_fd, &module_type) != sizeof(module_type)) {
@@ -346,52 +343,47 @@ static void read_daemon_modules(void) {
       goto set_info_modules_cleanup;
     }
 
-    environment_information.modules_zn[i] = module_type == 1;
-    environment_information.modules_companion[i] = false;
-    environment_information.modules_targets[i] = NULL;
-    environment_information.modules_targets_len[i] = 0;
+    module->is_zn = module_type == 1;
 
-    if (module_type == 1) {
+    if (module->is_zn) {
       uint8_t companion;
       if (read_uint8_t(monitor_sock_fd, &companion) != sizeof(companion)) {
         LOGE("read VexZygiskd%s module companion", MONITOR_ABI);
 
         goto set_info_modules_cleanup;
       }
-      environment_information.modules_companion[i] = companion == 1;
+      module->companion = companion == 1;
 
-      uint32_t targets_len;
-      if (read_uint32_t(monitor_sock_fd, &targets_len) != sizeof(targets_len)) {
+      if (read_uint32_t(monitor_sock_fd, &module->targets_len) != sizeof(module->targets_len)) {
         LOGE("read VexZygiskd%s module targets len", MONITOR_ABI);
 
         goto set_info_modules_cleanup;
       }
-      environment_information.modules_targets_len[i] = targets_len;
 
-      if (targets_len > 0) {
-        environment_information.modules_targets[i] = calloc(targets_len, sizeof(char *));
-        if (environment_information.modules_targets[i] == NULL) {
+      if (module->targets_len > 0) {
+        module->targets = calloc(module->targets_len, sizeof(char *));
+        if (module->targets == NULL) {
           PLOGE("malloc VexZygiskd%s module targets", MONITOR_ABI);
 
           goto set_info_modules_cleanup;
         }
 
-        for (uint32_t t = 0; t < targets_len; t++) {
-          environment_information.modules_targets[i][t] = read_socket_string("module target");
-          if (environment_information.modules_targets[i][t] == NULL) goto set_info_modules_cleanup;
+        for (uint32_t t = 0; t < module->targets_len; t++) {
+          module->targets[t] = read_socket_string("module target");
+          if (module->targets[t] == NULL) goto set_info_modules_cleanup;
         }
       }
     }
 
-    LOGD("VexZygiskd%s module %zu: %s (%s)", MONITOR_ABI, i, environment_information.modules[i], environment_information.modules_zn[i] ? "next" : "zygisk");
+    LOGD("VexZygiskd%s module %zu: %s (%s)", MONITOR_ABI, i, module->name, module->is_zn ? "next" : "zygisk");
   }
 
   update_status(NULL);
 
   return;
 
-  /* INFO: Reached from any failed read above. Every slot was calloc'ed,
-            so free_environment_information can walk the full lists. */
+  /* INFO: Reached from any failed read above. The array was calloc'ed, so
+            free_environment_information walks the full list. */
   set_info_modules_cleanup:
     free(environment_information.root_impl);
     environment_information.root_impl = NULL;
@@ -402,6 +394,7 @@ static void read_daemon_modules(void) {
 
     return;
 }
+
 
 void rezygiskd_listener_callback() {
   while (1) {
@@ -1340,12 +1333,12 @@ static char module_text[2048];
          both the plain and the Zygisk Next lists, so check for a Next twin
          before listing the plain copy. */
 static bool has_zn_twin(const char *name) {
-  if (environment_information.modules_zn == NULL) return false;
+  if (environment_information.modules == NULL) return false;
 
   for (uint32_t j = 0; j < environment_information.modules_len; j++) {
-    if (environment_information.modules_zn[j] &&
-        environment_information.modules[j] != NULL &&
-        strcmp(environment_information.modules[j], name) == 0) return true;
+    const struct daemon_module *twin = &environment_information.modules[j];
+
+    if (twin->is_zn && twin->name != NULL && strcmp(twin->name, name) == 0) return true;
   }
 
   return false;
@@ -1391,19 +1384,17 @@ static void build_module_text(void) {
   bool first = true;
 
   for (uint32_t i = 0; i < environment_information.modules_len && off < sizeof(module_text) - 1; i++) {
-    const char *name = environment_information.modules[i];
-    if (name == NULL) continue;
+    const struct daemon_module *module = &environment_information.modules[i];
+    if (module->name == NULL) continue;
 
-    bool is_next = environment_information.modules_zn && environment_information.modules_zn[i];
-
-    if (!is_next && has_zn_twin(name)) continue;
+    if (!module->is_zn && has_zn_twin(module->name)) continue;
 
     if (!first) append_bounded(module_text, sizeof(module_text), &off, ", ");
     first = false;
 
-    append_bounded(module_text, sizeof(module_text), &off, name);
+    append_bounded(module_text, sizeof(module_text), &off, module->name);
 
-    if (is_next) append_bounded(module_text, sizeof(module_text), &off, " (Next)");
+    if (module->is_zn) append_bounded(module_text, sizeof(module_text), &off, " (Next)");
   }
 
   append_bounded(module_text, sizeof(module_text), &off, " \u00b7 ");
@@ -1584,23 +1575,25 @@ static bool write_state_json(void) {
     fprintf(json, "      \"modules\": [");
 
     if (environment_information.modules) for (uint32_t i = 0; i < environment_information.modules_len; i++) {
+      const struct daemon_module *module = &environment_information.modules[i];
+
       if (i > 0) fprintf(json, ", ");
 
       char module_json[256];
-      json_escape_into(module_json, sizeof(module_json), environment_information.modules[i] ? environment_information.modules[i] : "");
+      json_escape_into(module_json, sizeof(module_json), module->name ? module->name : "");
 
       fprintf(json, "{\"id\": \"%s\", \"next\": %s, \"companion\": %s",
               module_json,
-              environment_information.modules_zn[i] ? "true" : "false",
-              environment_information.modules_companion[i] ? "true" : "false");
+              module->is_zn ? "true" : "false",
+              module->companion ? "true" : "false");
 
-      if (environment_information.modules_targets && environment_information.modules_targets[i]) {
+      if (module->targets) {
         fprintf(json, ", \"targets\": [");
-        for (uint32_t t = 0; t < environment_information.modules_targets_len[i]; t++) {
+        for (uint32_t t = 0; t < module->targets_len; t++) {
           if (t > 0) fprintf(json, ", ");
 
           char target_json[256];
-          json_escape_into(target_json, sizeof(target_json), environment_information.modules_targets[i][t] ? environment_information.modules_targets[i][t] : "");
+          json_escape_into(target_json, sizeof(target_json), module->targets[t] ? module->targets[t] : "");
 
           fprintf(json, "\"%s\"", target_json);
         }

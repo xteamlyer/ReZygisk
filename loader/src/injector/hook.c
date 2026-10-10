@@ -1228,15 +1228,16 @@ static void rz_run_modules_post(struct zygisk_context *ctx) {
     LOGD("Modules unloaded: %zu/%zu", modules_unloaded, zygisk_module_length);
 }
 
-static void rz_app_specialize_pre(struct zygisk_context *ctx) {
-  FLAG_SET(ctx, APP_SPECIALIZE);
-
-  /* INFO: The UID sent to the daemon must be the app's, not an isolated
-             service's: root implementations key off the app UID, so the isolated
-             one would bypass the denylist. Third-party apps and their isolated
-             processes always have app_data_dir; system apps may not, but they
-             rarely spawn isolated processes. */
+/* INFO: The UID sent to the daemon must be the app's, not an isolated
+         service's: root implementations key off the app UID, so the isolated
+         one would bypass the denylist. Third-party apps and their isolated
+         processes always have app_data_dir; system apps may not, but they
+         rarely spawn isolated processes. Returns false when the directory
+         cannot be read, which abandons the specialization rather than sending
+         the daemon a UID that would bypass the denylist. */
+static bool resolve_app_uid(struct zygisk_context *ctx, uid_t *out_uid) {
   uid_t uid = *ctx->args.app->uid;
+
   if (IS_ISOLATED_SERVICE(uid) && ctx->args.app->app_data_dir) {
     /* INFO: If the app is an isolated service, we use the UID of the
                app's process data directory, which is the UID of the
@@ -1246,7 +1247,7 @@ static void rz_app_specialize_pre(struct zygisk_context *ctx) {
     if (!data_dir) {
       LOGE("Failed to get app data directory");
 
-      return;
+      return false;
     }
 
     struct stat st;
@@ -1255,7 +1256,7 @@ static void rz_app_specialize_pre(struct zygisk_context *ctx) {
 
       (*ctx->env)->ReleaseStringUTFChars(ctx->env, *ctx->args.app->app_data_dir, data_dir);
 
-      return;
+      return false;
     }
 
     uid = st.st_uid;
@@ -1263,6 +1264,64 @@ static void rz_app_specialize_pre(struct zygisk_context *ctx) {
 
     (*ctx->env)->ReleaseStringUTFChars(ctx->env, *ctx->args.app->app_data_dir, data_dir);
   }
+
+  *out_uid = uid;
+
+  return true;
+}
+
+/* INFO: The first process started is the reference for the clean namespace,
+         captured before it does anything so the copy is clean yet keeps the
+         expected mounts. Built in every mode, not only when the revert is
+         off: the clean namespace is also what the webview zygote and every
+         refused in-place revert fall back to, and building it lazily would
+         let whichever process stumbles first donate its own mount tree as
+         the reference for the rest of the boot. */
+static void capture_clean_namespace(struct zygisk_context *ctx) {
+  if ((ctx->info_flags & PROCESS_IS_FIRST_STARTED) != PROCESS_IS_FIRST_STARTED) return;
+  if ((ctx->info_flags & PROCESS_ON_DENYLIST) == PROCESS_ON_DENYLIST) return;
+  if ((ctx->info_flags & PROCESS_IS_MANAGER) == PROCESS_IS_MANAGER) return;
+
+  update_mnt_ns(Clean, true);
+}
+
+/* INFO: Hides the mounts of a process the denylist covers. The WebView zygote
+         never gets the in-place revert: its namespace is the one every WebView
+         renderer inherits for the whole uptime of the process, and running
+         umount2 inside it detaches mounts its own mountinfo still names - an
+         overlay that covers provider or framework resources then leaves WebView
+         resolving paths that no longer exist, which surfaces as broken WebView
+         initialization and blank module WebUIs. It is switched into the
+         daemon's cached clean namespace instead, the same isolation every other
+         implementation applies, with no unmount running inside a live zygote
+         child.
+
+         The private copy comes first for everyone else: unmounting without it
+         would strip the traces out of the namespace the zygote sits in and
+         every later fork would inherit that. A refused revert, or the mode
+         being off, hides the process the namespace way instead - works as
+         well, at the cost of one shared namespace. */
+static void isolate_denylisted(struct zygisk_context *ctx, bool is_webview_zygote) {
+  FLAG_SET(ctx, DO_REVERT_UNMOUNT);
+
+  if (is_webview_zygote) {
+    if (!update_mnt_ns(Clean, false)) {
+      LOGE("Failed to switch webview_zygote to the clean mount namespace");
+    }
+
+    return;
+  }
+
+  if (!revert_mode_enabled() || unshare(CLONE_NEWNS) == -1 || !revert_root_traces_here()) {
+    update_mnt_ns(Clean, false);
+  }
+}
+
+static void rz_app_specialize_pre(struct zygisk_context *ctx) {
+  FLAG_SET(ctx, APP_SPECIALIZE);
+
+  uid_t uid;
+  if (!resolve_app_uid(ctx, &uid)) return;
 
   ctx->info_flags = rezygiskd_get_process_flags(uid, ctx->process);
 
@@ -1275,19 +1334,8 @@ static void rz_app_specialize_pre(struct zygisk_context *ctx) {
     zn_modules_present = (ctx->info_flags & PROCESS_ZN_PRESENT) == PROCESS_ZN_PRESENT;
     zn_presence_known = true;
   }
-  /* INFO: The first process started is the reference for the clean namespace,
-             captured before it does anything so the copy is clean yet keeps the
-             expected mounts. Built in every mode, not only when the revert is
-             off: the clean namespace is also what the webview zygote and every
-             refused in-place revert fall back to, and building it lazily would
-             let whichever process stumbles first donate its own mount tree as
-             the reference for the rest of the boot. */
-  if ((ctx->info_flags & PROCESS_IS_FIRST_STARTED) == PROCESS_IS_FIRST_STARTED &&
-      (ctx->info_flags & PROCESS_ON_DENYLIST) == 0 &&
-      (ctx->info_flags & PROCESS_IS_MANAGER) == 0
-  ) {
-    update_mnt_ns(Clean, true);
-  }
+
+  capture_clean_namespace(ctx);
 
   if ((ctx->info_flags & PROCESS_IS_MANAGER) == PROCESS_IS_MANAGER) {
     LOGD("Manager process detected. Notifying that Zygisk has been enabled.");
@@ -1298,44 +1346,22 @@ static void rz_app_specialize_pre(struct zygisk_context *ctx) {
     setenv("ZYGISK_ENABLED", "1", 1);
   }
 
-  /* INFO: Mounts are updated before the modules run. In preSpecialize a module
-             still has the privileges to mount/umount/setns, and updating the
-             namespace afterwards would discard what it set up; by
-             postSpecialize the namespace is already switched, so it is too late.
-             Doing it first also lets modules touch denylisted processes without
-             the change being reverted. */
-  /* INFO: The WebView app-zygote is never on the denylist, but it forks its
+  /* INFO: The mounts are updated before the modules run. In preSpecialize a
+            module still has the privileges to mount/umount/setns, and updating
+            the namespace afterwards would discard what it set up; by
+            postSpecialize the namespace is already switched, so it is too
+            late. Doing it first also lets modules touch denylisted processes
+            without the change being reverted.
+
+            The WebView app-zygote is never on the denylist, but it forks its
             sandboxed children outside the specialization path and hands them
             its own mount namespace. Left alone it keeps the root mount view
             while a regular isolated process gets the clean one, and two
             isolated processes then present different mount content. */
   bool is_webview_zygote = ctx->process != NULL && strcmp(ctx->process, "webview_zygote") == 0;
   bool in_denylist = (ctx->info_flags & PROCESS_ON_DENYLIST) == PROCESS_ON_DENYLIST || is_webview_zygote;
-  if (in_denylist) {
-    FLAG_SET(ctx, DO_REVERT_UNMOUNT);
 
-    /* INFO: The WebView zygote never gets the in-place revert. Its namespace is
-              the one every WebView renderer inherits for the whole uptime of the
-              process, and running umount2 inside it detaches mounts its own
-              mountinfo still names - an overlay that covers provider or framework
-              resources then leaves WebView resolving paths that no longer exist,
-              which surfaces as broken WebView initialization and blank module
-              WebUIs. It is switched into the daemon's cached clean namespace
-              instead, the same isolation every other implementation applies,
-              with no unmount running inside a live zygote child. */
-    if (is_webview_zygote) {
-      if (!update_mnt_ns(Clean, false)) {
-        LOGE("Failed to switch webview_zygote to the clean mount namespace");
-      }
-    } else if (!revert_mode_enabled() || unshare(CLONE_NEWNS) == -1 || !revert_root_traces_here()) {
-      /* INFO: Revert-only, on this process alone. The private copy comes first:
-                unmounting without it would strip the traces out of the namespace the
-                zygote sits in and every later fork would inherit that. A refused
-                revert, or the mode being off, hides the process the namespace way
-                instead - works as well, at the cost of one shared namespace. */
-      update_mnt_ns(Clean, false);
-    }
-  }
+  if (in_denylist) isolate_denylisted(ctx, is_webview_zygote);
 
   /* INFO: Executed after setns to ensure a module can update the mounts of an
               application without worrying about it being overwritten by setns.

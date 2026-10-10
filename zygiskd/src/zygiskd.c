@@ -30,6 +30,23 @@
   #define PROCESS_ROOT_IS_ACTIVE PROCESS_ROOT_IS_KSU
 #endif
 
+/* INFO: The paths inside a module's directory, built in one place. The daemon
+         composes them in eight, and a suffix that changes on one side while
+         another keeps the old spelling means a module is loaded from one path
+         while its marker is probed for at a different one. Every caller passes
+         a PATH_MAX buffer. */
+static void module_dir_path(char *out, size_t size, const char *name) {
+  snprintf(out, size, "%s/%s", ZYGISK_MODULES_DIR, name);
+}
+
+static void module_file_path(char *out, size_t size, const char *name, const char *leaf) {
+  snprintf(out, size, "%s/%s/%s", ZYGISK_MODULES_DIR, name, leaf);
+}
+
+static void module_lib_path(char *out, size_t size, const char *name) {
+  snprintf(out, size, "%s/%s/zygisk/%s.so", ZYGISK_MODULES_DIR, name, ARCH_STR);
+}
+
 struct Module {
   char *name;
   int lib_fd;
@@ -189,7 +206,7 @@ static bool add_zn_module(struct Context *restrict context, const char *name) {
   module->targets_len = 0;
 
   char module_dir[PATH_MAX];
-  snprintf(module_dir, PATH_MAX, "%s/%s", ZYGISK_MODULES_DIR, name);
+  module_dir_path(module_dir, PATH_MAX, name);
 
   parse_zn_module_file(module_dir, module);
 
@@ -232,12 +249,12 @@ static void load_modules(struct Context *restrict context) {
     char *name = entry->d_name;
 
     char disabled[PATH_MAX];
-    snprintf(disabled, PATH_MAX, ZYGISK_MODULES_DIR "/%s/disable", name);
+    module_file_path(disabled, PATH_MAX, name, "disable");
 
     if (access(disabled, F_OK) == 0) continue;
 
     char zn_modules[PATH_MAX];
-    snprintf(zn_modules, PATH_MAX, ZYGISK_MODULES_DIR "/%s/zn_modules.txt", name);
+    module_file_path(zn_modules, PATH_MAX, name, "zn_modules.txt");
 
     /* INFO: Both mechanisms serve a module rather than one excluding the other,
               which is what LSPosed needs: it ships a zn_modules.txt (it wants a
@@ -257,7 +274,7 @@ static void load_modules(struct Context *restrict context) {
     }
 
     char so_path[PATH_MAX];
-    snprintf(so_path, PATH_MAX, ZYGISK_MODULES_DIR "/%s/zygisk/" ARCH_STR ".so", name);
+    module_lib_path(so_path, PATH_MAX, name);
 
     int lib_fd = open(so_path, O_RDONLY | O_CLOEXEC);
     if (lib_fd == -1) {
@@ -825,53 +842,47 @@ static void zn_parse_cache_clear(void) {
   zn_dir_valid = false;
 }
 
-static struct zn_cached_module *zn_parse_cache_get(const char *dir_name, const char *module_dir, const char *zn_file) {
-  struct zn_cached_module *module = NULL;
-
+/* INFO: The cache slot for `dir_name`, created and registered when there is
+         none yet. NULL only when the table could not grow or the name could not
+         be copied. */
+static struct zn_cached_module *zn_parse_cache_slot(const char *dir_name) {
   for (size_t i = 0; i < zn_parse_cache_len; i++) {
-    if (strcmp(zn_parse_cache[i].dir_name, dir_name) == 0) {
-      module = &zn_parse_cache[i];
-
-      break;
-    }
+    if (strcmp(zn_parse_cache[i].dir_name, dir_name) == 0) return &zn_parse_cache[i];
   }
 
-  if (module == NULL) {
-    struct zn_cached_module *tmp = realloc(zn_parse_cache, (zn_parse_cache_len + 1) * sizeof(struct zn_cached_module));
-    if (tmp == NULL) {
-      LOGE("Failed growing the Zygisk Next parse cache");
-
-      return NULL;
-    }
-
-    zn_parse_cache = tmp;
-    module = &zn_parse_cache[zn_parse_cache_len];
-    memset(module, 0, sizeof(*module));
-
-    module->dir_name = strdup(dir_name);
-    if (module->dir_name == NULL) return NULL;
-
-    zn_parse_cache_len++;
-  }
-
-  struct stat st;
-  if (stat(zn_file, &st) == -1) {
-    if (module->valid) {
-      LOGI("The Zygisk Next list of \"%s\" disappeared", dir_name);
-
-      zn_parse_cache_free_lines(module);
-    }
+  struct zn_cached_module *tmp = realloc(zn_parse_cache, (zn_parse_cache_len + 1) * sizeof(struct zn_cached_module));
+  if (tmp == NULL) {
+    LOGE("Failed growing the Zygisk Next parse cache");
 
     return NULL;
   }
 
-  if (module->valid && stat_identity_same(&module->st, &st)) return module;
+  zn_parse_cache = tmp;
 
-  /* INFO: New or changed file: drop the old rows and parse afresh. */
-  zn_parse_cache_free_lines(module);
+  struct zn_cached_module *module = &zn_parse_cache[zn_parse_cache_len];
+  memset(module, 0, sizeof(*module));
 
+  module->dir_name = strdup(dir_name);
+  if (module->dir_name == NULL) return NULL;
+
+  zn_parse_cache_len++;
+
+  return module;
+}
+
+/* INFO: Reads `zn_file` into `module`, replacing whatever rows it held.
+         Returns false when the file could not be opened, which leaves the slot
+         invalid so the next call tries again.
+
+         Everything that costs a syscall runs here, once per file change, and
+         not wherever the rows are consumed: realpath() stats every path
+         component and the ABI check opens the file, while the rows are walked
+         for every module on every fork. What gets cached is the canonical path,
+         so the per-fork path stays a plain string compare. */
+static bool zn_parse_cache_read(struct zn_cached_module *module, const char *dir_name,
+                                const char *module_dir, const char *zn_file) {
   FILE *fp = fopen(zn_file, "re");
-  if (fp == NULL) return NULL;
+  if (fp == NULL) return false;
 
   char *line = NULL;
   size_t line_capacity = 0;
@@ -888,11 +899,6 @@ static struct zn_cached_module *zn_parse_cache_get(const char *dir_name, const c
 
     if (!parse_zn_line(module_dir, line, &is_name, &target, &companion, &lib_path)) continue;
 
-    /* INFO: Both checks run here, once per file change, and not wherever the
-             rows are consumed: realpath() stats every path component and the
-             ABI check opens the file, while collect_zn_modules walks every
-             module on every fork. What gets cached is the canonical path, so
-             the per-fork path stays a plain string compare. */
     char canonical[PATH_MAX];
 
     if (!zn_library_in_module_dir(module_dir, lib_path, canonical, sizeof(canonical))) {
@@ -945,6 +951,35 @@ static struct zn_cached_module *zn_parse_cache_get(const char *dir_name, const c
 
   free(line);
   fclose(fp);
+
+  return true;
+}
+
+/* INFO: The parsed rows of `dir_name`, from the cache when the file has not
+         changed since it was read. What is left here is the decision about the
+         file - gone, unchanged, or new - since the reading and the slot
+         bookkeeping are their own steps. */
+static struct zn_cached_module *zn_parse_cache_get(const char *dir_name, const char *module_dir, const char *zn_file) {
+  struct zn_cached_module *module = zn_parse_cache_slot(dir_name);
+  if (module == NULL) return NULL;
+
+  struct stat st;
+  if (stat(zn_file, &st) == -1) {
+    if (module->valid) {
+      LOGI("The Zygisk Next list of \"%s\" disappeared", dir_name);
+
+      zn_parse_cache_free_lines(module);
+    }
+
+    return NULL;
+  }
+
+  if (module->valid && stat_identity_same(&module->st, &st)) return module;
+
+  /* INFO: New or changed file: drop the old rows and parse afresh. */
+  zn_parse_cache_free_lines(module);
+
+  if (!zn_parse_cache_read(module, dir_name, module_dir, zn_file)) return NULL;
 
   module->st = st;
   module->valid = true;
@@ -999,9 +1034,9 @@ static bool refresh_module_dir_cache(const struct stat *dir_st) {
     zn_dir_cache_len++;
   }
 
-    closedir(dir);
-    zn_dir_st = *dir_st;
-    zn_dir_valid = true;
+  closedir(dir);
+  zn_dir_st = *dir_st;
+  zn_dir_valid = true;
 
   return true;
 }
@@ -1031,10 +1066,10 @@ static bool collect_zn_modules(const char *process_name, const char *process_pat
     const char *entry_name = zn_dir_cache[i].name;
 
     char module_dir[PATH_MAX];
-    snprintf(module_dir, PATH_MAX, "%s/%s", ZYGISK_MODULES_DIR, entry_name);
+    module_dir_path(module_dir, PATH_MAX, entry_name);
 
     char disabled[PATH_MAX];
-    snprintf(disabled, PATH_MAX, "%s/disable", module_dir);
+    module_file_path(disabled, PATH_MAX, entry_name, "disable");
 
     if (access(disabled, F_OK) == 0) continue;
 
@@ -1042,12 +1077,12 @@ static bool collect_zn_modules(const char *process_name, const char *process_pat
               handing its libraries to new processes until then is not wanted,
               and the standard module path already treats "remove" this way. */
     char removed[PATH_MAX];
-    snprintf(removed, PATH_MAX, "%s/remove", module_dir);
+    module_file_path(removed, PATH_MAX, entry_name, "remove");
 
     if (access(removed, F_OK) == 0) continue;
 
     char zn_file[PATH_MAX];
-    snprintf(zn_file, PATH_MAX, "%s/zn_modules.txt", module_dir);
+    module_file_path(zn_file, PATH_MAX, entry_name, "zn_modules.txt");
 
     /* INFO: No access() probe here: zn_parse_cache_get stats the file and
               fopen fails the same way when it exists but is unreadable, so
@@ -1335,7 +1370,7 @@ static void handle_read_modules(struct Client *client) {
     }
 
     char lib_path[PATH_MAX];
-    snprintf(lib_path, PATH_MAX, ZYGISK_MODULES_DIR "/%s/zygisk/" ARCH_STR ".so", client->context->modules[i].name);
+    module_lib_path(lib_path, PATH_MAX, client->context->modules[i].name);
 
     if (write_string(client->fd, lib_path) == -1) {
       LOGE("Failed writing module path.");
@@ -1586,7 +1621,7 @@ static void handle_get_module_dir(struct Client *client) {
   }
 
   char module_dir[PATH_MAX];
-  snprintf(module_dir, PATH_MAX, "%s/%s", ZYGISK_MODULES_DIR, client->context->modules[index].name);
+  module_dir_path(module_dir, PATH_MAX, client->context->modules[index].name);
 
   int fd = open(module_dir, O_RDONLY | O_CLOEXEC);
   if (fd == -1) {
