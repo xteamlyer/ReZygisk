@@ -1176,9 +1176,9 @@ static bool collect_zn_modules(const char *process_name, const char *process_pat
            are read by the condition and not only by the log on purpose - a
            release build compiles every LOG* out entirely, which would leave
            them set but unused, and -Werror is on. */
-  if (*out_len == 0 && dirs_walked > 0 && lists_valid > 0 && rows_examined > 0) {
-    LOGW("Zygisk Next: no library for \"%s\" - %zu of %zu row(s) in %zu list(s) matched, %zu dir(s) walked",
-         process_name, rows_matched, rows_examined, lists_valid, dirs_walked);
+  if (*out_len == 0 && rows_matched == 0 && dirs_walked > 0 && lists_valid > 0 && rows_examined > 0) {
+    LOGW("Zygisk Next: no library for \"%s\" - nothing of %zu row(s) in %zu list(s) named it, %zu dir(s) walked",
+         process_name, rows_examined, lists_valid, dirs_walked);
   }
 
   return true;
