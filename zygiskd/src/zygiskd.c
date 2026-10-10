@@ -879,7 +879,7 @@ static struct zn_cached_module *zn_parse_cache_slot(const char *dir_name) {
          component and the ABI check opens the file, while the rows are walked
          for every module on every fork. What gets cached is the canonical path,
          so the per-fork path stays a plain string compare. */
-static bool zn_parse_cache_read(struct zn_cached_module *module, const char *dir_name,
+static bool zn_parse_cache_read(struct zn_cached_module *module,
                                 const char *module_dir, const char *zn_file) {
   FILE *fp = fopen(zn_file, "re");
   if (fp == NULL) return false;
@@ -902,7 +902,7 @@ static bool zn_parse_cache_read(struct zn_cached_module *module, const char *dir
     char canonical[PATH_MAX];
 
     if (!zn_library_in_module_dir(module_dir, lib_path, canonical, sizeof(canonical))) {
-      LOGW("The Zygisk Next library \"%s\" of \"%s\" cannot be resolved inside its module directory, skipping", lib_path, dir_name);
+      LOGW("The Zygisk Next library \"%s\" of \"%s\" cannot be resolved inside its module directory, skipping", lib_path, module->dir_name);
 
       free(target);
       free(lib_path);
@@ -933,7 +933,7 @@ static bool zn_parse_cache_read(struct zn_cached_module *module, const char *dir
 
     struct zn_cached_line *tmp = realloc(module->lines, (module->lines_len + 1) * sizeof(struct zn_cached_line));
     if (tmp == NULL) {
-      LOGE("Failed growing the parsed rows of \"%s\"", dir_name);
+      LOGE("Failed growing the parsed rows of \"%s\"", module->dir_name);
 
       free(target);
       free(lib_path);
@@ -979,7 +979,7 @@ static struct zn_cached_module *zn_parse_cache_get(const char *dir_name, const c
   /* INFO: New or changed file: drop the old rows and parse afresh. */
   zn_parse_cache_free_lines(module);
 
-  if (!zn_parse_cache_read(module, dir_name, module_dir, zn_file)) return NULL;
+  if (!zn_parse_cache_read(module, module_dir, zn_file)) return NULL;
 
   module->st = st;
   module->valid = true;
