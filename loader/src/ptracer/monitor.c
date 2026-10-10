@@ -57,6 +57,11 @@ struct environment_information {
   char *root_impl;
   struct daemon_module *modules;
   uint32_t modules_len;
+  /* INFO: How many of those are Zygisk Next modules. The listing asks whether
+             a plain module has a Next twin, and that question is decided by a
+             scan of the whole list - but when not one module is a Next module
+             the answer is no without looking, which is the usual machine. */
+  uint32_t zn_len;
 };
 
 static struct environment_information environment_information;
@@ -317,6 +322,7 @@ static void read_daemon_modules(void) {
   free_environment_information();
 
   environment_information.modules_len = modules_len;
+  environment_information.zn_len = 0;
   environment_information.modules = calloc(modules_len, sizeof(struct daemon_module));
 
   if (environment_information.modules == NULL) {
@@ -344,6 +350,7 @@ static void read_daemon_modules(void) {
     }
 
     module->is_zn = module_type == 1;
+    if (module->is_zn) environment_information.zn_len++;
 
     if (module->is_zn) {
       uint8_t companion;
@@ -688,6 +695,11 @@ static int sigchld_status;
 static pid_t *sigchld_process;
 static size_t sigchld_process_count = 0;
 static size_t sigchld_process_capacity = 0;
+/* INFO: Every slot below this one is known to be taken, so the search for a
+         free slot starts here instead of at the beginning. The array is walked
+         once per fork and holds every process under trace, so starting over
+         each time made a burst cost a scan of everything recorded so far. */
+static size_t sigchld_process_free = 0;
 
 /* INFO: Who holds init right now, or 0 when nobody does. Read out of
          /proc/1/status instead of inferred, because it answers the only
@@ -1162,10 +1174,11 @@ void sigchld_listener_callback() {
 
         LOGV("New process %d attached", pid);
 
-        for (size_t i = 0; i < sigchld_process_count; i++) {
+        for (size_t i = sigchld_process_free; i < sigchld_process_count; i++) {
           if (sigchld_process[i] != 0) continue;
 
           sigchld_process[i] = pid;
+          sigchld_process_free = i + 1;
 
           goto ptrace_process;
         }
@@ -1204,6 +1217,7 @@ void sigchld_listener_callback() {
 
         sigchld_process[sigchld_process_count] = pid;
         sigchld_process_count++;
+        sigchld_process_free = sigchld_process_count;
 
         ptrace_process:
 
@@ -1301,6 +1315,7 @@ void sigchld_listener_callback() {
           if (sigchld_process[i] != pid) continue;
 
           sigchld_process[i] = 0;
+          if (i < sigchld_process_free) sigchld_process_free = i;
 
           break;
         }
@@ -1323,6 +1338,8 @@ void sigchld_listener_stop() {
   sigchld_process = NULL;
   sigchld_process_count = 0;
   sigchld_process_capacity = 0;
+  sigchld_process_free = 0;
+  sigchld_process_free = 0;
 }
 
 static char pre_section[1024];
@@ -1333,7 +1350,7 @@ static char module_text[2048];
          both the plain and the Zygisk Next lists, so check for a Next twin
          before listing the plain copy. */
 static bool has_zn_twin(const char *name) {
-  if (environment_information.modules == NULL) return false;
+  if (environment_information.zn_len == 0) return false;
 
   for (uint32_t j = 0; j < environment_information.modules_len; j++) {
     const struct daemon_module *twin = &environment_information.modules[j];

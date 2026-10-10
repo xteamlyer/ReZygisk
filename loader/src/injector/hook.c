@@ -420,8 +420,15 @@ DCL_HOOK_FUNC(int, pthread_attr_setstacksize, void *target, size_t size) {
 }
 
 static void initialize_jni_hook(void);
+static bool can_hook_jni = false;
+
 DCL_HOOK_FUNC(char *, strdup, const char *str) {
-  if (strcmp(str, "com.android.internal.os.ZygoteInit") == 0) {
+  /* INFO: The comparison runs on every strdup the process makes, and there is
+            only ever the one string it looks for. Once the hook is installed
+            the answer cannot change, so the search is skipped - and the retry
+            this exists for still happens, because the flag is set only by a
+            setup that got all the way through. */
+  if (!can_hook_jni && strcmp(str, "com.android.internal.os.ZygoteInit") == 0) {
     LOGV("strdup %s", str);
 
     initialize_jni_hook();
@@ -452,7 +459,6 @@ DCL_HOOK_FUNC(int, property_get, const char *key, char *value, const char *defau
 
 #undef DCL_HOOK_FUNC
 
-static bool can_hook_jni = false;
 static jint MODIFIER_NATIVE = 0;
 static jmethodID member_getModifiers = NULL;
 
@@ -992,21 +998,27 @@ static void rz_fork_pre(struct zygisk_context *ctx) {
   closedir(dir);
 }
 
-static void mark_fds_allowed(struct zygisk_context *ctx, JNIEnv *env, jintArray fdsArray) {
-  if (!fdsArray) return;
+/* INFO: Marks every fd in `fdsArray` as allowed and hands back how many
+         entries it held, so the caller that has to append to the array does not
+         ask for the length a second time. Zero when there is no array. */
+static jint mark_fds_allowed(struct zygisk_context *ctx, JNIEnv *env, jintArray fdsArray) {
+  if (!fdsArray) return 0;
 
   jint *arr = (*env)->GetIntArrayElements(env, fdsArray, NULL);
 
   /* INFO: An allocation failure answers NULL, and the loop below would read the
             array through it on the fork path. Nothing is allowed rather than a
-            crash, and the array is left alone - there is nothing to release. */
+            crash, and the array is left alone - there is nothing to release.
+            The length is taken before the elements for that reason: the caller
+            that appends to the array needs it whether or not the contents could
+            be read, and asking for it twice bought nothing. */
+  jint len = (*env)->GetArrayLength(env, fdsArray);
+
   if (arr == NULL) {
     (*env)->ExceptionClear(env);
 
-    return;
+    return len;
   }
-
-  jint len = (*env)->GetArrayLength(env, fdsArray);
 
   for (jint i = 0; i < len; ++i) {
     int fd = arr[i];
@@ -1014,6 +1026,8 @@ static void mark_fds_allowed(struct zygisk_context *ctx, JNIEnv *env, jintArray 
   }
 
   (*env)->ReleaseIntArrayElements(env, fdsArray, arr, JNI_ABORT);
+
+  return len;
 }
 
 static void rz_sanitize_fds(struct zygisk_context *ctx) {
@@ -1021,10 +1035,9 @@ static void rz_sanitize_fds(struct zygisk_context *ctx) {
 
   if (FLAG_GET(ctx, APP_FORK_AND_SPECIALIZE)) {
     jintArray fdsToIgnore = ctx->args.app->fds_to_ignore ? *ctx->args.app->fds_to_ignore : NULL;
-    mark_fds_allowed(ctx, ctx->env, fdsToIgnore);
+    jint len = mark_fds_allowed(ctx, ctx->env, fdsToIgnore);
 
     if (ctx->exempted_fds_count > 0) {
-      jint len = fdsToIgnore ? (*ctx->env)->GetArrayLength(ctx->env, fdsToIgnore) : 0;
       jintArray newArray = (*ctx->env)->NewIntArray(ctx->env, (jsize)(len + ctx->exempted_fds_count));
       if (newArray) {
         if (fdsToIgnore && len > 0) {
@@ -1535,7 +1548,20 @@ static void rz_nativeForkAndSpecialize_post(struct zygisk_context *ctx) {
 static void rz_init(struct zygisk_context *ctx, JNIEnv *env, void *args) {
   spawn_pipeline_enter();
 
-  memset(ctx, 0, sizeof(struct zygisk_context));
+  /* INFO: Only what is read before it is written is cleared. The two hook
+            tables and the exempted-fd list are walked up to their counts, so a
+            slot that was never written is never read and only the counts need
+            clearing; allowed_fds is a bitmap with no count and does have to be
+            cleared whole. The structure used to be zeroed entire, which is
+            some eleven kilobytes of regex_t tables on a frame the injection
+            path has just taken out of its stack. */
+  memset(ctx->allowed_fds, 0, sizeof(ctx->allowed_fds));
+  ctx->flags = 0;
+  ctx->info_flags = 0;
+  ctx->process = NULL;
+  ctx->exempted_fds_count = 0;
+  ctx->register_info_count = 0;
+  ctx->ignore_info_count = 0;
 
   ctx->env = env;
   ctx->args.ptr = args;
@@ -1593,8 +1619,9 @@ static void rz_cleanup(struct zygisk_context *ctx) {
   pthread_mutex_destroy(&ctx->hook_info_lock);
 }
 
-/* INFO: PLT hook commit helper */
-
+/* INFO: One PLT hook, added and removed through the macros below. The
+         "commit" that actually applies a batch is api_plt_hook_commit (and its
+         v4 form) further up; this pair is the per-symbol half. */
 static bool hook_register(const char *lib_name, const char *symbol, bool is_prefix, void *new_func, void **backup) {
   if (!(is_prefix ? plti_add_hook_by_prefix : plti_add_hook)(&plti_ctx, lib_name, symbol, new_func, backup)) {
     LOGE("Failed to register plt_hook \"%s\" with PLTI", symbol);
