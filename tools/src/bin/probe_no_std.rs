@@ -23,6 +23,12 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::fmt::Write;
 use core::panic::PanicInfo;
 
+// `link(name = "c")` is not decoration, and it is the one thing about this
+// shape that a first attempt gets wrong: nothing in a `no_std` graph declares a
+// dependency on the C library, so rustc passes no `-lc` and the link ends on
+// `undefined symbol: memcpy` with `__libc_init` right behind it. `std` used to
+// supply that directive; without `std` the block has to say it itself.
+#[link(name = "c")]
 extern "C" {
     fn malloc(size: usize) -> *mut u8;
     fn free(pointer: *mut u8);
