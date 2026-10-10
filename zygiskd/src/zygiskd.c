@@ -30,23 +30,6 @@
   #define PROCESS_ROOT_IS_ACTIVE PROCESS_ROOT_IS_KSU
 #endif
 
-/* INFO: The paths inside a module's directory, built in one place. The daemon
-         composes them in eight, and a suffix that changes on one side while
-         another keeps the old spelling means a module is loaded from one path
-         while its marker is probed for at a different one. Every caller passes
-         a PATH_MAX buffer. */
-static void module_dir_path(char *out, size_t size, const char *name) {
-  snprintf(out, size, "%s/%s", ZYGISK_MODULES_DIR, name);
-}
-
-static void module_file_path(char *out, size_t size, const char *name, const char *leaf) {
-  snprintf(out, size, "%s/%s/%s", ZYGISK_MODULES_DIR, name, leaf);
-}
-
-static void module_lib_path(char *out, size_t size, const char *name) {
-  snprintf(out, size, "%s/%s/zygisk/%s.so", ZYGISK_MODULES_DIR, name, ARCH_STR);
-}
-
 struct Module {
   char *name;
   int lib_fd;
@@ -94,6 +77,23 @@ struct ZnCompanion {
 
 
 #define ARCH_STR "arm64-v8a"
+
+/* INFO: The paths inside a module's directory, built in one place. The daemon
+         composes them in eight, and a suffix that changes on one side while
+         another keeps the old spelling means a module is loaded from one path
+         while its marker is probed for at a different one. Every caller passes
+         a PATH_MAX buffer. */
+static void module_dir_path(char *out, size_t size, const char *name) {
+  snprintf(out, size, "%s/%s", ZYGISK_MODULES_DIR, name);
+}
+
+static void module_file_path(char *out, size_t size, const char *name, const char *leaf) {
+  snprintf(out, size, "%s/%s/%s", ZYGISK_MODULES_DIR, name, leaf);
+}
+
+static void module_lib_path(char *out, size_t size, const char *name) {
+  snprintf(out, size, "%s/%s/zygisk/%s.so", ZYGISK_MODULES_DIR, name, ARCH_STR);
+}
 
 /* INFO: A standard Zygisk module entry: the trailing zero byte tells the
            monitor whether the module targets Zygisk Next. */
@@ -1204,9 +1204,6 @@ static void reload_modules(struct Context *restrict context) {
 
   send_daemon_info(context);
 }
-/* INFO: A client that hangs in the middle of an exchange would stall every
-         later request, and every zygote fork talks to this daemon. The same
-         bound applies to the companion sockets created by exec_companion. */
 
 /* INFO: Per-connection state handed to every action handler. One struct keeps
          the handler signature stable and lets dispatch stay a plain table. */
