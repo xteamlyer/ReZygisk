@@ -104,8 +104,8 @@ enum rezygisk_options {
              that point.
 
            VexZygisk Umount System will not umount all root related mounts, read VexZygiskd
-             umount_root function in utils.c file to understand how it selects the ones
-             to umount.
+             detach_root_mounts function in utils.c file to understand how it selects the ones
+             to detach.
   */
   FORCE_DENYLIST_UNMOUNT = 0,
 

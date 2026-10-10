@@ -792,7 +792,12 @@ static const char *find_module_loop_source(const struct mountinfos *all) {
   return source;
 }
 
-bool umount_root(void) {
+/* INFO: Detaches the root traces rather than unmounting them: every removal
+         below is umount2(MNT_DETACH), so the filesystem instances stay alive
+         for whoever already holds a reference and only this namespace's mount
+         tree loses them. The name says so now - "umount" promised a reach the
+         code deliberately does not have. */
+static bool detach_root_mounts(void) {
   /* INFO: This runs in a child that already setns'ed into the target pid's
             mount namespace, so "self" here is the namespace to clean. */
   struct mountinfos mounts;
@@ -905,7 +910,7 @@ static void mns_helper_run(int pid, int socket_child) {
     goto finalize_mns_fork;
   }
 
-  if (!umount_root()) {
+  if (!detach_root_mounts()) {
     LOGE("Failed to umount root");
 
     if (write_uint8_t(socket_child, 0) == -1)
