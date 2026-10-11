@@ -77,12 +77,20 @@ BUILD_DIR ?= $(ROOT_DIR)/build
 #       A rename within a directory is atomic, so a reader gets either the
 #       previous archive or the new one and never a mixture.
 #
-#       The temporary carries the shell's pid, written as four dollars: make
-#       turns a pair of them into one, and the shell is what turns the pair it
-#       receives into a number - a name with two dollars in it reaches the shell
-#       as one, which is not a pid and not even an expansion, and the second
-#       sub-make then fails on a file the first one already renamed away. Two
-#       sub-makes, two pids, two temporaries, and one rename that wins.
+#       The temporary carries the shell's pid, and both commands share one line
+#       because they have to share one shell:
+#
+#         - make turns a pair of dollars into one, and it is the shell that turns
+#           the pair it receives into a number, so the pid is written as four
+#           dollars. Two of them reach the shell as one, which is not a pid and
+#           not even an expansion, and the two sub-makes then agree on the same
+#           name again - the same collision, one level down.
+#         - and make runs each line of a recipe in its own shell, so a cp and an
+#           mv on separate lines are two different pids and the mv looks for a
+#           file the cp never made. On one line they are one shell, one
+#           expansion, one name.
+#
+#       Two sub-makes, two pids, two temporaries, and one rename that wins.
 VEXCORE_DIR = $(ROOT_DIR)/rust/vexcore
 VEXCORE_TARGET_DIR = $(BUILD_DIR)/obj/$(BUILD_TYPE)/vexcore-target
 VEXCORE_LIB = $(BUILD_DIR)/obj/$(BUILD_TYPE)/vexcore/libvexcore.a
@@ -97,8 +105,7 @@ $(VEXCORE_LIB): $(VEXCORE_INPUTS)
 		CARGO_TARGET_DIR=$(VEXCORE_TARGET_DIR)                      \
 		CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$(TOOLCHAIN)/bin/aarch64-linux-android$(API_LEVEL)-clang \
 		cargo build --release --locked --target aarch64-linux-android
-	cp $(VEXCORE_TARGET_DIR)/aarch64-linux-android/release/libvexcore.a $@.tmp.$$$$
-	mv -f $@.tmp.$$$$ $@
+	cp $(VEXCORE_TARGET_DIR)/aarch64-linux-android/release/libvexcore.a $@.tmp.$$$$ && mv -f $@.tmp.$$$$ $@
 
 TARGET_arm64-v8a = aarch64-linux-android$(API_LEVEL)
 
