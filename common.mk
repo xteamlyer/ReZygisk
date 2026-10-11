@@ -48,6 +48,37 @@ endif
 
 BUILD_DIR ?= $(ROOT_DIR)/build
 
+# INFO: The Rust half of VexZygisk (rust/vexcore): the ELF symbol lookups and
+#       the Zn module line parser. Built by cargo rather than by the compiler
+#       these Makefiles drive, because cargo is what knows how to produce a
+#       `no_std` staticlib for an Android target - and it is the same command a
+#       developer runs by hand, so there is one way to build it and one place it
+#       can be configured.
+#
+#       It is defined here rather than in either component's Makefile because
+#       both link it: the loader and the tracer read ELF files the same way, and
+#       the daemon parses the same module lines the loader's modules ship. One
+#       archive, built once per build type, under this build's object directory.
+#
+#       The linker variable is named for cargo's benefit even though a staticlib
+#       is assembled and never linked: a dependency that grows a link step later
+#       should not fail with a message about a compiler nobody set up.
+VEXCORE_DIR = $(ROOT_DIR)/rust/vexcore
+VEXCORE_TARGET_DIR = $(BUILD_DIR)/obj/$(BUILD_TYPE)/vexcore-target
+VEXCORE_LIB = $(BUILD_DIR)/obj/$(BUILD_TYPE)/vexcore/libvexcore.a
+VEXCORE_INPUTS = $(shell find $(VEXCORE_DIR)/src -type f 2>/dev/null | sort) $(VEXCORE_DIR)/Cargo.toml $(VEXCORE_DIR)/Cargo.lock
+
+.PHONY: vexcore
+vexcore: $(VEXCORE_LIB)
+
+$(VEXCORE_LIB): $(VEXCORE_INPUTS)
+	@mkdir -p $(dir $@)
+	cd $(VEXCORE_DIR) &&                                            \
+		CARGO_TARGET_DIR=$(VEXCORE_TARGET_DIR)                      \
+		CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$(TOOLCHAIN)/bin/aarch64-linux-android$(API_LEVEL)-clang \
+		cargo build --release --locked --target aarch64-linux-android
+	cp $(VEXCORE_TARGET_DIR)/aarch64-linux-android/release/libvexcore.a $@
+
 TARGET_arm64-v8a = aarch64-linux-android$(API_LEVEL)
 
 ifneq ($(SYSROOT),)

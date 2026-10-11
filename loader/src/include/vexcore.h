@@ -33,8 +33,17 @@ struct vexcore_symbol {
 /* INFO: Checked rather than assumed: this structure is reinterpreted over
          bytes that came out of a file, and a compiler that padded it
          differently from the other side would not fail to build - it would
-         read the wrong fields and answer with the wrong address. */
+         read the wrong fields and answer with the wrong address.
+
+         Both spellings are here because both are needed: the loader is built as
+         C18 and the daemon as C99, and `_Static_assert` only exists in the
+         latter from C11 on. The fallback is the older trick - an array with a
+         negative length is the error message. */
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 _Static_assert(sizeof(struct vexcore_symbol) == 24, "vexcore_symbol must match the Rust Elf64Sym");
+#else
+typedef char vexcore_symbol_must_match_the_rust_elf64sym[(sizeof(struct vexcore_symbol) == 24) ? 1 : -1];
+#endif
 
 /* INFO: The SysV and GNU name hashes. A lookup starts by hashing the name it
          was asked for, and the answer has to be the same value the linker used
@@ -71,5 +80,19 @@ uintptr_t vexcore_elf_lookup(const struct vexcore_symbol *dynsym, size_t dynsym_
          also how a file that cannot be read answers. */
 bool vexcore_got_offset(const char *path, const char *symbol,
                         uint64_t *out_bias, uint64_t *out_got_off);
+
+/* INFO: One line of a module's zn_modules.txt, split into its parts.
+
+         The target (`name=` or `path=` says which) and the library path are
+         written into the caller's buffers, each NUL-terminated, and false means
+         the line is not one this daemon can act on - unreadable, or too long
+         for the buffer, which for a path is a refusal rather than a truncation.
+         Nothing is allocated: the two strings the C version returned had a
+         failure path each, and both of them meant "the allocation did not
+         work" rather than anything about the line. */
+bool vexcore_zn_parse_line(const char *line, const char *module_dir,
+                           bool *out_is_name, bool *out_companion,
+                           char *out_target, size_t out_target_cap,
+                           char *out_lib, size_t out_lib_cap);
 
 #endif /* VEXCORE_H */

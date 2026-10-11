@@ -12,6 +12,9 @@
 
 use core::ffi::CStr;
 
+// INFO: Only `cfg(test)` builds use these: the crate itself is `no_std`.
+use std::ffi::CString;
+
 use crate::hash::{vexcore_elf_hash, vexcore_gnu_hash};
 use crate::lookup::{vexcore_elf_lookup, vexcore_gnu_lookup, Elf64Sym};
 
@@ -421,4 +424,155 @@ fn empty_tables_are_refused_without_being_read() {
     // caller hashes before it looks.
     let _ = vexcore_gnu_hash(cstr(c"gamma"));
     let _ = syms.len();
+}
+
+/// The answers one parsed line is expected to produce, or "refused".
+#[derive(Debug, PartialEq)]
+enum Parsed {
+    Refused,
+    Line {
+        is_name: bool,
+        companion: bool,
+        target: String,
+        library: String,
+    },
+}
+
+fn parse(line: &CStr, module_dir: &CStr) -> Parsed {
+    let mut is_name = false;
+    let mut companion = false;
+    let mut target = [0i8; 256];
+    let mut library = [0i8; 256];
+
+    let ok = unsafe {
+        crate::vexcore_zn_parse_line(
+            line.as_ptr(),
+            module_dir.as_ptr(),
+            &mut is_name,
+            &mut companion,
+            target.as_mut_ptr(),
+            target.len(),
+            library.as_mut_ptr(),
+            library.len(),
+        )
+    };
+
+    if !ok {
+        return Parsed::Refused;
+    }
+
+    let read = |buf: &[i8]| -> String {
+        let bytes: Vec<u8> = buf.iter().take_while(|&&b| b != 0).map(|&b| b as u8).collect();
+        String::from_utf8(bytes).expect("ascii")
+    };
+
+    Parsed::Line {
+        is_name,
+        companion,
+        target: read(&target),
+        library: read(&library),
+    }
+}
+
+const MODULE_DIR: &CStr = c"/data/adb/modules/example";
+
+#[test]
+fn a_name_line_names_a_process_and_a_relative_library() {
+    assert_eq!(
+        parse(c"name=com.example.app lib64/libexample.so", MODULE_DIR),
+        Parsed::Line {
+            is_name: true,
+            companion: false,
+            target: "com.example.app".to_string(),
+            // The relative library is relative to the module's own directory,
+            // which is what makes the per-module switches mean anything.
+            library: "/data/adb/modules/example/lib64/libexample.so".to_string(),
+        }
+    );
+}
+
+#[test]
+fn a_path_line_keeps_an_absolute_library_as_it_is() {
+    assert_eq!(
+        parse(c"path=/system/bin/app_process64 /data/local/tmp/lib.so", MODULE_DIR),
+        Parsed::Line {
+            is_name: false,
+            companion: false,
+            target: "/system/bin/app_process64".to_string(),
+            library: "/data/local/tmp/lib.so".to_string(),
+        }
+    );
+}
+
+#[test]
+fn the_companion_flag_is_read_between_the_target_and_the_library() {
+    // INFO: The flag is looked for strictly between the target and the library,
+    //       and the library is the last token - so a line that puts "companion"
+    //       at the end sets no flag and hands "companion" back as the library.
+    //
+    //       That is what the C version did with the same line, and it is pinned
+    //       here rather than corrected: this change moves the parser, it does
+    //       not change what a module's file means. Anything that reads the flag
+    //       as a position instead wants a change of its own, with the module
+    //       documents to go with it.
+    assert_eq!(
+        parse(c"name=com.example.app companion lib64/lib.so", MODULE_DIR),
+        Parsed::Line {
+            is_name: true,
+            companion: true,
+            target: "com.example.app".to_string(),
+            library: "/data/adb/modules/example/lib64/lib.so".to_string(),
+        },
+        "the flag before the library is read"
+    );
+
+    assert_eq!(
+        parse(c"name=com.example.app lib64/lib.so companion", MODULE_DIR),
+        Parsed::Line {
+            is_name: true,
+            companion: false,
+            target: "com.example.app".to_string(),
+            library: "/data/adb/modules/example/companion".to_string(),
+        },
+        "the flag after the library is not, and the last token is the library"
+    );
+}
+
+#[test]
+fn tabs_and_runs_of_spaces_separate_like_any_whitespace() {
+    assert_eq!(
+        parse(c"  name=x\t\tlib.so  ", MODULE_DIR),
+        Parsed::Line {
+            is_name: true,
+            companion: false,
+            target: "x".to_string(),
+            library: "/data/adb/modules/example/lib.so".to_string(),
+        }
+    );
+}
+
+#[test]
+fn lines_that_say_nothing_are_refused() {
+    for line in [
+        c"",                              // empty
+        c"   \t ",                        // whitespace only
+        c"# a comment",                   // one token
+        c"name=",                         // a prefix and nothing else
+        c"name=x",                        // a target but no library
+        c"com.example.app lib.so",        // no prefix
+        c"lib=com.example.app lib.so",    // a prefix this format does not have
+        c"path=",                         // a prefix and nothing else
+    ] {
+        assert_eq!(parse(line, MODULE_DIR), Parsed::Refused, "line {:?}", line);
+    }
+}
+
+#[test]
+fn a_target_that_does_not_fit_is_refused_rather_than_cut() {
+    // 300 characters of target: longer than the 256-byte buffer the test uses,
+    // and a truncated target would be a different process's name.
+    let long = format!("name={} lib.so", "a".repeat(300));
+    let line = CString::new(long).expect("no interior NUL");
+
+    assert_eq!(parse(&line, MODULE_DIR), Parsed::Refused);
 }

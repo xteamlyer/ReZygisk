@@ -20,6 +20,7 @@
 #include "zn_targets.h"
 #include "root_impl/common.h"
 #include "utils.h"
+#include "vexcore.h"
 
 /* INFO: The flag naming the root solution this daemon was built for. Only the
          corresponding bit is ever set; the loader matches on whichever root
@@ -391,62 +392,41 @@ static void free_zn_module_files(struct ZnModuleFile *files, size_t len) {
          "<name=|path=><target> [companion] <library>". The library is always
          the last token and "companion" may sit anywhere between the target and
          it, so only that range is scanned for the flag. */
+/* INFO: The line parser, forwarded to the Rust half (see vexcore.h).
+
+         What it accepts has not changed: `name=` or `path=` to say what the
+         target is, an optional `companion` anywhere between it and the library,
+         and the library last. Neither has the rule that makes a relative
+         library path relative to the module directory rather than to wherever
+         the daemon happens to be running.
+
+         What did: the C version allocated both strings, so the caller had two
+         failure paths that were about the allocator and not about the line. The
+         answers come back in this frame's buffers, and the two copies below are
+         the caller's own lifetime rather than the parser's - which is the same
+         pair of `strdup`s the function used to end with, minus the question of
+         what a half-parsed line means. */
 static bool parse_zn_line(const char *module_dir, const char *line, bool *is_name, char **target, bool *companion, char **lib_path) {
-  const char *tokens[8];
-  size_t lengths[8];
-  size_t token_count = 0;
+  char target_buf[PATH_MAX];
+  char lib_buf[PATH_MAX];
 
-  const char *cursor = line;
-  while (*cursor != '\0' && token_count < 8) {
-    while (*cursor != '\0' && isspace((unsigned char)*cursor)) cursor++;
-    if (*cursor == '\0') break;
-
-    const char *start = cursor;
-    while (*cursor != '\0' && !isspace((unsigned char)*cursor)) cursor++;
-
-    tokens[token_count] = start;
-    lengths[token_count] = (size_t)(cursor - start);
-
-    token_count++;
-  }
-
-  if (token_count < 2) return false;
-
-  if (lengths[0] > 5 && strncmp(tokens[0], "name=", 5) == 0) {
-    *is_name = true;
-  } else if (lengths[0] > 5 && strncmp(tokens[0], "path=", 5) == 0) {
-    *is_name = false;
-  } else {
+  if (!vexcore_zn_parse_line(line, module_dir, is_name, companion,
+                             target_buf, sizeof(target_buf),
+                             lib_buf, sizeof(lib_buf))) {
     return false;
   }
 
-  size_t target_len = lengths[0] - 5;
+  char *parsed_target = strdup(target_buf);
+  if (parsed_target == NULL) {
+    LOGE("Failed allocating a Zygisk Next target");
 
-  char *parsed_target = malloc(target_len + 1);
-  if (parsed_target == NULL) return false;
-
-  memcpy(parsed_target, tokens[0] + 5, target_len);
-  parsed_target[target_len] = '\0';
-
-  *companion = false;
-  for (size_t i = 1; i + 1 < token_count; i++) {
-    if (lengths[i] == 9 && strncmp(tokens[i], "companion", 9) == 0) *companion = true;
+    return false;
   }
 
-  const char *library = tokens[token_count - 1];
-  size_t library_len = lengths[token_count - 1];
-
-  char *resolved;
-  if (library[0] == '/') {
-    resolved = strndup(library, library_len);
-  } else {
-    size_t dir_len = strlen(module_dir);
-
-    resolved = malloc(dir_len + library_len + 2);
-    if (resolved != NULL) snprintf(resolved, dir_len + library_len + 2, "%s/%.*s", module_dir, (int)library_len, library);
-  }
-
+  char *resolved = strdup(lib_buf);
   if (resolved == NULL) {
+    LOGE("Failed allocating a Zygisk Next library path");
+
     free(parsed_target);
 
     return false;

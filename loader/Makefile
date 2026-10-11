@@ -50,19 +50,6 @@ DOBBY_LIB = $(BUILD_DIR)/obj/$(BUILD_TYPE)/dobby/$(ARCH)/libdobby.a
 
 LIBCOMMON = $(OBJ_DIR)/libcommon.a
 
-# INFO: The Rust half of the loader (rust/vexcore): the ELF symbol lookups.
-#       Built by cargo rather than by the compiler this file drives, because
-#       cargo is what knows how to produce a `no_std` staticlib for an Android
-#       target - and it is the same command a developer runs by hand, so there
-#       is one way to build it and one place it can be configured.
-#
-#       The linker variable is named for cargo's benefit even though a staticlib
-#       is assembled and never linked: a dependency that grows a link step later
-#       should not fail with a message about a compiler nobody set up.
-VEXCORE_DIR = ../rust/vexcore
-VEXCORE_TARGET_DIR = $(abspath $(BUILD_DIR)/obj/$(BUILD_TYPE)/vexcore)
-VEXCORE_LIB = $(OBJ_DIR)/libvexcore.a
-VEXCORE_INPUTS = $(shell find $(VEXCORE_DIR)/src -type f 2>/dev/null | sort) $(VEXCORE_DIR)/Cargo.toml $(VEXCORE_DIR)/Cargo.lock
 LIBZYGISK = $(OBJ_DIR)/libzygisk.so
 LIBPTRACE = $(OBJ_DIR)/libzygisk_ptrace.so
 LIBZYGISK_STRIPPED = $(OBJ_DIR)/stripped/libzygisk.so
@@ -163,6 +150,7 @@ clean:
 	rm -rf $(BUILD_DIR)/obj/$(BUILD_TYPE)/dobby
 	rm -rf $(BUILD_DIR)/obj/$(BUILD_TYPE)/lsplt
 	rm -rf $(BUILD_DIR)/obj/$(BUILD_TYPE)/vexcore
+	rm -rf $(BUILD_DIR)/obj/$(BUILD_TYPE)/vexcore-target
 
 # INFO: The build is delegated to a sub-make, so this one cannot see the
 #       sources it reads. Without a prerequisite the library would be built
@@ -249,23 +237,6 @@ LZMA_OBJS = $(patsubst %.c,$(OBJ_DIR)/external/lzma/%.o,$(LZMA_SRCS))
 $(LZMA_OBJS): $(OBJ_DIR)/external/lzma/%.o: $(LZMA_DIR)/%.c
 	@mkdir -p $(dir $@)
 	$(CC_ARCH) $(NDK_CFLAGS) $(LZMA_CFLAGS) $(COMMON_INCLUDES) -fPIC -c $< -o $@
-
-# INFO: The Rust archive, built once per target and linked into both shared
-#       objects below - the loader and the tracer both read ELF files the same
-#       way, which is why the lookups live in the common half in the first
-#       place.
-#
-#       cargo writes into its own directory rather than the crate's, so the
-#       source tree stays clean and a `cargo clean` is never needed to make a
-#       build correct. The copy at the end is what puts the archive where the
-#       link lines expect it, under this build's object directory.
-$(VEXCORE_LIB): $(VEXCORE_INPUTS)
-	@mkdir -p $(dir $@)
-	cd $(VEXCORE_DIR) &&                                            \
-		CARGO_TARGET_DIR=$(VEXCORE_TARGET_DIR)                      \
-		CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$(TOOLCHAIN)/bin/aarch64-linux-android$(API_LEVEL)-clang \
-		cargo build --release --locked --target aarch64-linux-android
-	cp $(VEXCORE_TARGET_DIR)/aarch64-linux-android/release/libvexcore.a $@
 
 $(LIBCOMMON): $(COMMON_OBJS) $(LZMA_OBJS)
 	@mkdir -p $(dir $@)

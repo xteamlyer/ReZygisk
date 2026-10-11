@@ -42,11 +42,12 @@ arch: $(BIN)
 
 clean:
 	rm -rf $(BUILD_DIR)/obj/$(BUILD_TYPE)/zygiskd
+	rm -rf $(BUILD_DIR)/obj/$(BUILD_TYPE)/vexcore-target
 
 $(OBJ_DIR)/%.o: src/%.c
 	@mkdir -p $(dir $@)
 	$(CC_ARCH) $(ZYGISKD_CFLAGS) $(TYPE_CFLAGS) $(INCLUDES) -c $< -o $@
 
-$(BIN): $(OBJS)
+$(BIN): $(OBJS) $(VEXCORE_LIB)
 	@mkdir -p $(dir $@)
-	$(CC_ARCH) $(TYPE_LDFLAGS) $(OBJS) -llog -o $@
+	$(CC_ARCH) $(TYPE_LDFLAGS) $(OBJS) $(VEXCORE_LIB) -llog -o $@
