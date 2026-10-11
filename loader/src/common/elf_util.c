@@ -15,6 +15,8 @@
 
 #include "elf_util.h"
 
+#include "vexcore.h"
+
 /* INFO: The load base is resolved from the process maps, so the maps reader and
          its entry shape are needed here. misc.h is not included by elf_util.h:
          the host tests compile this file on its own. */
@@ -191,32 +193,17 @@ static bool parse_gnu_debugdata(ElfImg *img, const uint8_t *data, size_t size) {
 
 /* INFO: Everything below is internal to the ELF reader; keeping the symbols
          static avoids exporting them from the injected library. */
-static uint32_t ElfHash(const char *name) {
-  uint32_t h = 0, g = 0;
+/* INFO: The two hashes and the two hash-table lookups below live in
+         rust/vexcore now - vexcore.h is the C side of that boundary.
 
-  while (*name) {
-    h = (h << 4) + (unsigned char)*name++;
-    g = h & 0xf0000000;
-
-    if (g) {
-      h ^= g >> 24;
-    }
-
-    h &= ~g;
-  }
-
-  return h;
-}
-
-static uint32_t GnuHash(const char *name) {
-  uint32_t h = 5381;
-
-  while (*name) {
-    h = (h << 5) + h + (unsigned char)(*name++);
-  }
-
-  return h;
-}
+         They moved for the reason the whole split exists: the lookups read
+         tables whose offsets and lengths came out of the file, and every access
+         used to be preceded by a hand-written comparison saying so, next to a
+         string comparison that could walk past the end of a mapping this
+         process does not own. Slices answer the first once and `Option` the
+         second, and the functions that remain here are the ones that need to
+         know what an ElfImg is.
+*/
 
 static ElfW(Shdr) *offsetOf_Shdr(ElfW(Ehdr) *head, ElfW(Off) off) {
   return (ElfW(Shdr) *)(((uintptr_t)head) + off);
@@ -946,117 +933,49 @@ static bool _load_symtabs(ElfImg *img) {
   return true;
 }
 
+/* INFO: The GNU hash lookup, forwarded to the Rust half (see vexcore.h).
+
+         What stays here is the part that needs to know what an ElfImg is: which
+         fields hold the tables and which of them have to be present before any
+         of it is worth reading. The guard also gains the check on `strtab` that
+         the loop this replaces was missing - it dereferenced that pointer for
+         the string table's size without ever having checked it.
+
+         The tables are handed over rather than the image, so a change to this
+         structure cannot quietly change the meaning of a call: it has to be
+         made here, where the arguments are named. */
 ElfW(Addr) GnuLookup(ElfImg *restrict img, const char *name, uint32_t hash, unsigned char *sym_type) {
-  if (img->gnu_nbucket_ == 0 || img->gnu_bloom_size_ == 0 || !img->gnu_bloom_filter_ || !img->gnu_bucket_ || !img->gnu_chain_ || !img->dynsym_start || !img->strtab_start)
-    return 0;
-
-  static const size_t bloom_mask_bits = sizeof(uintptr_t) * 8;
-
-  size_t bloom_idx = (hash / bloom_mask_bits) % img->gnu_bloom_size_;
-  uintptr_t bloom_word = img->gnu_bloom_filter_[bloom_idx];
-  uintptr_t mask = ((uintptr_t)1 << (hash % bloom_mask_bits)) |
-                   ((uintptr_t)1 << ((hash >> img->gnu_shift2_) % bloom_mask_bits));
-
-  if ((mask & bloom_word) != mask) {
-    /* INFO: Bloom-filter misses are expected for names that are not exported;
-              logging each one would be pure noise. */
-
+  if (img->gnu_nbucket_ == 0 || img->gnu_bloom_size_ == 0 || img->gnu_bloom_filter_ == NULL ||
+      img->gnu_bucket_ == NULL || img->gnu_chain_ == NULL || img->dynsym_start == NULL ||
+      img->strtab_start == NULL || img->strtab == NULL) {
     return 0;
   }
 
-  /* INFO: The bounds check has to come first: the chain table is indexed by
-            sym_index, which the hash bucket supplies, and a malformed table can
-            name an entry whose index runs past the end of the chain. The count
-            is taken from the image rather than recomputed, because the recorded
-            one already guards against a zero sh_entsize. */
-  size_t dynsym_count = img->dynsym_count;
-  uint32_t sym_index = img->gnu_bucket_[hash % img->gnu_nbucket_];
-  if (sym_index < img->gnu_symndx_ || (size_t)sym_index >= dynsym_count) {
-    LOGW("Symbol %s hash %u maps to bucket %u index %u (gnu_symndx %u, count %zu), not exported?", name, hash, hash % img->gnu_nbucket_, sym_index, img->gnu_symndx_, dynsym_count);
-
-    return 0;
-  }
-
-  char *strings = (char *)img->strtab_start;
-  uint32_t chain_val = img->gnu_chain_[sym_index - img->gnu_symndx_];
-
-  ElfW(Sym) *sym = img->dynsym_start + sym_index;
-
-  if (sym->st_name >= img->strtab->sh_size) {
-    LOGE("Symbol name offset %u out of bounds", sym->st_name);
-
-    return 0;
-  }
-
-  if ((((chain_val ^ hash) >> 1) == 0 && strcmp(name, strings + sym->st_name) == 0) && sym->st_shndx != SHN_UNDEF) {
-    unsigned int type = ELF_ST_TYPE(sym->st_info);
-    if (sym_type) *sym_type = type;
-
-    return sym->st_value;
-  }
-
-  while ((chain_val & 1) == 0) {
-    sym_index++;
-
-    if (sym_index >= dynsym_count) {
-      LOGE("Symbol index %u out of bounds during chain walk", sym_index);
-
-      return 0;
-    }
-
-    chain_val = img->gnu_chain_[sym_index - img->gnu_symndx_];
-    sym = img->dynsym_start + sym_index;
-
-    if (sym->st_name >= img->strtab->sh_size) {
-      LOGE("Symbol name offset %u out of bounds", sym->st_name);
-
-      break;
-    }
-
-    if ((((chain_val ^ hash) >> 1) == 0 && strcmp(name, strings + sym->st_name) == 0) && sym->st_shndx != SHN_UNDEF) {
-      unsigned int type = ELF_ST_TYPE(sym->st_info);
-      if (sym_type) *sym_type = type;
-
-      return sym->st_value;
-    }
-  }
-
-  return 0;
+  return (ElfW(Addr))vexcore_gnu_lookup(
+    (const struct vexcore_symbol *)img->dynsym_start, img->dynsym_count,
+    (const char *)img->strtab_start, img->strtab->sh_size,
+    img->gnu_nbucket_, img->gnu_symndx_, img->gnu_bloom_size_, img->gnu_shift2_,
+    img->gnu_bloom_filter_, img->gnu_bucket_, img->gnu_chain_,
+    name, hash, sym_type);
 }
 
+/* INFO: The SysV hash lookup, forwarded the same way.
+
+         The chain has no recorded length in either format, so both sides walk it
+         with the symbol count as the bound and stop when the entry they are on
+         ends the chain - the same rule, stated once on each side of the call
+         rather than written out at each link. */
 ElfW(Addr) ElfLookup(ElfImg *restrict img, const char *restrict name, uint32_t hash, unsigned char *sym_type) {
-  if (img->nbucket_ == 0 || !img->bucket_ || !img->chain_ || !img->dynsym_start || !img->strtab_start || !img->dynsym || !img->strtab)
+  if (img->nbucket_ == 0 || img->bucket_ == NULL || img->chain_ == NULL ||
+      img->dynsym_start == NULL || img->strtab_start == NULL || img->strtab == NULL) {
     return 0;
-
-  char *strings = (char *)img->strtab_start;
-  size_t dynsym_count = img->dynsym_count;
-
-  /* INFO: The chain table has one entry per dynamic symbol, so dynsym_count
-            bounds both walks, mirroring the checks in GnuLookup. */
-  for (size_t n = img->bucket_[hash % img->nbucket_]; n != STN_UNDEF; n = img->chain_[n]) {
-    if (n >= dynsym_count) {
-      LOGE("Symbol index %zu out of bounds", n);
-
-      break;
-    }
-
-    ElfW(Sym) *sym = img->dynsym_start + n;
-
-    if (sym->st_name >= img->strtab->sh_size) {
-      LOGE("Symbol name offset %u out of bounds", sym->st_name);
-
-      break;
-    }
-
-    if (strcmp(name, strings + sym->st_name) == 0 && sym->st_shndx != SHN_UNDEF) {
-      unsigned int type = ELF_ST_TYPE(sym->st_info);
-      if (sym_type) *sym_type = type;
-
-      return sym->st_value;
-    }
   }
 
-  return 0;
+  return (ElfW(Addr))vexcore_elf_lookup(
+    (const struct vexcore_symbol *)img->dynsym_start, img->dynsym_count,
+    (const char *)img->strtab_start, img->strtab->sh_size,
+    img->nbucket_, img->bucket_, img->chain_,
+    name, hash, sym_type);
 }
 
 ElfW(Addr) LinearLookup(ElfImg *img, const char *restrict name, unsigned char *sym_type) {
@@ -1079,10 +998,10 @@ ElfW(Addr) LinearLookup(ElfImg *img, const char *restrict name, unsigned char *s
 }
 
 static ElfW(Addr) getSymbOffset(ElfImg *img, const char *name, unsigned char *sym_type) {
-  ElfW(Addr) offset = GnuLookup(img, name, GnuHash(name), sym_type);
+  ElfW(Addr) offset = GnuLookup(img, name, vexcore_gnu_hash(name), sym_type);
   if (offset != 0) return offset;
 
-  offset = ElfLookup(img, name, ElfHash(name), sym_type);
+  offset = ElfLookup(img, name, vexcore_elf_hash(name), sym_type);
   if (offset != 0) return offset;
 
   offset = LinearLookup(img, name, sym_type);

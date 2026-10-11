@@ -62,6 +62,12 @@ jobs:
           rustup default "${RUST_TOOLCHAIN:-stable}"
           rustc --version
 
+          # INFO: The loader links a `no_std` staticlib built by cargo
+          #       (rust/vexcore), and building it is this job - the device
+          #       target has to be installed here, not only in the
+          #       rust-android job that measures it.
+          rustup target add aarch64-linux-android
+
       - name: Build the tools
         run: make -C tools build-host
 

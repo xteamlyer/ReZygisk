@@ -1,0 +1,32 @@
+[package]
+name = "vexcore"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# INFO: The half of the loader that runs on the device. It is a `staticlib`
+#       rather than a shared object on purpose: the loader's own link line
+#       pulls it in beside the C objects, so there is one .so per target
+#       instead of two that have to find each other, and the C symbols it
+#       calls resolve the same way they do for any other object.
+#
+#       `no_std` is not a style choice here. The size budget for
+#       libzygisk.so is 430 KiB with about 91 KiB of it unclaimed, and linking
+#       `std` into an aarch64 binary costs roughly 262 KiB on its own - before
+#       a line of this crate is written. Everything below is `core` plus, where
+#       allocation is needed, `alloc` over the platform's own malloc.
+[lib]
+name = "vexcore"
+crate-type = ["staticlib"]
+
+[profile.release]
+opt-level = "z"
+codegen-units = 1
+panic = "abort"
+overflow-checks = false
+debug-assertions = false
+
+# INFO: An empty workspace table, the same thing tools/Cargo.toml does: it
+#       stops a stray Cargo.toml further up the tree from adopting this crate
+#       into a workspace it was not written for.
+[workspace]

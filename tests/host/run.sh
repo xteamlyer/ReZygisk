@@ -45,6 +45,13 @@ done
 #       elf_util.c reads the process maps to find a library's load base, so the
 #       maps reader is linked in alongside it. misc.c pulls in socket_utils.c
 #       for its logging path, hence the three together.
+#       The ELF symbol lookups are Rust now (rust/vexcore), so the reader below
+#       is linked against that archive. It is built for the host here, out of
+#       the same sources the device build compiles with the same manifest -
+#       only the target differs, and nothing under test can tell which one it
+#       was built for.
+cargo build --release --locked --manifest-path rust/vexcore/Cargo.toml
+VEXCORE_LIB=rust/vexcore/target/release/libvexcore.a
 cc -std=c18 -D_GNU_SOURCE -Wall -Wextra -Werror \
    -Itests/host -Iloader/src/include -Iloader/src/common \
    -Iloader/src/external/lzma \
@@ -81,6 +88,7 @@ cc -std=c18 -D_GNU_SOURCE -Wall -Wextra -Werror \
    -Iloader/src/external/lzma \
    tests/host/test_elf_util.c /tmp/elf_util.o /tmp/misc.o /tmp/socket_utils.o \
    /tmp/xz_lzma2.o /tmp/xz_stream.o /tmp/xz_bcj.o \
+   $VEXCORE_LIB \
    -o /tmp/test_elf_util
 
 ./tools/target/release/make-debugdata /tmp/debugdata
