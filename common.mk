@@ -75,7 +75,11 @@ BUILD_DIR ?= $(ROOT_DIR)/build
 #         archive (offset to next archive member past the end of the archive)
 #
 #       A rename within a directory is atomic, so a reader gets either the
-#       previous archive or the new one and never a mixture.
+#       previous archive or the new one and never a mixture. The temporary's
+#       name carries the shell's pid because the other sub-make is doing the
+#       same thing at the same time: a name both of them agreed on would be a
+#       name the first one to finish renames away, and the second would then
+#       fail on a file that is not there.
 VEXCORE_DIR = $(ROOT_DIR)/rust/vexcore
 VEXCORE_TARGET_DIR = $(BUILD_DIR)/obj/$(BUILD_TYPE)/vexcore-target
 VEXCORE_LIB = $(BUILD_DIR)/obj/$(BUILD_TYPE)/vexcore/libvexcore.a
@@ -90,8 +94,8 @@ $(VEXCORE_LIB): $(VEXCORE_INPUTS)
 		CARGO_TARGET_DIR=$(VEXCORE_TARGET_DIR)                      \
 		CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$(TOOLCHAIN)/bin/aarch64-linux-android$(API_LEVEL)-clang \
 		cargo build --release --locked --target aarch64-linux-android
-	cp $(VEXCORE_TARGET_DIR)/aarch64-linux-android/release/libvexcore.a $@.tmp
-	mv -f $@.tmp $@
+	cp $(VEXCORE_TARGET_DIR)/aarch64-linux-android/release/libvexcore.a $@.tmp.$$
+	mv -f $@.tmp.$$ $@
 
 TARGET_arm64-v8a = aarch64-linux-android$(API_LEVEL)
 
