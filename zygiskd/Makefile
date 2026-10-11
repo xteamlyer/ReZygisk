@@ -22,6 +22,17 @@ else
 	TYPE_LDFLAGS =
 endif
 
+# INFO: One function per section, and one section per datum, so the linker can
+#       drop what nothing reaches. The daemon links the Rust archive the loader
+#       links (common.mk), and it uses exactly one symbol out of it - the
+#       zn_modules.txt line parser. Without these the archive arrives as one
+#       piece per codegen unit, and a link that has to keep a whole object file
+#       because it needs one function out of it kept all of them: the daemon went
+#       from 34 KiB to 238 KiB, past its 56 KiB budget, while the loader - which
+#       has had these two flags and --gc-sections all along - grew by 5.
+TYPE_CFLAGS += -ffunction-sections -fdata-sections
+TYPE_LDFLAGS += -Wl,--gc-sections
+
 ZYGISKD_CFLAGS = -D_GNU_SOURCE -std=c99 -Wpedantic -Wall -Wextra -Werror  \
 			 	 -Wformat -Wuninitialized -Wshadow -Wno-zero-length-array \
 			 	 -Wno-unknown-warning-option -Wconversion                 \
