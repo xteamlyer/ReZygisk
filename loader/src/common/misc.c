@@ -211,9 +211,8 @@ static struct maps_info *parse_maps_stream(FILE *fp) {
   return info;
 }
 
-/* INFO: The maps of a process, read through a child that opens them, so that
-         the access time the read leaves behind lands on that child's file and
-         not on the one the application can stat. */
+/* INFO: What with_maps_stream runs over the visiting FILE*, once its child
+         has handed the descriptor over. */
 typedef bool (*maps_stream_fn)(FILE *fp, void *userdata);
 
 /* INFO: Opening /proc/.../maps leads to its access time being updated. This
@@ -222,6 +221,63 @@ typedef bool (*maps_stream_fn)(FILE *fp, void *userdata);
            parse_maps_safe() and scan_maps_safe(), which are what callers
            wanting that property should use.
 */
+/* INFO: The child half of with_maps_stream. It opens the maps file, hands the
+         descriptor back over the socket, and waits for the parent's byte before
+         it exits.
+
+         Every failure path still writes something to the parent: a plain byte
+         where a descriptor would have gone. The parent is blocked reading that
+         socket, and a child that exited without answering would leave it there
+         until the socket was closed by somebody else. */
+static void maps_child_send_fd(const char *pid, int sock) {
+  char path[64];
+  snprintf(path, sizeof(path), "/proc/%s/maps", pid);
+
+  int maps_file = open(path, O_RDONLY | O_CLOEXEC);
+  if (maps_file < 0) {
+    LOGE("Failed to open %s", path);
+
+    uint8_t can_kill_myself = 0;
+    if (TEMP_FAILURE_RETRY(write(sock, &can_kill_myself, sizeof(can_kill_myself))) < 0) {
+      LOGE("Failed to write to socket");
+    }
+
+    close(sock);
+
+    _exit(EXIT_FAILURE);
+  }
+
+  if (write_fd(sock, maps_file) < 0) {
+    LOGE("Failed to write file descriptor to socket");
+
+    close(maps_file);
+    close(sock);
+
+    _exit(EXIT_FAILURE);
+  }
+
+  /* INFO: Wait for the parent process to finish reading */
+  uint8_t can_kill_myself = 1;
+  if (TEMP_FAILURE_RETRY(read(sock, &can_kill_myself, sizeof(can_kill_myself))) < 0) {
+    LOGE("Failed to read from socket");
+
+    close(maps_file);
+    close(sock);
+
+    _exit(EXIT_FAILURE);
+  }
+
+  close(maps_file);
+  close(sock);
+
+  _exit(EXIT_SUCCESS);
+}
+
+/* INFO: Runs `callback` over the maps of `pid`, read through a child that opens
+         them, so that the access time the read leaves behind lands on that
+         child's file and not on the one the application can stat. It backs both
+         parse_maps_safe() and scan_maps_safe(), which are what callers wanting
+         that property should use. */
 static bool with_maps_stream(const char *pid, maps_stream_fn callback, void *userdata) {
   int sockets[2];
   if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) < 0) {
@@ -243,46 +299,9 @@ static bool with_maps_stream(const char *pid, maps_stream_fn callback, void *use
   if (ppid == 0) {
     close(sockets[0]);
 
-    char path[64];
-    snprintf(path, sizeof(path), "/proc/%s/maps", pid);
+    maps_child_send_fd(pid, sockets[1]);
 
-    int maps_file = open(path, O_RDONLY | O_CLOEXEC);
-    if (maps_file < 0) {
-      LOGE("Failed to open %s", path);
-
-      uint8_t can_kill_myself = 0;
-      if (TEMP_FAILURE_RETRY(write(sockets[1], &can_kill_myself, sizeof(can_kill_myself))) < 0) {
-        LOGE("Failed to write to socket");
-      }
-
-      goto scan_children_fail;
-    }
-
-    if (write_fd(sockets[1], maps_file) < 0) {
-      LOGE("Failed to write file descriptor to socket");
-
-      goto post_open_scan_children_fail;
-    }
-
-    /* INFO: Wait for the parent process to finish reading */
-    uint8_t can_kill_myself = 1;
-    if (TEMP_FAILURE_RETRY(read(sockets[1], &can_kill_myself, sizeof(can_kill_myself))) < 0) {
-      LOGE("Failed to read from socket");
-
-      goto post_open_scan_children_fail;
-    }
-
-    close(maps_file);
-    close(sockets[1]);
-
-    _exit(EXIT_SUCCESS);
-
-    post_open_scan_children_fail:
-      close(maps_file);
-    scan_children_fail:
-      close(sockets[1]);
-
-      _exit(EXIT_FAILURE);
+    _exit(EXIT_FAILURE);
   }
 
   close(sockets[1]);

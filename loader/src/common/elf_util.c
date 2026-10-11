@@ -518,6 +518,76 @@ static void elf_compute_bias(ElfImg *img, const char *elf, bool base_provided) {
   if (!base_provided && img->base != NULL) img->base = (void *)((uintptr_t)img->base + img->bias);
 }
 
+/* INFO: The SysV hash table. Parsed only when the section is large enough to
+         hold the header and both of the arrays it points at; one that is not is
+         left out rather than followed, and the lookup falls back to the linear
+         walk. */
+static void parse_sysv_hash_section(ElfImg *img, ElfW(Shdr) *section_h, const char *sname) {
+  ElfW(Word) *d_un = offsetOf_Word(img->header, section_h->sh_offset);
+
+  if (section_h->sh_size < 2 * sizeof(ElfW(Word))) {
+    LOGW("SHT_HASH section %s too small", sname);
+
+    return;
+  }
+
+  img->nbucket_ = d_un[0];
+
+  if (img->nbucket_ > 0 && section_h->sh_size >= (2 + img->nbucket_ + d_un[1]) * sizeof(ElfW(Word))) {
+    img->bucket_ = d_un + 2;
+    img->chain_ = img->bucket_ + img->nbucket_;
+
+    return;
+  }
+
+  LOGW("Invalid SHT_HASH size or nbucket count in section %s", sname);
+
+  img->nbucket_ = 0;
+}
+
+/* INFO: The GNU hash table. Same rule as above: the section has to hold the
+         header, the bloom filter and the buckets before any of them is
+         followed, and the chain that follows the buckets is checked against the
+         section's own extent - it is the one table whose length is not in the
+         header. */
+static void parse_gnu_hash_section(ElfImg *img, ElfW(Shdr) *section_h, const char *sname) {
+  ElfW(Word) *d_buf = offsetOf_Word(img->header, section_h->sh_offset);
+
+  if (section_h->sh_size < 4 * sizeof(ElfW(Word))) {
+    LOGW("SHT_GNU_HASH section %s too small", sname);
+
+    return;
+  }
+
+  img->gnu_nbucket_ = d_buf[0];
+  img->gnu_symndx_ = d_buf[1];
+  img->gnu_bloom_size_ = d_buf[2];
+  img->gnu_shift2_ = d_buf[3];
+
+  size_t expected_min_size = 4 * sizeof(ElfW(Word)) +
+                             img->gnu_bloom_size_ * sizeof(uintptr_t) +
+                             img->gnu_nbucket_ * sizeof(uint32_t);
+
+  if (img->gnu_nbucket_ == 0 || img->gnu_bloom_size_ == 0 || section_h->sh_size < expected_min_size) {
+    LOGW("Invalid SHT_GNU_HASH size or parameters in section %s", sname);
+
+    img->gnu_nbucket_ = 0;
+
+    return;
+  }
+
+  img->gnu_bloom_filter_ = (uintptr_t *)(d_buf + 4);
+  img->gnu_bucket_ = (uint32_t *)(img->gnu_bloom_filter_ + img->gnu_bloom_size_);
+  img->gnu_chain_ = img->gnu_bucket_ + img->gnu_nbucket_;
+
+  uintptr_t chain_start_offset = (uintptr_t)img->gnu_chain_ - (uintptr_t)img->header;
+  if (chain_start_offset < section_h->sh_offset || chain_start_offset >= section_h->sh_offset + section_h->sh_size) {
+    LOGW("Calculated GNU hash chain seems out of bounds for section %s", sname);
+
+    img->gnu_nbucket_ = 0;
+  }
+}
+
 /* INFO: Walks the section table once and records where each table it needs
          lives: the two symbol tables, the string table their names come from,
          the two hash tables, and the mini-debug payload if there is one. The
@@ -543,12 +613,9 @@ static void elf_walk_sections(ElfImg *img, const char *elf,
     img->section_header = offsetOf_Shdr(img->header, img->header->e_shoff);
   }
 
-  if (img->header->e_phoff == 0 || img->header->e_phentsize == 0 || img->header->e_phnum == 0) {
-    LOGW("Program header table missing or invalid in %s", elf);
-  }
-
-  
-  
+  /* INFO: Nothing is checked about the program header table here: the walk
+            that uses it is elf_compute_bias, and that is where its bounds are
+            validated. This function's tables are the sections'. */
 
   char *section_str = NULL;
   size_t section_str_size = 0;
@@ -642,56 +709,12 @@ static void elf_walk_sections(ElfImg *img, const char *elf,
           break;
         }
         case SHT_HASH: {
-          ElfW(Word) *d_un = offsetOf_Word(img->header, section_h->sh_offset);
-
-          if (section_h->sh_size >= 2 * sizeof(ElfW(Word))) {
-            img->nbucket_ = d_un[0];
-
-            if (img->nbucket_ > 0 && section_h->sh_size >= (2 + img->nbucket_ + d_un[1]) * sizeof(ElfW(Word))) {
-              img->bucket_ = d_un + 2;
-              img->chain_ = img->bucket_ + img->nbucket_;
-            } else {
-              LOGW("Invalid SHT_HASH size or nbucket count in section %s", sname);
-              img->nbucket_ = 0;
-            }
-          } else {
-            LOGW("SHT_HASH section %s too small", sname);
-          }
+          parse_sysv_hash_section(img, section_h, sname);
 
           break;
         }
         case SHT_GNU_HASH: {
-          ElfW(Word) *d_buf = offsetOf_Word(img->header, section_h->sh_offset);
-
-          if (section_h->sh_size >= 4 * sizeof(ElfW(Word))) {
-            img->gnu_nbucket_ = d_buf[0];
-            img->gnu_symndx_ = d_buf[1];
-            img->gnu_bloom_size_ = d_buf[2];
-            img->gnu_shift2_ = d_buf[3];
-
-            size_t expected_min_size = 4 * sizeof(ElfW(Word)) +
-                                      img->gnu_bloom_size_ * sizeof(uintptr_t) +
-                                      img->gnu_nbucket_ * sizeof(uint32_t);
-
-            if (img->gnu_nbucket_ > 0 && img->gnu_bloom_size_ > 0 && section_h->sh_size >= expected_min_size) {
-              img->gnu_bloom_filter_ = (uintptr_t *)(d_buf + 4);
-              img->gnu_bucket_ = (uint32_t *)(img->gnu_bloom_filter_ + img->gnu_bloom_size_);
-              img->gnu_chain_ = img->gnu_bucket_ + img->gnu_nbucket_;
-
-              uintptr_t chain_start_offset = (uintptr_t)img->gnu_chain_ - (uintptr_t)img->header;
-              if (chain_start_offset < section_h->sh_offset || chain_start_offset >= section_h->sh_offset + section_h->sh_size) {
-                LOGW("Calculated GNU hash chain seems out of bounds for section %s", sname);
-
-                img->gnu_nbucket_ = 0;
-              }
-            } else {
-              LOGW("Invalid SHT_GNU_HASH size or parameters in section %s", sname);
-
-              img->gnu_nbucket_ = 0;
-            }
-          } else {
-            LOGW("SHT_GNU_HASH section %s too small", sname);
-          }
+          parse_gnu_hash_section(img, section_h, sname);
 
           break;
         }

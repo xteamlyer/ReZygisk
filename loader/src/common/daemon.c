@@ -114,6 +114,64 @@ uint32_t rezygiskd_get_process_flags(uid_t uid, const char *const process) {
   return res;
 }
 
+/* INFO: The display name of one module, from its own module.prop.
+
+         The path is built here because the name it is built from arrived over a
+         socket, so its length is not this process's to assume: a name that does
+         not fit is refused rather than truncated, since a truncated path is
+         still a valid-looking one and the fopen below would report "no such
+         file" for a path nobody ever asked for.
+
+         Returns a strdup'ed name, or NULL with the reason already logged. */
+static char *read_module_prop_name(const char *module_name) {
+  static const char kNameTag[] = "name=";
+  const size_t tag_len = sizeof(kNameTag) - 1;
+
+  char module_path[PATH_MAX];
+  int written = snprintf(module_path, sizeof(module_path), "/data/adb/modules/%s/module.prop", module_name);
+
+  if (written < 0 || (size_t)written >= sizeof(module_path)) {
+    LOGE("module name is too long for a prop path (%d bytes)", written);
+
+    return NULL;
+  }
+
+  FILE *module_prop = fopen(module_path, "r");
+  if (module_prop == NULL) {
+    PLOGE("failed to open module prop file %s", module_path);
+
+    return NULL;
+  }
+
+  char *name = NULL;
+  char line[1024];
+
+  while (fgets(line, sizeof(line), module_prop) != NULL) {
+    if (strncmp(line, kNameTag, tag_len) != 0) continue;
+
+    size_t value_len = strlen(line + tag_len);
+
+    /* INFO: The newline has to be there: it is what says the line was read in
+              full, and the name is the text before it. */
+    if (value_len == 0 || line[value_len + tag_len - 1] != '\n') {
+      LOGE("Invalid module name in %s", module_path);
+
+      break;
+    }
+
+    name = strndup(line + tag_len, value_len - 1);
+    if (name == NULL) PLOGE("allocate memory for module name from %s", module_path);
+
+    break;
+  }
+
+  if (name == NULL) PLOGE("failed to read module name from %s", module_path);
+
+  fclose(module_prop);
+
+  return name;
+}
+
 void rezygiskd_get_info(struct rezygisk_info *info) {
   int fd = rezygiskd_connect(1, REZYGISKD_RETRY_DELAY_US);
   if (fd == -1) {
@@ -167,83 +225,31 @@ void rezygiskd_get_info(struct rezygisk_info *info) {
     return;
   }
 
+  /* INFO: The list is handed back as far as it was read on every failure
+            below: the count says how many entries exist, and the ones that were
+            never reached are still the calloc'ed NULLs, so the caller can free
+            the list and report a daemon that answered with less than it said. */
   for (size_t i = 0; i < info->modules.modules_count; i++) {
     char *module_name = read_string(fd);
     if (module_name == NULL) {
       PLOGE("reading module name");
 
-      goto info_cleanup;
-    }
-
-    char module_path[PATH_MAX];
-    int written = snprintf(module_path, sizeof(module_path), "/data/adb/modules/%s/module.prop", module_name);
-
-    /* INFO: A name that does not fit is refused rather than truncated. The
-              truncated path is still a valid-looking one, so the fopen below
-              would report "no such file" for a path nobody ever asked for -
-              and the name came over a socket, so its length is not this
-              process's to assume. */
-    if (written < 0 || (size_t)written >= sizeof(module_path)) {
-      LOGE("module name is too long for a prop path (%d bytes)", written);
-
-      free(module_name);
-
-      goto info_cleanup;
-    }
-
-    free(module_name);
-
-    FILE *module_prop = fopen(module_path, "r");
-    if (!module_prop) {
-      PLOGE("failed to open module prop file %s", module_path);
-
-      goto info_cleanup;
-    }
-
-    info->modules.modules[i] = NULL;
-
-    char line[1024];
-    while (fgets(line, sizeof(line), module_prop) != NULL) {
-      if (strncmp(line, "name=", strlen("name=")) != 0) continue;
-
-      size_t name_len = strlen(line + strlen("name="));
-      if (name_len == 0 || line[name_len + strlen("name=") - 1] != '\n') {
-        LOGE("Invalid module name in %s", module_path);
-
-        fclose(module_prop);
-
-        goto info_cleanup;
-      }
-
-      info->modules.modules[i] = strndup(line + strlen("name="), name_len - 1);
-      if (info->modules.modules[i] == NULL) {
-        PLOGE("allocate memory for module name from %s", module_path);
-
-        fclose(module_prop);
-
-        goto info_cleanup;
-      }
-
-      break;
-    }
-
-    if (info->modules.modules[i] == NULL) {
-      PLOGE("failed to read module name from %s", module_path);
-
-      fclose(module_prop);
-
-      goto info_cleanup;
-    }
-
-    fclose(module_prop);
-
-    continue;
-
-    info_cleanup:
       info->modules.modules_count = i;
       free_rezygisk_info(info);
 
       break;
+    }
+
+    info->modules.modules[i] = read_module_prop_name(module_name);
+
+    free(module_name);
+
+    if (info->modules.modules[i] == NULL) {
+      info->modules.modules_count = i;
+      free_rezygisk_info(info);
+
+      break;
+    }
   }
 
   close(fd);

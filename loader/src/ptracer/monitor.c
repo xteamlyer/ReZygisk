@@ -403,6 +403,123 @@ static void read_daemon_modules(void) {
 }
 
 
+/* INFO: One command from the daemon, dispatched. The caller owns the socket
+         and the read loop around it; everything below is about what the
+         command means.
+
+         Reads that fail are answered with an early return rather than by
+         unwinding the caller: the stream is already out of step with the
+         daemon, so acting on what follows would act on garbage. */
+static void dispatch_daemon_command(uint8_t cmd) {
+  switch (cmd) {
+    case START: {
+      if (tracing_state == STOPPING) {
+        LOGI("Continue tracing init");
+
+        tracing_state = TRACING;
+        monitor_stop_reason = NULL;
+      } else if (tracing_state == STOPPED) {
+        LOGI("Start tracing init");
+
+        /* INFO: Checked here the way claim_init_tracer() checks it. A seize
+                  that failed would leave this monitor believing it was tracing
+                  init, and every later decision - the fork handling, the
+                  status line the manager reads - made on that belief. Staying
+                  where it is the honest answer, and the status reports it. */
+        if (ptrace(PTRACE_SEIZE, 1, 0, PTRACE_O_TRACEFORK) == -1) {
+          PLOGE("seize init");
+        } else {
+          tracing_state = TRACING;
+          monitor_stop_reason = NULL;
+        }
+      }
+
+      update_status(NULL);
+
+      break;
+    }
+    case STOP: {
+      if (tracing_state == TRACING) {
+        LOGI("Stop tracing requested");
+
+        tracing_state = STOPPING;
+        monitor_stop_reason = "user requested";
+
+        ptrace(PTRACE_INTERRUPT, 1, 0, 0);
+        update_status(NULL);
+      }
+
+      break;
+    }
+    case EXIT: {
+      LOGI("Prepare for exit ...");
+
+      tracing_state = EXITING;
+      monitor_stop_reason = "user requested";
+
+      update_status(NULL);
+      monitor_events_stop();
+
+      break;
+    }
+    case CMD_ZYGOTE_INJECTED: {
+      LOGI("Received Zygote%s injected command", MONITOR_ABI);
+
+      status.zygote_injected = true;
+
+      /* INFO: A zygote that ran far enough to report back was injected, so
+                the restarts counted before it were not a crash loop. Only a
+                zygote that dies between its exec and this report keeps
+                counting, which is what the guard is for.
+
+                WebView's zygote is why this reset exists: it runs as the same
+                binary and restarts on its own schedule, and it reports back
+                exactly like the main one - so a device that merely used
+                WebView often enough was read as a crash loop and had its
+                injection shut off on it. */
+      count_zygote = 0;
+
+      update_status(NULL);
+
+      break;
+    }
+    case CMD_DAEMON_SET_INFO: {
+      LOGD("Received VexZygiskd%s info", MONITOR_ABI);
+
+      /* INFO: Read into a local first: a failed read then leaves the previous
+                value in place instead of dropping it. */
+      char *root_impl = read_socket_string("root impl");
+      if (root_impl == NULL) break;
+
+      free(environment_information.root_impl);
+      environment_information.root_impl = root_impl;
+
+      LOGD("VexZygiskd%s root impl: %s", MONITOR_ABI, environment_information.root_impl);
+
+      read_daemon_modules();
+
+      break;
+    }
+    case CMD_DAEMON_SET_ERROR_INFO: {
+      LOGD("Received VexZygiskd%s error info", MONITOR_ABI);
+
+      /* INFO: Same ordering as the info case above: the old text survives a
+                failed read. */
+      char *error_info = read_socket_string("error info");
+      if (error_info == NULL) break;
+
+      free(status.daemon_error_info);
+      status.daemon_error_info = error_info;
+
+      LOGD("VexZygiskd%s error info: %s", MONITOR_ABI, status.daemon_error_info);
+
+      update_status(NULL);
+
+      break;
+    }
+  }
+}
+
 void rezygiskd_listener_callback() {
   while (1) {
     uint8_t cmd = 0;
@@ -410,7 +527,7 @@ void rezygiskd_listener_callback() {
     if (nread == -1) {
       if (errno == EINTR || errno == EWOULDBLOCK) break;
 
-      /* INFO: Any other error is permanent for this socket — continuing
+      /* INFO: Any other error is permanent for this socket - continuing
                 would spin the monitor at 100% CPU on the same failure. The
                 next datagram the daemon sends re-arms the edge event. */
       PLOGE("read socket");
@@ -422,113 +539,7 @@ void rezygiskd_listener_callback() {
               draining instead of dispatching on stale state. */
     if (nread == 0) continue;
 
-    switch (cmd) {
-      case START: {
-        if (tracing_state == STOPPING) {
-          LOGI("Continue tracing init");
-
-          tracing_state = TRACING;
-          monitor_stop_reason = NULL;
-        } else if (tracing_state == STOPPED) {
-          LOGI("Start tracing init");
-
-          /* INFO: Checked here the way claim_init_tracer() checks it. A seize
-                    that failed would leave this monitor believing it was tracing
-                    init, and every later decision - the fork handling, the
-                    status line the manager reads - made on that belief. Staying
-                    where it is the honest answer, and the status reports it. */
-          if (ptrace(PTRACE_SEIZE, 1, 0, PTRACE_O_TRACEFORK) == -1) {
-            PLOGE("seize init");
-          } else {
-            tracing_state = TRACING;
-            monitor_stop_reason = NULL;
-          }
-        }
-
-        update_status(NULL);
-
-        break;
-      }
-      case STOP: {
-        if (tracing_state == TRACING) {
-          LOGI("Stop tracing requested");
-
-          tracing_state = STOPPING;
-          monitor_stop_reason = "user requested";
-
-          ptrace(PTRACE_INTERRUPT, 1, 0, 0);
-          update_status(NULL);
-        }
-
-        break;
-      }
-      case EXIT: {
-        LOGI("Prepare for exit ...");
-
-        tracing_state = EXITING;
-        monitor_stop_reason = "user requested";
-
-        update_status(NULL);
-        monitor_events_stop();
-
-        break;
-      }
-      case CMD_ZYGOTE_INJECTED: {
-        LOGI("Received Zygote%s injected command", MONITOR_ABI);
-
-        status.zygote_injected = true;
-
-        /* INFO: A zygote that ran far enough to report back was injected, so
-                  the restarts counted before it were not a crash loop. Only a
-                  zygote that dies between its exec and this report keeps
-                  counting, which is what the guard is for.
-
-                  WebView's zygote is why this reset exists: it runs as the same
-                  binary and restarts on its own schedule, and it reports back
-                  exactly like the main one - so a device that merely used
-                  WebView often enough was read as a crash loop and had its
-                  injection shut off on it. */
-        count_zygote = 0;
-
-        update_status(NULL);
-
-        break;
-      }
-      case CMD_DAEMON_SET_INFO: {
-        LOGD("Received VexZygiskd%s info", MONITOR_ABI);
-
-        /* INFO: Read into a local first: a failed read then leaves the previous
-                  value in place instead of dropping it. */
-        char *root_impl = read_socket_string("root impl");
-        if (root_impl == NULL) break;
-
-        free(environment_information.root_impl);
-        environment_information.root_impl = root_impl;
-
-        LOGD("VexZygiskd%s root impl: %s", MONITOR_ABI, environment_information.root_impl);
-
-        read_daemon_modules();
-
-        break;
-      }
-      case CMD_DAEMON_SET_ERROR_INFO: {
-        LOGD("Received VexZygiskd%s error info", MONITOR_ABI);
-
-        /* INFO: Same ordering as the info case above: the old text survives a
-                  failed read. */
-        char *error_info = read_socket_string("error info");
-        if (error_info == NULL) break;
-
-        free(status.daemon_error_info);
-        status.daemon_error_info = error_info;
-
-        LOGD("VexZygiskd%s error info: %s", MONITOR_ABI, status.daemon_error_info);
-
-        update_status(NULL);
-
-        break;
-      }
-    }
+    dispatch_daemon_command(cmd);
   }
 }
 
@@ -1104,6 +1115,202 @@ static bool handle_daemon_exit(int pid, long sigchld_status) {
 }
 
 
+/* INFO: Whether this pid is one of the children the monitor has taken over.
+         The table only ever holds live processes, so a pid found here has a
+         slot to give back when its stop arrives. */
+static bool child_is_tracked(pid_t pid) {
+  for (size_t i = 0; i < sigchld_process_count; i++) {
+    if (sigchld_process[i] == pid) return true;
+  }
+
+  return false;
+}
+
+/* INFO: Takes over a child the monitor has not seen before, so that the exec
+         that follows is handled here rather than by whichever monitor owns the
+         process next.
+
+         The slot comes from the water mark when there is one, which is the
+         common case - a launch is a burst of forks followed by a burst of
+         exits - and the table grows in powers of two when there is not.
+         Growing by a single element made every process of every launch pay for
+         a realloc and a copy of the whole array, where the water mark keeps the
+         array at the high-water mark of one burst rather than of the session.
+
+         A child that cannot be recorded is detached and let run: it is stopped
+         and under this monitor's control, and the slot it would have gone into
+         is exactly what just failed to allocate - so nothing later in the loop
+         would pick it up, and continuing without it leaves it stopped for good.
+         Detaching loses track of one process, which the failed allocation has
+         already cost, but the process survives and the fork it was making
+         completes. */
+static void track_child(pid_t pid) {
+  size_t slot = sigchld_process_count;
+
+  for (size_t i = sigchld_process_free; i < sigchld_process_count; i++) {
+    if (sigchld_process[i] != 0) continue;
+
+    slot = i;
+
+    break;
+  }
+
+  if (slot == sigchld_process_count) {
+    if (sigchld_process_count == sigchld_process_capacity) {
+      size_t capacity = sigchld_process_capacity == 0 ? 64 : sigchld_process_capacity * 2;
+
+      pid_t *grown = (pid_t *)realloc(sigchld_process, sizeof(pid_t) * capacity);
+      if (grown == NULL) {
+        PLOGE("realloc sigchld_process");
+
+        ptrace(PTRACE_DETACH, pid, 0, 0);
+
+        return;
+      }
+
+      sigchld_process = grown;
+      sigchld_process_capacity = capacity;
+    }
+
+    sigchld_process[sigchld_process_count] = pid;
+    sigchld_process_count++;
+    sigchld_process_free = sigchld_process_count;
+  } else {
+    sigchld_process[slot] = pid;
+    sigchld_process_free = slot + 1;
+  }
+
+  ptrace(PTRACE_SETOPTIONS, pid, 0, PTRACE_O_TRACEEXEC);
+  ptrace(PTRACE_CONT, pid, 0, 0);
+}
+
+/* INFO: The exec of a tracked child: read what the process became, decide
+         whether this monitor is the one that owns it, and hand it to a tracer
+         when it is.
+
+         True means the process has been handed over and was deliberately left
+         stopped for its tracer, so the caller must not detach it again. Every
+         false means the opposite - this was not the monitor's process to take,
+         or the hand-off could not be prepared - and that the process has to be
+         let run. */
+static bool hand_over_on_exec(pid_t pid) {
+  char program[PATH_MAX];
+  if (get_program(pid, program, sizeof(program)) == -1) {
+    LOGW("failed to get program %d", pid);
+
+    return false;
+  }
+
+  LOGV("%d program %s", pid, program);
+
+  if (tracing_state != TRACING) {
+    LOGD("Stopped injecting %d because status is not set to tracing", pid);
+
+    return false;
+  }
+
+  const char *tracer = NULL;
+  bool is_spawner = false;
+
+  if (!match_target(program, &tracer, &is_spawner)) return false;
+
+  /* INFO: The crash-loop counter is about the zygote restarting. The spawner
+           has its own lifecycle and execs on its own schedule, so counting
+           those execs the same way would trip the crash-loop stop after a burst
+           of app launches. */
+  if (!is_spawner && should_stop_inject()) {
+    LOGW("Zygote" MONITOR_ABI " restart too many times, stop injecting");
+
+    tracing_state = STOPPING;
+    monitor_stop_reason = "Zygote crashed";
+    ptrace(PTRACE_INTERRUPT, 1, 0, 0);
+
+    return false;
+  }
+
+  /* INFO: Both targets need the daemon, and the spawner can exec before the
+           zygote ever does, so creating it cannot be left to the zygote
+           injection. A spawner with no daemon is skipped rather than fatal:
+           this monitor's job is the zygote, and stopping here would take a
+           healthy zygote down with it. */
+  if (!ensure_daemon_created()) {
+    if (is_spawner) {
+      LOGW("VexZygiskd%s not running, skipping hyos_spawner %d", MONITOR_ABI, pid);
+
+      return false;
+    }
+
+    LOGW("VexZygiskd%s not running, stop injecting", MONITOR_ABI);
+
+    tracing_state = STOPPING;
+    monitor_stop_reason = "VexZygiskd not running";
+    ptrace(PTRACE_INTERRUPT, 1, 0, 0);
+
+    return false;
+  }
+
+  LOGD("Stopping %d (program: %s, tracer: %s)", pid, program, tracer);
+
+  /* INFO: The stop is taken here, before the tracer exists, and its status is
+           a local: it describes this hand-off and not the child that was just
+           reaped. Writing it over the loop's own variable is what made a later
+           pass read this stop as the one it was handling. */
+  kill(pid, SIGSTOP);
+  ptrace(PTRACE_CONT, pid, 0, 0);
+
+  int wstatus = 0;
+  if (waitpid(pid, &wstatus, __WALL) == -1) {
+    PLOGE("waitpid");
+
+    return false;
+  }
+
+  if (!STOPPED_WITH(wstatus, SIGSTOP, 0)) {
+    LOGE("Failed to stop process %d", pid);
+
+    return false;
+  }
+
+  launch_tracer(pid, tracer, is_spawner);
+
+  return true;
+}
+
+/* INFO: The stop of a child the monitor already owns.
+
+         The slot goes back and a process that is still stopped is let run, and
+         both happen on every path - including the ones that only log a
+         problem. The single exception is a process the tracer has taken:
+         launch_tracer leaves it stopped for the tracer on purpose, and
+         detaching it here would take it back. */
+static void handle_tracked_stop(pid_t pid, int wstatus) {
+  bool handed_over = false;
+
+  if (STOPPED_WITH(wstatus, SIGTRAP, PTRACE_EVENT_EXEC)) {
+    handed_over = hand_over_on_exec(pid);
+  } else {
+    char status_str[64];
+    parse_status(wstatus, status_str, sizeof(status_str));
+
+    LOGW("process %d received unknown sigchld_status %s", pid, status_str);
+  }
+
+  for (size_t i = 0; i < sigchld_process_count; i++) {
+    if (sigchld_process[i] != pid) continue;
+
+    sigchld_process[i] = 0;
+    if (i < sigchld_process_free) sigchld_process_free = i;
+
+    break;
+  }
+
+  if (!handed_over && WIFSTOPPED(wstatus)) {
+    LOGV("detach process %d", pid);
+
+    ptrace(PTRACE_DETACH, pid, 0, 0);
+  }
+}
+
 void sigchld_listener_callback() {
   while (1) {
     ssize_t s = read(sigchld_signal_fd, &sigchld_fdsi, sizeof(sigchld_fdsi));
@@ -1152,180 +1359,25 @@ void sigchld_listener_callback() {
         continue;
       }
 
-      bool known = false;
-      for (size_t i = 0; i < sigchld_process_count; i++) {
-        if (sigchld_process[i] == pid) {
-          known = true;
-
-          break;
-        }
-      }
-
-      if (!known) {
-        /* INFO: A process that has already exited is not "newly attached": there
-                  is nothing left to set ptrace options on, and a slot taken here
-                  is never handed back. This is the path a replaced daemon takes -
-                  the branch above no longer matches it, because the pid it was
-                  recorded under already names the replacement. Letting it fall
-                  through would leak that slot and, once the kernel hands the pid
-                  to somebody else, make an unrelated process look like one that
-                  is already under trace. */
-        if (WIFEXITED(sigchld_status) || WIFSIGNALED(sigchld_status)) continue;
-
-        LOGV("New process %d attached", pid);
-
-        for (size_t i = sigchld_process_free; i < sigchld_process_count; i++) {
-          if (sigchld_process[i] != 0) continue;
-
-          sigchld_process[i] = pid;
-          sigchld_process_free = i + 1;
-
-          goto ptrace_process;
-        }
-
-        /* INFO: Grown in powers of two rather than one slot at a time. Every
-                  process the zygote forks passes through here, and they arrive
-                  in bursts - an application launch is one - so growing by a
-                  single element made each of those pay for a realloc and a copy
-                  of the whole array. The array only ever holds the pids of live
-                  processes, so the water mark it reaches is the high-water mark
-                  of a burst, not of the session. */
-        if (sigchld_process_count == sigchld_process_capacity) {
-          size_t capacity = sigchld_process_capacity == 0 ? 64 : sigchld_process_capacity * 2;
-
-          pid_t *new_sigchld_process = (pid_t *)realloc(sigchld_process, sizeof(pid_t) * capacity);
-          if (new_sigchld_process == NULL) {
-            PLOGE("realloc sigchld_process");
-
-            /* INFO: This process is stopped and under this monitor's control,
-                      and the slot it would have been recorded in is exactly what
-                      just failed to allocate - so nothing later in the loop will
-                      pick it up. Continuing without it leaves it stopped for
-                      good, which is one hung application per allocation failure.
-                      It is detached and let run instead: this monitor loses track
-                      of the process, which the failed allocation already cost,
-                      but the process itself survives and the fork it was making
-                      completes. */
-            ptrace(PTRACE_DETACH, pid, 0, 0);
-
-            continue;
-          }
-
-          sigchld_process = new_sigchld_process;
-          sigchld_process_capacity = capacity;
-        }
-
-        sigchld_process[sigchld_process_count] = pid;
-        sigchld_process_count++;
-        sigchld_process_free = sigchld_process_count;
-
-        ptrace_process:
-
-        ptrace(PTRACE_SETOPTIONS, pid, 0, PTRACE_O_TRACEEXEC);
-        ptrace(PTRACE_CONT, pid, 0, 0);
+      if (child_is_tracked(pid)) {
+        handle_tracked_stop(pid, sigchld_status);
 
         continue;
-      } else {
-        if (STOPPED_WITH(sigchld_status, SIGTRAP, PTRACE_EVENT_EXEC)) {
-          char program[PATH_MAX];
-          if (get_program(pid, program, sizeof(program)) == -1) {
-            LOGW("failed to get program %d", pid);
-
-            continue;
-          }
-
-          LOGV("%d program %s", pid, program);
-
-          const char *tracer = NULL;
-          bool is_spawner = false;
-
-          do {
-            if (tracing_state != TRACING) {
-              LOGD("Stopped injecting %d because status is not set to tracing", pid);
-
-              break;
-            }
-
-            if (!match_target(program, &tracer, &is_spawner)) break;
-
-            /* INFO: The crash-loop counter is about the zygote restarting. The
-                     spawner has its own lifecycle and execs on its own
-                     schedule, so counting those execs the same way would trip
-                     the crash-loop stop after a burst of app launches. */
-            if (!is_spawner && should_stop_inject()) {
-              LOGW("Zygote" MONITOR_ABI " restart too many times, stop injecting");
-
-              tracing_state = STOPPING;
-              monitor_stop_reason = "Zygote crashed";
-              ptrace(PTRACE_INTERRUPT, 1, 0, 0);
-
-              break;
-            }
-
-            /* INFO: Both targets need the daemon, and the spawner can exec
-                     before the zygote ever does, so creating it cannot be left
-                     to the zygote injection. A spawner with no daemon is
-                     skipped rather than fatal: this monitor's job is the
-                     zygote, and stopping here would take a healthy zygote down
-                     with it. */
-            if (!ensure_daemon_created()) {
-              if (is_spawner) {
-                LOGW("VexZygiskd%s not running, skipping hyos_spawner %d", MONITOR_ABI, pid);
-
-                break;
-              }
-
-              LOGW("VexZygiskd%s not running, stop injecting", MONITOR_ABI);
-
-              tracing_state = STOPPING;
-              monitor_stop_reason = "VexZygiskd not running";
-              ptrace(PTRACE_INTERRUPT, 1, 0, 0);
-
-              break;
-            }
-
-            LOGD("Stopping %d (program: %s, tracer: %s)", pid, program, tracer);
-
-            kill(pid, SIGSTOP);
-            ptrace(PTRACE_CONT, pid, 0, 0);
-            if (waitpid(pid, &sigchld_status, __WALL) == -1) {
-              PLOGE("waitpid");
-
-              break;
-            }
-
-            if (!STOPPED_WITH(sigchld_status, SIGSTOP, 0)) {
-              LOGE("Failed to stop process %d", pid);
-
-              break;
-            }
-
-            sigchld_status = 0;
-
-            launch_tracer(pid, tracer, is_spawner);
-          } while (false);
-        } else {
-          char status_str[64];
-          parse_status(sigchld_status, status_str, sizeof(status_str));
-
-          LOGW("process %d received unknown sigchld_status %s", pid, status_str);
-        }
-
-        for (size_t i = 0; i < sigchld_process_count; i++) {
-          if (sigchld_process[i] != pid) continue;
-
-          sigchld_process[i] = 0;
-          if (i < sigchld_process_free) sigchld_process_free = i;
-
-          break;
-        }
-
-        if (WIFSTOPPED(sigchld_status)) {
-          LOGV("detach process %d", pid);
-
-          ptrace(PTRACE_DETACH, pid, 0, 0);
-        }
       }
+
+      /* INFO: A process that has already exited is not "newly attached": there
+                is nothing left to set ptrace options on, and a slot taken here
+                is never handed back. This is the path a replaced daemon takes -
+                the daemon branch above no longer matches it, because the pid it
+                was recorded under already names the replacement. Letting it
+                fall through would leak that slot and, once the kernel hands the
+                pid to somebody else, make an unrelated process look like one
+                that is already under trace. */
+      if (WIFEXITED(sigchld_status) || WIFSIGNALED(sigchld_status)) continue;
+
+      LOGV("New process %d attached", pid);
+
+      track_child(pid);
     }
   }
 }
