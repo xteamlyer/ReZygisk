@@ -6,6 +6,14 @@ BUILD_DIR := $(CURDIR)/build$(FLAVOR_DIR)
 
 include common.mk
 
+# INFO: common.mk carries the rule that builds the Rust archive, and a rule is
+#       what decides the default goal: make takes the first target of the first
+#       rule it read, and an include is read before the rest of this file. So
+#       without this line a bare `make` would build libvexcore.a and stop, and
+#       the packaging step would then look for the binaries it never got.
+#
+#       The goal is the one this Makefile has always defaulted to.
+.DEFAULT_GOAL := tools
 OBJ_DIR = $(BUILD_DIR)/obj/$(BUILD_TYPE)
 MODULE_OUT = $(BUILD_DIR)/module/$(BUILD_TYPE)
 ZIP_DIR = $(BUILD_DIR)/out

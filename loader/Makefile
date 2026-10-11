@@ -1,6 +1,15 @@
 ROOT_DIR := ..
 include ../common.mk
 
+# INFO: common.mk carries the rule that builds the Rust archive, and a rule is
+#       what decides the default goal: make takes the first target of the first
+#       rule it read, and an include is read before the rest of this file. So
+#       without this line `make -C loader` would build libvexcore.a and stop,
+#       and the packaging step would then look for the shared objects it never
+#       got.
+#
+#       The goal is the one this Makefile has always defaulted to.
+.DEFAULT_GOAL := all
 OBJ_ROOT = $(BUILD_DIR)/obj/$(BUILD_TYPE)/loader
 OBJ_DIR = $(OBJ_ROOT)/$(ARCH)
 
