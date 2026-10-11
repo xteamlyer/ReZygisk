@@ -18,7 +18,24 @@
          owns a library makes no difference to whether it is a trace. */
 #define ADB_PREFIX "/data/adb/"
 
-/* INFO: What a hidden process has to stop naming in its own maps.
+/* INFO: Whether `path` is exactly `name`, with the suffix a mapping keeps once
+         the file behind it is gone counted as no part of the name. A prefix
+         compare answers a different question: "/memfd:zn-module" is the whole
+         of what identifies that memfd, so "/memfd:zn-module-2" is somebody
+         else's mapping and must not be replaced. */
+static bool path_is(const char *path, const char *name) {
+  size_t name_len = strlen(name);
+
+  return strip_deleted_suffix(path, strlen(path)) == name_len &&
+         memcmp(path, name, name_len) == 0;
+}
+
+/* INFO: Whether this process has to stop naming `map` in its own maps listing.
+
+         Named for the question, not for where the mapping comes from: the
+         answer is yes for the injector's own library and for a Zygisk Next
+         memfd as well as for a module library, and no for everything inside the
+         module directory - so "module map" would name it backwards.
 
          The device decides a path: a module library only counts while it sits
          on /data, and a bind mount or an sdcard can put the same names on
@@ -42,19 +59,19 @@
          the same bytes at the same address - the copy is moved in with its
          permissions already set, and an instruction fetch after the move reads
          the same code it read before. */
-static bool is_module_map(const struct map_entry *map, dev_t data_dev) {
+static bool map_is_a_trace(const struct map_entry *map, dev_t data_dev) {
   const char *path = map->path;
 
   if (path == NULL) return false;
 
   if (!map->is_private) return false;
 
-  if (strncmp(path, ZYGISK_ZN_MEMFD, sizeof(ZYGISK_ZN_MEMFD) - 1) == 0) return true;
+  if (path_is(path, ZYGISK_ZN_MEMFD)) return true;
 
   /* INFO: Checked before the module directory is excluded below, since the
             injector lives inside it. It stays mapped until the unloader runs,
             and the unloader keeps it mapped - see hook.c for why. */
-  if (strcmp(path, ZYGISK_LOADER_LIB) == 0) return true;
+  if (path_is(path, ZYGISK_LOADER_LIB)) return true;
 
   if (map->dev != data_dev) return false;
 
@@ -86,10 +103,23 @@ struct hide_state {
   size_t capacity;
 };
 
+/* INFO: The one place the collected paths are given back. The walk ends two
+         ways, and each used to free the list in its own words - so a change to
+         one of them was a leak on a device and nothing else. */
+static void free_hide_state(struct hide_state *state) {
+  for (size_t i = 0; i < state->count; i++) free(state->targets[i].path);
+
+  free(state->targets);
+
+  state->targets = NULL;
+  state->count = 0;
+  state->capacity = 0;
+}
+
 static bool collect_one_map(const struct map_entry *map, void *userdata) {
   struct hide_state *state = userdata;
 
-  if (!is_module_map(map, state->data_dev)) return true;
+  if (!map_is_a_trace(map, state->data_dev)) return true;
 
   if (state->count == state->capacity) {
     size_t capacity = state->capacity == 0 ? 8 : state->capacity * 2;
@@ -108,7 +138,7 @@ static bool collect_one_map(const struct map_entry *map, void *userdata) {
   struct hide_target *target = &state->targets[state->count];
 
   target->start = (void *)map->start;
-  target->size = map->end - map->start;
+  target->size = (size_t)(map->end - map->start);
   target->perms = map->perms;
   target->made_readable = (map->perms & PROT_READ) == 0;
   target->path = strdup(map->path);
@@ -217,9 +247,22 @@ static int hide_backing_memfd(void) {
          library the system linker holds - names its own file in
          /proc/self/maps. The mapping is replaced with a copy of the same bytes
          at the same address, so the library keeps running out of the same place
-         and the name is gone. */
+         and the name is gone.
+
+         One exit for what has been taken, and the taking starts at the copy:
+         everything before it returns where it stands, and the three failures
+         after it go through `cleanup:` instead of undoing the earlier steps
+         each in their own words - which is the shape that leaves a mapping
+         readable, or a copy behind, the once a path is edited and its
+         neighbours are not. */
 static bool hide_map(struct hide_target *target) {
   size_t size = target->size;
+
+  /* INFO: Whether this pass is the reason the original is readable. Two of the
+            failures below have to put the permissions back and the third must
+            not - it is the one where the call that changes them failed - so the
+            cleanup asks this and not the map's own permissions. */
+  bool original_made_readable = false;
 
   /* INFO: Where the copy comes from: the memfd when this process may map one
             executable, an anonymous mapping when it may not. Only this choice
@@ -259,12 +302,14 @@ static bool hide_map(struct hide_target *target) {
 
   /* INFO: A mapping without PROT_READ cannot be copied out of, so it is made
             readable for the duration of the copy and put back afterwards. */
-  if (target->made_readable && mprotect(target->start, size, target->perms | PROT_READ) == -1) {
-    PLOGE("make [%s] readable", target->path);
+  if (target->made_readable) {
+    if (mprotect(target->start, size, target->perms | PROT_READ) == -1) {
+      PLOGE("make [%s] readable", target->path);
 
-    munmap(copy, size);
+      goto cleanup;
+    }
 
-    return false;
+    original_made_readable = true;
   }
 
   memcpy(copy, target->start, size);
@@ -278,35 +323,35 @@ static bool hide_map(struct hide_target *target) {
   if (mprotect(copy, size, target->perms) == -1) {
     PLOGE("set the permissions of the copy of [%s]", target->path);
 
-    if (target->made_readable && mprotect(target->start, size, target->perms) == -1)
-      PLOGE("restore the permissions of [%s]", target->path);
-
-    munmap(copy, size);
-
-    return false;
+    goto cleanup;
   }
 
   if (mremap(copy, size, size, MREMAP_MAYMOVE | MREMAP_FIXED, target->start) == MAP_FAILED) {
     PLOGE("move the copy of [%s] over the original", target->path);
 
-    munmap(copy, size);
-
-    /* INFO: The original is still the mapping on this path, and it may still
-              carry the PROT_READ added to copy it out of. */
-    if (target->made_readable && mprotect(target->start, size, target->perms) == -1)
-      PLOGE("restore the permissions of [%s]", target->path);
-
-    return false;
+    goto cleanup;
   }
 
-  /* INFO: Only now does the range become part of the file's used length: until
-            the replacement is in place, nothing has been taken from it. An
-            anonymous copy has no file to account for. */
+  /* INFO: Only now does the range become part of the file's used length. The
+            copy is at target->start from here on, so this path must not reach
+            the cleanup - returning rather than falling through is what keeps a
+            good replacement from being unmapped one line later. */
   if (fd != -1) hide_memfd_end = offset + (off_t)size;
 
   LOGD("Hid [%s]", target->path);
 
   return true;
+
+cleanup:
+  /* INFO: The copy goes first and the original's permissions second, in that
+            order: restoring is the call that can fail, and a failure there
+            should not be the reason a copy of somebody's memory stays mapped. */
+  munmap(copy, size);
+
+  if (original_made_readable && mprotect(target->start, size, target->perms) == -1)
+    PLOGE("restore the permissions of [%s]", target->path);
+
+  return false;
 }
 
 /* INFO: Set once the process's own mappings have been replaced, so the teardown
@@ -336,10 +381,8 @@ bool hide_module_maps(void) {
     LOGE("Failed to read the maps of this process");
 
     /* INFO: The visitor can have collected entries, and their paths, before the
-              stream failed - nothing else holds them, and this returns before
-              the loop that would have freed them. */
-    for (size_t i = 0; i < state.count; i++) free(state.targets[i].path);
-    free(state.targets);
+              stream failed. */
+    free_hide_state(&state);
 
     return false;
   }
@@ -358,11 +401,9 @@ bool hide_module_maps(void) {
       maps++;
       bytes += target->size;
     }
-
-    free(target->path);
   }
 
-  free(state.targets);
+  free_hide_state(&state);
 
   if (maps > 0) LOGD("Hid %zu module map(s), %zu KiB", maps, bytes / 1024);
 
