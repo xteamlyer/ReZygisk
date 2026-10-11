@@ -63,6 +63,19 @@ BUILD_DIR ?= $(ROOT_DIR)/build
 #       The linker variable is named for cargo's benefit even though a staticlib
 #       is assembled and never linked: a dependency that grows a link step later
 #       should not fail with a message about a compiler nobody set up.
+#
+#       The copy at the end writes a temporary and renames it, and that is not
+#       tidiness. The loader and the daemon are two sub-makes that the top-level
+#       make runs side by side, both need this one archive, and both therefore
+#       build it - cargo takes its own lock on the target directory, but the copy
+#       that follows it is two cp processes writing one file, and a link that
+#       arrives in the middle reads a half-written archive:
+#
+#         ld.lld: error: ... Archive::children failed: truncated or malformed
+#         archive (offset to next archive member past the end of the archive)
+#
+#       A rename within a directory is atomic, so a reader gets either the
+#       previous archive or the new one and never a mixture.
 VEXCORE_DIR = $(ROOT_DIR)/rust/vexcore
 VEXCORE_TARGET_DIR = $(BUILD_DIR)/obj/$(BUILD_TYPE)/vexcore-target
 VEXCORE_LIB = $(BUILD_DIR)/obj/$(BUILD_TYPE)/vexcore/libvexcore.a
@@ -77,7 +90,8 @@ $(VEXCORE_LIB): $(VEXCORE_INPUTS)
 		CARGO_TARGET_DIR=$(VEXCORE_TARGET_DIR)                      \
 		CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$(TOOLCHAIN)/bin/aarch64-linux-android$(API_LEVEL)-clang \
 		cargo build --release --locked --target aarch64-linux-android
-	cp $(VEXCORE_TARGET_DIR)/aarch64-linux-android/release/libvexcore.a $@
+	cp $(VEXCORE_TARGET_DIR)/aarch64-linux-android/release/libvexcore.a $@.tmp
+	mv -f $@.tmp $@
 
 TARGET_arm64-v8a = aarch64-linux-android$(API_LEVEL)
 
