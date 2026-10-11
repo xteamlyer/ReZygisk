@@ -47,5 +47,19 @@ extern "C" {
     fn abort() -> !;
 }
 
+/// The prebuilt `core` in a toolchain is compiled with unwinding on, and one of
+/// its objects carries a weak reference to the personality routine even when
+/// the crate being linked cannot unwind. Nothing calls it - every panic here
+/// goes to `abort` - but the reference still has to resolve, and without a
+/// definition the link fails on a symbol whose absence says nothing about
+/// whether this code is correct.
+///
+/// Defining it is the smallest thing that answers the reference without
+/// dragging in the unwinder an injected process has no use for. It is absent
+/// under `cfg(test)`, where the harness is a `std` binary that already has one.
+#[cfg(not(test))]
+#[no_mangle]
+pub extern "C" fn rust_eh_personality() {}
+
 #[cfg(test)]
 mod tests;
