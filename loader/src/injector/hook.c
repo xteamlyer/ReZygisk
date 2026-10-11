@@ -37,21 +37,27 @@ void *start_addr = NULL;
 size_t block_size = 0;
 void *injector_handle = NULL;
 
-/* INFO: dlclose, reached through a type with a second parameter it does not
-         have, and the second parameter is not a mistake.
+/* INFO: dlclose, reached through the exact type of the hook that calls it.
 
          The teardown has to leave this library with a jump and not a call: a
          call's return would land on an instruction in a library that is gone by
          the time it runs, which is the whole reason the reference
-         implementation wraps its own unmap in musttail. clang only allows that
-         between functions of the same arity - that is why the reference's
-         munmap works there (it takes two, like the hook around it) - and
-         dlclose takes one.
+         implementation wraps its own unmap in musttail. clang allows that only
+         between functions whose signatures agree - the same number of
+         parameters and the same types, which is what the two errors that
+         produced this line said in turn - and the hook around it takes the
+         (void *, size_t) of the function it replaces. dlclose takes one
+         parameter, so nothing about it matches on its own: the reference never
+         met this because munmap happens to take two, of a matching kind.
 
-         So the call goes through this: same arity as the hook, and on AArch64
-         the argument dlclose does not declare is simply a register it never
-         reads. A cast is what buys the jump. */
-static int (*const injector_close)(void *handle, void *unused) = (int (*)(void *, void *))dlclose;
+         So the call goes through this, and on AArch64 the argument dlclose does
+         not declare is a register it never reads. What the cast buys is the
+         jump; the pragma is only there because the conversion is the point of
+         the line and a build does not need to be told so on every file. */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wcast-function-type-mismatch"
+static int (*const injector_close)(void *handle, size_t unused) = (int (*)(void *, size_t))dlclose;
+#pragma clang diagnostic pop
 
 /* INFO: Flag indices */
 enum {
@@ -465,7 +471,7 @@ DCL_HOOK_FUNC(int, pthread_attr_setstacksize, void *target, size_t size) {
 
     LOGD("closing libzygisk.so at %p with size %zu", start_addr, block_size);
 
-    [[clang::musttail]] return injector_close(injector_handle, NULL);
+    [[clang::musttail]] return injector_close(injector_handle, 0);
   }
 
   return res;
