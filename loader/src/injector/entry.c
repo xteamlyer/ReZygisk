@@ -10,8 +10,14 @@
 #include "zn_loader.h"
 
 __attribute__((visibility("default")))
-void entry(void *addr, size_t size) {
+void entry(void *handle, void *addr, size_t size) {
   LOGD("VexZygisk library injected, version %s", ZKSU_VERSION);
+
+  /* INFO: Kept for the teardown. This is the only moment the handle exists on
+            this side of the ptrace boundary - it came back from the dlopen in a
+            register, and nothing here could ask the linker for it again by
+            value. */
+  injector_handle = handle;
 
   start_addr = addr;
   block_size = size;
