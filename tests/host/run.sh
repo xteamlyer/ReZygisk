@@ -52,6 +52,14 @@ done
 #       was built for.
 cargo build --release --locked --manifest-path rust/vexcore/Cargo.toml
 VEXCORE_LIB=rust/vexcore/target/release/libvexcore.a
+
+# INFO: The crate's own tests, which cover what the C suite below cannot reach
+#       from here: the tables a malformed image can name - a bucket index past
+#       the symbol table, a name offset past its string table, a chain that ends
+#       where it says it does. They also pin the two hashes against the values
+#       the C versions produced, so a port that is off by a bit fails here
+#       rather than as a symbol that silently does not resolve.
+cargo test --release --locked --manifest-path rust/vexcore/Cargo.toml
 cc -std=c18 -D_GNU_SOURCE -Wall -Wextra -Werror \
    -Itests/host -Iloader/src/include -Iloader/src/common \
    -Iloader/src/external/lzma \

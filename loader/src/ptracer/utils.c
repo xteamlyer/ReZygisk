@@ -22,6 +22,7 @@
 #include "elf_util.h"
 
 #include "utils.h"
+#include "vexcore.h"
 
 /* INFO: The branch the CPU believes it took, kept in PSTATE bits 10-11. A value
          of 0b11 means the last branch was an indirect jump, and a BTI landing
@@ -350,207 +351,41 @@ int fork_dont_care() {
   return pid;
 }
 
-#define TARGET_JUMP_SLOT R_AARCH64_JUMP_SLOT
+/* INFO: The relocation type and the two halves of `r_info` are read on the
+         Rust side now, along with the walk that needs them - see
+         find_jump_slot_got_offset below and rust/vexcore/src/got.rs. The
+         architecture is still this build's single one, so the constants moved
+         with the code that uses them rather than staying here as something
+         nothing reads.
+*/
+/* INFO: The PLT/GOT lookup, forwarded to the Rust half (see vexcore.h).
 
-#define ELFW_R_TYPE(info) ELF64_R_TYPE(info)
-#define ELFW_R_SYM(info)  ELF64_R_SYM(info)
-#define EXPECTED_ELFCLASS ELFCLASS64
+         What it does - open the file, walk the program headers to the dynamic
+         table, then the dynamic table to the relocation and symbol tables, and
+         compare names until the one asked for turns up - has not changed; the
+         version that did it here allocated the program headers and the dynamic
+         section before reading them, and checked every read and every offset by
+         hand. The Rust one reads each entry into a local instead, and a read
+         that comes up short ends the walk rather than leaving a half-filled
+         structure to be interpreted.
 
-bool elf_vaddr_to_off(const ElfW(Phdr) *phdr, int phnum, ElfW(Addr) vaddr, off_t *out_off) {
-  for (int i = 0; i < phnum; i++) {
-    if (phdr[i].p_type != PT_LOAD) continue;
-
-    ElfW(Addr) seg_start = phdr[i].p_vaddr;
-    ElfW(Addr) seg_end = phdr[i].p_vaddr + phdr[i].p_filesz;
-    if (vaddr < seg_start || vaddr >= seg_end) continue;
-
-    *out_off = (off_t)phdr[i].p_offset + (off_t)(vaddr - seg_start);
-
-    return true;
-  }
-
-  return false;
-}
-
+         The failure is logged here rather than on the other side: this is the
+         only place that knows which symbol in which file was being looked for,
+         and the caller's own message would have said no more than "not found". */
 bool find_jump_slot_got_offset(const char *elf_path, const char *symbol, uintptr_t *out_bias, uintptr_t *out_got_off) {
-  int fd = -1;
-  ElfW(Phdr) *phdr = NULL;
-  ElfW(Dyn) *dyn = NULL;
-  bool found = false;
+  uint64_t bias = 0;
+  uint64_t got_off = 0;
 
-  fd = open(elf_path, O_RDONLY | O_CLOEXEC);
-  if (fd < 0) {
-    PLOGE("open ELF %s", elf_path);
+  if (!vexcore_got_offset(elf_path, symbol, &bias, &got_off)) {
+    LOGW("No PLT slot for %s in %s", symbol, elf_path);
 
-    goto cleanup;
+    return false;
   }
 
-  struct stat st;
-  if (fstat(fd, &st) != 0 || st.st_size < (off_t)sizeof(ElfW(Ehdr))) {
-    LOGE("Failed to stat ELF %s", elf_path);
+  *out_bias = (uintptr_t)bias;
+  *out_got_off = (uintptr_t)got_off;
 
-    goto cleanup;
-  }
-
-  ElfW(Ehdr) eh;
-  if (pread(fd, &eh, sizeof(eh), 0) != (ssize_t)sizeof(eh)) {
-    LOGE("Failed to read ELF header");
-
-    goto cleanup;
-  }
-
-  if (memcmp(eh.e_ident, ELFMAG, SELFMAG) != 0 || eh.e_ident[EI_CLASS] != EXPECTED_ELFCLASS || eh.e_phnum == 0) {
-    LOGE("Invalid ELF header in %s", elf_path);
-
-    goto cleanup;
-  }
-
-  phdr = calloc(eh.e_phnum, sizeof(ElfW(Phdr)));
-  if (!phdr) {
-    LOGE("Failed to allocate memory for program headers");
-
-    goto cleanup;
-  }
-
-  if (pread(fd, phdr, sizeof(ElfW(Phdr)) * eh.e_phnum, eh.e_phoff) != (ssize_t)(sizeof(ElfW(Phdr)) * eh.e_phnum)) {
-    LOGE("Failed to read program headers");
-
-    goto cleanup;
-  }
-
-  ElfW(Addr) min_vaddr = (ElfW(Addr))-1;
-  ElfW(Addr) dyn_vaddr = 0;
-  ElfW(Word) dyn_size = 0;
-  for (int i = 0; i < eh.e_phnum; i++) {
-    if (phdr[i].p_type == PT_LOAD && phdr[i].p_vaddr < min_vaddr) min_vaddr = phdr[i].p_vaddr;
-    if (phdr[i].p_type == PT_DYNAMIC) {
-      dyn_vaddr = phdr[i].p_vaddr;
-      dyn_size = phdr[i].p_filesz;
-    }
-  }
-
-  if (!dyn_vaddr || !dyn_size || min_vaddr == (ElfW(Addr))-1) {
-    LOGE("Failed to find dynamic section or PT_LOAD segments in %s", elf_path);
-
-    goto cleanup;
-  }
-
-  off_t dyn_off = 0;
-  if (!elf_vaddr_to_off(phdr, eh.e_phnum, dyn_vaddr, &dyn_off)) {
-    LOGE("Failed to convert dynamic section virtual address to file offset in %s", elf_path);
-
-    goto cleanup;
-  }
-
-  size_t dyn_count = dyn_size / sizeof(ElfW(Dyn));
-  dyn = calloc(dyn_count, sizeof(ElfW(Dyn)));
-  if (!dyn) {
-    LOGE("Failed to allocate memory for dynamic section in %s", elf_path);
-
-    goto cleanup;
-  }
-
-  if (pread(fd, dyn, dyn_count * sizeof(ElfW(Dyn)), dyn_off) != (ssize_t)(dyn_count * sizeof(ElfW(Dyn)))) {
-    LOGE("Failed to read dynamic section in %s", elf_path);
-
-    goto cleanup;
-  }
-
-  ElfW(Addr) jmprel = 0, symtab = 0, strtab = 0;
-  ElfW(Word) pltrelsz = 0, pltrel = 0;
-  for (size_t i = 0; i < dyn_count; i++) {
-    switch (dyn[i].d_tag) {
-      case DT_JMPREL: jmprel = dyn[i].d_un.d_ptr; break;
-      case DT_PLTRELSZ: pltrelsz = dyn[i].d_un.d_val; break;
-      case DT_PLTREL: pltrel = dyn[i].d_un.d_val; break;
-      case DT_SYMTAB: symtab = dyn[i].d_un.d_ptr; break;
-      case DT_STRTAB: strtab = dyn[i].d_un.d_ptr; break;
-      default: break;
-    }
-  }
-
-  if (!jmprel || !pltrelsz || !symtab || !strtab || !(pltrel == DT_REL || pltrel == DT_RELA)) {
-    LOGE("Failed to find necessary dynamic entries in %s", elf_path);
-
-    goto cleanup;
-  }
-
-  off_t rel_off = 0, sym_off = 0, str_off = 0;
-  if (!elf_vaddr_to_off(phdr, eh.e_phnum, jmprel, &rel_off) ||
-      !elf_vaddr_to_off(phdr, eh.e_phnum, symtab, &sym_off) ||
-      !elf_vaddr_to_off(phdr, eh.e_phnum, strtab, &str_off)) {
-    LOGE("Failed to convert virtual addresses to file offsets in %s", elf_path);
-
-    goto cleanup;
-  }
-
-  size_t entsz = (pltrel == DT_REL) ? sizeof(ElfW(Rel)) : sizeof(ElfW(Rela));
-  size_t count = pltrelsz / entsz;
-  for (size_t i = 0; i < count; i++) {
-    ElfW(Addr) r_offset = 0;
-    ElfW(Word) r_info_type = 0;
-    ElfW(Word) sym_index = 0;
-
-    if (pltrel == DT_REL) {
-      ElfW(Rel) rel;
-      if (pread(fd, &rel, sizeof(rel), rel_off + (off_t)(i * sizeof(rel))) != (ssize_t)sizeof(rel)) {
-        LOGE("Failed to read relocation entry at index %zu in %s", i, elf_path);
-
-        break;
-      }
-
-      r_offset = rel.r_offset;
-      r_info_type = ELFW_R_TYPE(rel.r_info);
-      sym_index = ELFW_R_SYM(rel.r_info);
-    } else {
-      ElfW(Rela) rela;
-      if (pread(fd, &rela, sizeof(rela), rel_off + (off_t)(i * sizeof(rela))) != (ssize_t)sizeof(rela)) {
-        LOGE("Failed to read relocation entry at index %zu in %s", i, elf_path);
-
-        break;
-      }
-
-      r_offset = rela.r_offset;
-      r_info_type = ELFW_R_TYPE(rela.r_info);
-      sym_index = ELFW_R_SYM(rela.r_info);
-    }
-
-    if (r_info_type != TARGET_JUMP_SLOT) continue;
-
-    ElfW(Sym) sym;
-    if (pread(fd, &sym, sizeof(sym), sym_off + (off_t)(sym_index * sizeof(sym))) != (ssize_t)sizeof(sym)) {
-      LOGE("Failed to read symbol at index %zu in %s", (size_t)sym_index, elf_path);
-
-      break;
-    }
-
-    if (sym.st_name == 0) continue;
-
-    /* INFO: Sized for any realistic linker symbol; a truncated name simply
-              fails the strcmp and is skipped. */
-    char name[256] = { 0 };
-    if (pread(fd, name, sizeof(name) - 1, str_off + (off_t)sym.st_name) <= 0) {
-      LOGE("Failed to read symbol name at index %zu in %s", (size_t)sym_index, elf_path);
-
-      break;
-    }
-
-    if (strcmp(name, symbol) != 0) continue;
-
-    *out_bias = (uintptr_t)min_vaddr;
-    *out_got_off = (uintptr_t)r_offset;
-
-    found = true;
-
-    break;
-  }
-
-  cleanup:
-    free(dyn);
-    free(phdr);
-    if (fd != -1) close(fd);
-
-    return found;
+  return true;
 }
 
 bool wait_linker_ready(int pid, uintptr_t *out_libc_init_resolved, uintptr_t *out_libc_init_got_slot) {

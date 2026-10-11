@@ -41,7 +41,6 @@ void *find_func_addr(struct maps_info *local_info, struct maps_info *remote_info
 
 /* INFO: Translates a virtual address into its file offset through the PT_LOAD
          segments, used to walk the GOT slots the injection hooks. */
-bool elf_vaddr_to_off(const ElfW(Phdr) *phdr, int phnum, ElfW(Addr) vaddr, off_t *out_off);
 
 void align_stack(struct user_regs_struct *regs, long preserve);
 

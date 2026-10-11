@@ -1,6 +1,7 @@
 #ifndef VEXCORE_H
 #define VEXCORE_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -63,5 +64,12 @@ uintptr_t vexcore_elf_lookup(const struct vexcore_symbol *dynsym, size_t dynsym_
                              uint32_t nbucket, const uint32_t *bucket,
                              const uint32_t *chain,
                              const char *name, uint32_t hash, unsigned char *sym_type);
+
+/* INFO: The address a symbol's PLT entry jumps through, as `(bias, got_offset)`:
+         `bias` is the image's lowest load address and `got_offset` is the
+         relocation's `r_offset`. False when the file has no such slot, which is
+         also how a file that cannot be read answers. */
+bool vexcore_got_offset(const char *path, const char *symbol,
+                        uint64_t *out_bias, uint64_t *out_got_off);
 
 #endif /* VEXCORE_H */

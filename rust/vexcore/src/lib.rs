@@ -18,10 +18,20 @@
 #![cfg_attr(not(test), no_std)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
+// INFO: Not built under `cfg(test)`: it reaches `pread64`, and this suite also
+//       has to link on a workstation whose libc does not have that symbol. The
+//       host suite covers what the ELF reader does with tables a file supplies;
+//       what this one does is a walk over an ELF image, and the image it is
+//       meant to walk is the device's - the build for that target is where it
+//       gets compiled and checked.
+#[cfg(not(test))]
+mod got;
 mod hash;
 mod lookup;
 mod slice_ext;
 
+#[cfg(not(test))]
+pub use got::vexcore_got_offset;
 pub use hash::{vexcore_elf_hash, vexcore_gnu_hash};
 pub use lookup::{vexcore_elf_lookup, vexcore_gnu_lookup, Elf64Sym};
 
