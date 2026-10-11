@@ -37,6 +37,22 @@ void *start_addr = NULL;
 size_t block_size = 0;
 void *injector_handle = NULL;
 
+/* INFO: dlclose, reached through a type with a second parameter it does not
+         have, and the second parameter is not a mistake.
+
+         The teardown has to leave this library with a jump and not a call: a
+         call's return would land on an instruction in a library that is gone by
+         the time it runs, which is the whole reason the reference
+         implementation wraps its own unmap in musttail. clang only allows that
+         between functions of the same arity - that is why the reference's
+         munmap works there (it takes two, like the hook around it) - and
+         dlclose takes one.
+
+         So the call goes through this: same arity as the hook, and on AArch64
+         the argument dlclose does not declare is simply a register it never
+         reads. A cast is what buys the jump. */
+static int (*const injector_close)(void *handle, void *unused) = (int (*)(void *, void *))dlclose;
+
 /* INFO: Flag indices */
 enum {
   POST_SPECIALIZE,
@@ -436,7 +452,11 @@ DCL_HOOK_FUNC(int, pthread_attr_setstacksize, void *target, size_t size) {
                for its own unmap: the return would otherwise be an instruction
                in a library that no longer exists by the time dlclose comes
                back. Jumping out of the frame means libart - the caller of
-               pthread_attr_setstacksize - resumes instead. */
+               pthread_attr_setstacksize - resumes instead.
+
+               It goes through injector_close rather than calling dlclose
+               directly, because a musttail cannot change arity; the note on
+               that pointer says the rest. */
     if (injector_handle == NULL) {
       LOGD("kept libzygisk.so mapped at %p with size %zu (no handle to close)", start_addr, block_size);
 
@@ -445,7 +465,7 @@ DCL_HOOK_FUNC(int, pthread_attr_setstacksize, void *target, size_t size) {
 
     LOGD("closing libzygisk.so at %p with size %zu", start_addr, block_size);
 
-    [[clang::musttail]] return dlclose(injector_handle);
+    [[clang::musttail]] return injector_close(injector_handle, NULL);
   }
 
   return res;
