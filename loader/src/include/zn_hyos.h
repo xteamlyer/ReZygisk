@@ -95,18 +95,4 @@ static inline bool zn_hyos_module_api_matches(int target_api_version) {
   return target_api_version == ZYGISK_NEXT_HYOS_API_VERSION;
 }
 
-/* INFO: Whether a mapping's path is the spawner's image. The path is compared
-         with the " (deleted)" suffix the kernel appends to a file that was
-         replaced while it was mapped - an OTA does that to the runtime image,
-         and the suffix is part of the name, so a plain comparison would stop
-         finding the runtime after one.
-
-         This is one half of the answer; the bytes behind the mapping are the
-         other, and zn_spawner.h has both. */
-static inline bool zn_hyos_mapping_path_is_spawner(const char *path, size_t len) {
-  if (path == NULL) return false;
-
-  return zn_spawner_path_is_image(path, strip_deleted_suffix(path, len));
-}
-
 #endif /* ZN_HYOS_H */

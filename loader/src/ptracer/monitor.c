@@ -9,6 +9,7 @@
 
 #include <unistd.h>
 #include <sys/epoll.h>
+#include <sys/mman.h>
 #include <sys/signalfd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -17,6 +18,7 @@
 #include "daemon.h"
 #include "socket_utils.h"
 #include "utils.h"
+#include "zn_spawner.h"
 
 #include "monitor.h"
 
@@ -30,11 +32,8 @@
          that forks application processes. Both ABI monitors match it, each
          injecting its own bitness into its own bitness spawner.
 
-         Matched by file name rather than by one fixed path: HyperOS has shipped
-         the binary from more than one directory across releases, so whichever
-         directory the running build uses has to be followed. */
-#define HYOS_SPAWNER_BASE_NAME "hyos_spawner"
-
+         What identifies it - the file name, and the image behind it - lives in
+         zn_spawner.h and is asked for by program_is_spawner() below. */
 static bool update_status(const char *message);
 
 static const char *monitor_stop_reason = NULL;
@@ -820,20 +819,67 @@ bool sigchld_listener_init() {
   return true;
 }
 
-/* INFO: A path whose last component is the spawner's file name. The leading
-         slash is required so a longer name that merely ends with it (say
-         "xhyos_spawner") is not mistaken for the spawner. */
-static bool is_spawner_program(const char *program) {
-  static const char kBase[] = HYOS_SPAWNER_BASE_NAME;
+/* INFO: Whether the process that just exec'd is the spawner.
 
-  size_t program_len = strlen(program);
-  size_t base_len = sizeof(kBase) - 1;
+         Two answers, and which one is asked depends on what the executable is:
 
-  if (program_len <= base_len) return false;
+           - its file name, when that is the spawner's. Matching the name rather
+             than one fixed path is deliberate: HyperOS has shipped the binary
+             from more than one directory across releases, so whichever one the
+             running build uses has to be followed.
+           - the image mapped at offset zero, when the executable is
+             app_process64 - the name a zygote and (on the builds this exists
+             for) the spawner both read back as. A zygote has no such mapping; a
+             spawner whose runtime image is mapped into an app_process binary
+             does. It is the same question the injector asks from inside the
+             process, answered here from outside through the target's own maps,
+             which is all this side has.
 
-  const char *base = program + program_len - base_len;
+         Getting this wrong is not cosmetic, and it is why the name alone is not
+         enough: a spawner taken for a zygote has its execs counted as zygote
+         restarts, which stops injection for the rest of the boot, and a second
+         exec tells the daemon to drop every Zygisk Next companion - the loader
+         on the other side of that injection is where the applications already
+         forked from the spawner are talking to.
 
-  return base[-1] == '/' && strcmp(base, kBase) == 0;
+         The maps are read once per ambiguous exec, not per application: only an
+         exec of app_process64 reaches the scan, and an application is forked,
+         not exec'd. */
+static bool program_is_spawner(pid_t pid, const char *program) {
+  if (zn_spawner_map_is_spawner(program)) return true;
+
+  /* INFO: Only app_process64 is ambiguous: anything else that is not the
+            spawner by name is not the spawner. */
+  if (strcmp(program, APP_PROCESS_NAME) != 0) return false;
+
+  char pid_str[32];
+  snprintf(pid_str, sizeof(pid_str), "%d", pid);
+
+  struct maps_info *maps = parse_maps(pid_str);
+  if (maps == NULL) return false;
+
+  bool found = false;
+
+  for (size_t i = 0; i < maps->length; i++) {
+    const struct map_entry *map = &maps->maps[i];
+
+    /* INFO: The same four conditions the injector's own scan applies to a
+              mapping before it will call it the runtime: at the start of the
+              image, backed by a file, and readable - a PROT_NONE mapping is in
+              the listing too. What it cannot do from here is read the header
+              behind it, so the name is the whole answer at this distance. */
+    if (map->offset != 0 || map->dev == 0 || map->inode == 0 || map->path == NULL) continue;
+    if ((map->perms & PROT_READ) == 0) continue;
+    if (!zn_spawner_map_is_spawner(map->path)) continue;
+
+    found = true;
+
+    break;
+  }
+
+  free_maps(maps);
+
+  return found;
 }
 
 /* INFO: Which executable this monitor owns and how the tracer has to be told
@@ -841,12 +887,12 @@ static bool is_spawner_program(const char *program) {
          the spawner flag describe the fork path's hand-off only, so a caller
          that just needs the ownership answer - the respawn below - passes NULL
          for both instead of keeping a second copy of the table. */
-static bool match_target(const char *program, const char **tracer, bool *is_spawner) {
-  bool program_is_spawner = is_spawner_program(program);
-  if (strcmp(program, APP_PROCESS_NAME) != 0 && !program_is_spawner) return false;
+static bool match_target(pid_t pid, const char *program, const char **tracer, bool *is_spawner) {
+  bool matched_spawner = program_is_spawner(pid, program);
+  if (strcmp(program, APP_PROCESS_NAME) != 0 && !matched_spawner) return false;
 
   if (tracer != NULL) *tracer = "./bin/zygisk-ptrace" MONITOR_ABI;
-  if (is_spawner != NULL) *is_spawner = program_is_spawner;
+  if (is_spawner != NULL) *is_spawner = matched_spawner;
 
   return true;
 }
@@ -1020,7 +1066,7 @@ static void respawn_stale_targets(void) {
     if (!program_matches((int)pid_value, program, sizeof(program))) continue;
 
     bool is_spawner = false;
-    if (!match_target(program, NULL, &is_spawner)) continue;
+    if (!match_target((pid_t)pid_value, program, NULL, &is_spawner)) continue;
 
     /* INFO: The zygote and the spawner are init's own services, so both are
              direct children of pid 1 - which no app process ever is. */
@@ -1221,7 +1267,7 @@ static bool hand_over_on_exec(pid_t pid) {
   const char *tracer = NULL;
   bool is_spawner = false;
 
-  if (!match_target(program, &tracer, &is_spawner)) return false;
+  if (!match_target(pid, program, &tracer, &is_spawner)) return false;
 
   /* INFO: The crash-loop counter is about the zygote restarting. The spawner
            has its own lifecycle and execs on its own schedule, so counting

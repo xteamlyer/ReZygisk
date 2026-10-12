@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "zygisk_paths.h"
+#include "zn_control_protocol.h"
 
 #include <unistd.h>
 
@@ -22,13 +23,6 @@
          apart is the window that race needs; the retry only ever costs anything
          while the daemon is unreachable. */
 #define REZYGISKD_RETRY_DELAY_SPAWNER_US 1000000
-
-/* INFO: How long a Zygisk Next module id can be, which is the module directory
-         name the daemon resolves a library from. The bound is the daemon's, and
-         it is repeated here because the runtime sends the id back in a report: a
-         report the daemon cannot read whole ends the session it was sent on, so
-         an id that does not fit is refused here rather than sent. */
-#define MODULE_ID_MAX_LEN (256 + 1)
 
 /* INFO: Must stay in step with enum DaemonSocketAction on the daemon. */
 enum rezygiskd_actions {

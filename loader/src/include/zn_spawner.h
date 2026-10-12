@@ -38,6 +38,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "misc.h"
+
 #define ZN_SPAWNER_BASE_NAME "hyos_spawner"
 
 /* INFO: The image has to be one this process could execute, and the ABI is the
@@ -71,6 +73,28 @@ static inline bool zn_spawner_path_is_image(const char *path, size_t len) {
   if (path[len - base_len - 1] != '/') return false;
 
   return memcmp(path + len - base_len, kBase, base_len) == 0;
+}
+
+/* INFO: Whether a mapping's path names the spawner's image, with the
+         " (deleted)" suffix the kernel appends to a file that was replaced while
+         it was mapped dropped first: an OTA replaces the runtime image under a
+         running system, and the suffix is part of the name, so a plain
+         comparison would stop finding the runtime after one.
+
+         This is the name half of the answer and nothing more. The bytes behind
+         the mapping are the other half, and a caller that can read them asks
+         zn_spawner_elf_is_image for it - which is what the injector does, since
+         it is inside the process. A caller that cannot read them, like the
+         monitor looking at somebody else's maps, has only this one to go on.
+
+         The name is defined here once, and this is the only place that strips
+         the suffix: three readers used to spell the same comparison out and one
+         of them did not strip it at all, so a build whose runtime image had been
+         replaced stopped recognising itself. */
+static inline bool zn_spawner_map_is_spawner(const char *path) {
+  if (path == NULL) return false;
+
+  return zn_spawner_path_is_image(path, strip_deleted_suffix(path, strlen(path)));
 }
 
 /* INFO: Whether a mapping starts with the spawner's executable header.

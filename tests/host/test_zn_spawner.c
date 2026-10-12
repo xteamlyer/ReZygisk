@@ -50,6 +50,34 @@ static void check_path_predicate(void) {
   CHECK(!zn_spawner_path_is_image(NULL, 32), "a NULL path was accepted");
 }
 
+/* INFO: The other half of the same question, asked of a mapping's path: the
+         kernel appends " (deleted)" to a file that was replaced while it was
+         mapped, and an OTA does exactly that to the runtime image. Every reader
+         of a maps path has to drop it first, which is why the suffix handling
+         lives with the name and not with each reader. */
+static void check_mapping_path_predicate(void) {
+  static const struct {
+    const char *path;
+    bool want;
+  } cases[] = {
+    { "/system_ext/bin/hyos_spawner", true },
+    { "/system_ext/bin/hyos_spawner (deleted)", true },
+    { "/system_ext/bin/hyos_spawner.bak", false },
+    { "/system_ext/bin/xhyos_spawner", false },
+    { "/system_ext/bin/", false },
+    { "hyos_spawner", false },
+    { "", false },
+  };
+
+  for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+    bool got = zn_spawner_map_is_spawner(cases[i].path);
+
+    CHECK(got == cases[i].want, "\"%s\" answered %d, wanted %d", cases[i].path, got, cases[i].want);
+  }
+
+  CHECK(!zn_spawner_map_is_spawner(NULL), "a NULL path was accepted");
+}
+
 /* INFO: A header that is the spawner's image: an ELF for this ABI, executable,
          little endian. Only the fields the predicate reads are set. */
 static size_t make_image(unsigned char *buffer, size_t size) {
@@ -118,6 +146,7 @@ static void check_elf_predicate(void) {
 
 int main(void) {
   check_path_predicate();
+  check_mapping_path_predicate();
   check_elf_predicate();
 
   if (g_failures == 0) {

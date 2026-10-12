@@ -24,6 +24,7 @@
 #include <unistd.h>
 
 #include "check.h"
+#include "zn_control_protocol.h"
 #include "zn_spawner.h"
 
 #include "../../loader/src/injector/zn_hyos.c"
@@ -217,22 +218,69 @@ static void reset_fixture(void) {
 }
 
 static void check_predicates(void) {
-  printf("-- what identifies the runtime image\n");
-
-  CHECK(zn_hyos_mapping_path_is_spawner("/system_ext/bin/hyos_spawner", strlen("/system_ext/bin/hyos_spawner")),
-        "the spawner's own path was refused");
-  CHECK(zn_hyos_mapping_path_is_spawner("/system_ext/bin/hyos_spawner (deleted)",
-                                        strlen("/system_ext/bin/hyos_spawner (deleted)")),
-        "a replaced runtime image was refused");
-  CHECK(!zn_hyos_mapping_path_is_spawner("/system_ext/bin/hyos_spawner.bak", strlen("/system_ext/bin/hyos_spawner.bak")),
-        "a name that merely starts with the spawner's was accepted");
-  CHECK(!zn_hyos_mapping_path_is_spawner("hyos_spawner", strlen("hyos_spawner")),
-        "a bare file name was accepted as the runtime image");
-  CHECK(!zn_hyos_mapping_path_is_spawner(NULL, 12), "a NULL path was accepted");
+  printf("-- which modules the runtime will take\n");
 
   CHECK(zn_hyos_module_api_matches(ZYGISK_NEXT_HYOS_API_VERSION), "the runtime's own API version was refused");
   CHECK(!zn_hyos_module_api_matches(ZYGISK_NEXT_HYOS_API_VERSION - 1), "an older HYOS module was accepted");
   CHECK(!zn_hyos_module_api_matches(ZYGISK_NEXT_HYOS_API_VERSION + 1), "a newer HYOS module was accepted");
+}
+
+/* INFO: The record a report travels in is written by one half of this fork and
+         read by the other, and the two are not linked together anywhere the rest
+         of this suite can see. What is held still here is the shape they have to
+         agree on - the fields, their order, and the size - so that an edit to
+         zn_control_protocol.h that breaks the framing fails in a test rather
+         than on a device as a module that was never told anything.
+
+         The framing itself is exercised by hand, at the offsets both halves use:
+         an action byte, the header, the id. */
+static void check_report_record(void) {
+  printf("-- the report record\n");
+
+  CHECK(sizeof(struct zn_control_report_header) == 2 * sizeof(uint32_t),
+        "a report header is %zu bytes, wanted %zu",
+        sizeof(struct zn_control_report_header), 2 * sizeof(uint32_t));
+  CHECK(offsetof(struct zn_control_report_header, pid) == 0, "the reporting pid is not the first field");
+  CHECK(offsetof(struct zn_control_report_header, module_id_len) == sizeof(uint32_t),
+        "the module id length does not follow the pid");
+
+  CHECK(ZN_CONTROL_MODULE_ID_MAX == 257, "the module id bound is %d", ZN_CONTROL_MODULE_ID_MAX);
+  CHECK(zn_control_report_size(0) == sizeof(struct zn_control_report_header), "an empty report is not one header");
+  CHECK(zn_control_report_size(7) == sizeof(struct zn_control_report_header) + 7,
+        "a report's size does not follow its id");
+
+  const char *module_id = "com.example";
+  const uint32_t pid_written = 4242;
+  const struct zn_control_report_header header = {
+    .pid = pid_written,
+    .module_id_len = (uint32_t)strlen(module_id)
+  };
+
+  uint8_t record[sizeof(uint8_t) + sizeof(struct zn_control_report_header) + 16];
+  size_t at = 0;
+
+  record[at++] = (uint8_t)1;
+  memcpy(record + at, &header, sizeof(header));
+  at += sizeof(header);
+  memcpy(record + at, module_id, strlen(module_id));
+  at += strlen(module_id);
+
+  CHECK(at == sizeof(uint8_t) + zn_control_report_size(strlen(module_id)),
+        "the framed record is %zu bytes", at);
+
+  uint32_t pid_read = 0;
+  uint32_t len_read = 0;
+  size_t read_at = sizeof(uint8_t);
+
+  memcpy(&pid_read, record + read_at, sizeof(pid_read));
+  read_at += sizeof(pid_read);
+  memcpy(&len_read, record + read_at, sizeof(len_read));
+  read_at += sizeof(len_read);
+
+  CHECK(pid_read == pid_written, "the pid came back as %u", pid_read);
+  CHECK(len_read == strlen(module_id), "the id length came back as %u", len_read);
+  CHECK(read_at + len_read == at, "the reader and the writer disagree about where the record ends");
+  CHECK(memcmp(record + read_at, module_id, len_read) == 0, "the module id came back wrong");
 }
 
 static void check_initialize(void) {
@@ -461,6 +509,7 @@ static void check_specialization(void) {
 
 int main(void) {
   check_predicates();
+  check_report_record();
   check_initialize();
   check_registration_window();
   check_hooks();

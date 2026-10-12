@@ -149,7 +149,7 @@ static bool zn_hyos_visit_spawner(const struct map_entry *entry, void *userdata)
   struct zn_hyos_spawner_scan *scan = (struct zn_hyos_spawner_scan *)userdata;
 
   if (entry->offset != 0 || entry->dev == 0 || entry->inode == 0 || entry->path == NULL) return true;
-  if (!zn_hyos_mapping_path_is_spawner(entry->path, strlen(entry->path))) return true;
+  if (!zn_spawner_map_is_spawner(entry->path)) return true;
   if ((entry->perms & PROT_READ) == 0) return true;
   if (entry->end <= entry->start) return true;
   if (!zn_spawner_elf_is_image((const unsigned char *)entry->start, (size_t)(entry->end - entry->start))) return true;

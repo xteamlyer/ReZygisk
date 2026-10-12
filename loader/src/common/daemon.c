@@ -474,16 +474,24 @@ int rezygiskd_open_zn_control_session(void) {
          spawner opened and the fork passed down, and this call runs in the
          application, which has no way to open another once it is specialized.
 
-         The whole record goes out in one writev on purpose. Poll wakes the
-         daemon on the first byte, and three separate writes would let it read a
-         header whose payload has not arrived yet - which it answers by ending
-         the session. Under one call the kernel copies the record into the socket
-         buffer whole, and what the daemon reads is always a record or nothing. */
+         The whole record goes out in one sendmsg on purpose. Poll wakes the
+         daemon on the first byte, and separate writes would let it read a header
+         whose payload has not arrived yet - which it answers by ending the
+         session. Under one call the kernel copies the record into the socket
+         buffer whole, and what the daemon reads is always a record or nothing.
+
+         MSG_NOSIGNAL is the other half of that. The far end of this socket is
+         the daemon, and a daemon that has restarted - a soft reboot, a crash, a
+         replacement after a stale socket - is exactly when this write fails:
+         with SIGPIPE, whose default action would take down the application this
+         runs in, at the moment it is starting up. The flag is asked for per call
+         rather than by ignoring the signal for the whole process, because what
+         is written here is not worth changing how the target handles it. */
 bool rezygiskd_report_zn_runtime(int session_fd, const char *module_id) {
   if (session_fd < 0 || module_id == NULL) return false;
 
   const size_t id_len = strlen(module_id);
-  if (id_len == 0 || id_len >= MODULE_ID_MAX_LEN) {
+  if (id_len == 0 || id_len >= ZN_CONTROL_MODULE_ID_MAX) {
     LOGE("The Zygisk Next module id \"%s\" does not fit a report", module_id);
 
     return false;
@@ -494,18 +502,26 @@ bool rezygiskd_report_zn_runtime(int session_fd, const char *module_id) {
             without going through libc, which would leave that cache describing
             the process this one was forked from. */
   uint8_t action = (uint8_t)ReportZnRuntime;
-  uint32_t pid = (uint32_t)syscall(__NR_getpid);
-  size_t len = id_len;
+  struct zn_control_report_header header = {
+    .pid = (uint32_t)syscall(__NR_getpid),
+    .module_id_len = (uint32_t)id_len
+  };
 
-  struct iovec record[4] = {
+  struct iovec record[3] = {
     { .iov_base = &action, .iov_len = sizeof(action) },
-    { .iov_base = &pid,    .iov_len = sizeof(pid) },
-    { .iov_base = &len,    .iov_len = sizeof(len) },
+    { .iov_base = &header, .iov_len = sizeof(header) },
     { .iov_base = (void *)module_id, .iov_len = id_len }
   };
 
-  const ssize_t written = writev(session_fd, record, 4);
-  if (written != (ssize_t)(1 + sizeof(pid) + sizeof(len) + id_len)) {
+  struct msghdr message;
+  memset(&message, 0, sizeof(message));
+  message.msg_iov = record;
+  message.msg_iovlen = 3;
+
+  const size_t total = sizeof(action) + zn_control_report_size(id_len);
+  const ssize_t written = sendmsg(session_fd, &message, MSG_NOSIGNAL);
+
+  if (written != (ssize_t)total) {
     PLOGE("writing a Zygisk Next module report");
 
     return false;

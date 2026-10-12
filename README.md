@@ -128,6 +128,7 @@ VexZygisk speaks the Zygisk Next API, so modules written against it — recent L
 - Modules are listed through `zn_modules.txt`, with per-target resolution and optional companions. A companion is forked from the daemon so it keeps the daemon's privileged SELinux domain instead of the restricted domain of the process that loaded the module.
 - Module libraries are handed over as memfds rather than descriptors of the files themselves, so an unprivileged target can load them without touching the module files' own mode and SELinux label.
 - Zygisk and Zygisk Next modules are served side by side: a module may ship both a `zygisk/<arch>.so` and a `zn_modules.txt` (LSPosed does), and each is handled by its own path without excluding the other.
+- Modules are served the Zygisk Next API as it stands: one declaring version 3 or 4 loads, and one declaring anything else is refused rather than handed a table whose fields have moved since it was built.
 
 ## Dependencies
 
@@ -205,7 +206,8 @@ This repository stands on other projects' work; the credits below map the
 pieces to their sources.
 
 * [ReZygisk](https://github.com/PerformanC/ReZygisk): The base project this repository forks and rewrites in C
-* [NyaZygisk](https://github.com/HSSkyBoy/NyaZygisk): The HyperOS Runtime support (hyos_spawner interception, the runtime table, the fork and SELinux hooks that deliver `onAppSpecialized`) and the Zygisk Next fixes ported from here — symbol lookup confined to the library's own tables, `pltHook` backup semantics, the monitor's spawner handling and the upgrade-time `module.prop` guard
+* [NyaZygisk](https://github.com/HSSkyBoy/NyaZygisk): Where this fork's Zygisk Next path was first ported from. Most of what came over — the HyperOS runtime above all — has since been rewritten against the contract Zygisk Next declares, so what is still recognisably its shape is the LSPlt bridge and the module loader
+* [YukiZygisk](https://github.com/Rouyashiki/YukiZygisk): The reference implementation of the Zygisk Next contract this fork follows — the HyperOS runtime (how the spawner is found, the fork and `selinux_android_setcontext` hooks that deliver `onAppSpecialized`, and the control session a report travels back over), the `zn_modules.txt` reader and the module API gate
 * [ZygiskNext](https://github.com/Dr-TSNG/ZygiskNext): The original Zygisk Next module architecture and the API VexZygisk speaks
 * [ZygiskNextNext](https://github.com/VeryBaaad/ZygiskNextNext): Reference implementation for the standalone Zygisk Next API
 * [Magisk](https://github.com/topjohnwu/Magisk): The foundation of modern Android root and Zygisk itself

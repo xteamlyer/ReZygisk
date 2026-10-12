@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #include "constants.h"
+#include "zn_control_protocol.h"
 #include "zygisk_paths.h"
 #include "zn_targets.h"
 #include "root_impl/common.h"
@@ -1784,17 +1785,14 @@ static void handle_remove_module(struct Client *client) {
          but the ability to say that a module was told about a specialization,
          and every process that can reach this socket already runs as root. */
 static void handle_open_zn_control_session(struct Client *client) {
-  ssize_t ret = write_uint8_t(client->fd, 1);
-  if (ret != (ssize_t)sizeof(uint8_t)) {
-    LOGE("Failed confirming a Zygisk Next control session.");
-
-    return;
-  }
-
   struct Context *context = client->context;
 
   int *grown = realloc(context->zn_sessions, (context->zn_sessions_len + 1) * sizeof(int));
   if (grown == NULL) {
+    /* INFO: Nothing is confirmed and the connection is left to be closed: a
+              session the loop is not watching is worse than no session, because
+              the process that asked for it would keep writing records nobody
+              reads until one of them no longer fit the socket. */
     LOGE("Failed growing the Zygisk Next control session list.");
 
     return;
@@ -1814,6 +1812,21 @@ static void handle_open_zn_control_session(struct Client *client) {
 
   /* INFO: The loop closes every accepted connection it is not told to keep. */
   client->keep_open = true;
+
+  /* INFO: Confirmed last, and only once there is a session to confirm: the
+            answer is what tells the caller this descriptor is worth keeping, and
+            one sent before the list held it would be a promise this side cannot
+            keep. A failure here is taken back out of the list and left to the
+            loop to close - one close for one descriptor. */
+  ssize_t ret = write_uint8_t(client->fd, 1);
+  if (ret != (ssize_t)sizeof(uint8_t)) {
+    LOGE("Failed confirming a Zygisk Next control session.");
+
+    context->zn_sessions_len--;
+    client->keep_open = false;
+
+    return;
+  }
 
   LOGI("Opened a Zygisk Next control session (%zu open)", context->zn_sessions_len);
 }
@@ -1872,15 +1885,35 @@ static bool serve_zn_session(struct Context *restrict context, size_t index) {
     return false;
   }
 
-  /* INFO: The pid is the one the reporter sent rather than the peer credential
+  /* INFO: The record is read field for field, and the fields are the two that
+            zn_control_protocol.h declares - the one place that says what shape a
+            writer sends and a reader expects. Reading it as a structure would
+            work right up until one side's compiler laid it out differently.
+
+            The pid is the one the reporter sent rather than the peer credential
             of this socket: the session was opened by the spawner, so the peer is
             the spawner for every report its children make, and a line that named
             it would name the wrong process. */
   uint32_t pid = 0;
-  if (read_uint32_t(fd, &pid) == -1) return false;
+  uint32_t id_len = 0;
 
-  char module_id[MODULE_ID_MAX_LEN];
-  if (read_string(fd, module_id, sizeof(module_id)) <= 0) return false;
+  if (read_uint32_t(fd, &pid) == -1) return false;
+  if (read_uint32_t(fd, &id_len) == -1) return false;
+
+  /* INFO: A report that names no process is not a report, and neither is one
+            whose length cannot be a module id - both mean this stream is no
+            longer where this build thinks it is, and the next record would be
+            read at the wrong offset. */
+  if (pid == 0 || id_len == 0 || id_len >= ZN_CONTROL_MODULE_ID_MAX) {
+    LOGW("Malformed record on a Zygisk Next control session (pid %u, id length %u), ending it", pid, id_len);
+
+    return false;
+  }
+
+  char module_id[ZN_CONTROL_MODULE_ID_MAX];
+  if (read_loop(fd, module_id, id_len) != (ssize_t)id_len) return false;
+
+  module_id[id_len] = '\0';
 
   LOGI("HyperOS runtime: module \"%s\" was told about the specialization of pid %u", module_id, pid);
 
