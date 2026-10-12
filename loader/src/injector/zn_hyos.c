@@ -124,7 +124,7 @@ static bool zn_hyos_child_dispatched = false;
          still wants the answers that are about being one - the cached commit
          below all - while a child that is told is the one `child_ready`
          describes. */
-static bool zn_hyos_in_child = false;
+static bool zn_hyos_is_child = false;
 
 static char zn_hyos_process_name[ZN_HYOS_VALUE_MAX];
 static char zn_hyos_package_name[ZN_HYOS_VALUE_MAX];
@@ -403,7 +403,7 @@ static pid_t zn_hyos_replacement_fork(void) {
     if (zn_hyos_child_session_fd >= 0) close(zn_hyos_child_session_fd);
 
     zn_hyos_child_session_fd = session;
-    zn_hyos_in_child = true;
+    zn_hyos_is_child = true;
     zn_hyos_reset_child_state(session >= 0);
   } else if (session >= 0) {
     /* INFO: The parent keeps no session: it belongs to the child that was just
@@ -439,7 +439,7 @@ int zn_hyos_child_session(void) {
 }
 
 bool zn_hyos_in_child(void) {
-  return zn_hyos_in_child;
+  return zn_hyos_is_child;
 }
 
 /* INFO: Puts the hooks back the way they were found. Both are registered again
