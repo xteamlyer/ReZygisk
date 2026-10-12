@@ -326,6 +326,11 @@ static void check_initialize(void) {
   CHECK(zn_hyos_runtime()->type == ZN_RUNTIME_HYOS, "the runtime was handed out with the wrong type");
   CHECK(zn_hyos_runtime()->api_version == ZYGISK_NEXT_HYOS_API_VERSION, "the runtime was handed out with the wrong version");
   CHECK(zn_hyos_child_session() < 0, "a session appeared before any fork");
+
+  /* INFO: Being an application is a separate question from having a session,
+            and it is the one the cached commit is picked on. Nothing here has
+            been forked, so the answer is no. */
+  CHECK(!zn_hyos_in_child(), "a process was taken for an application before any fork");
 }
 
 static void check_registration_window(void) {

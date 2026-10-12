@@ -165,7 +165,7 @@ make ROOT_IMPL=apatch release  # explicit form
 * [KernelSU](https://github.com/tiann/KernelSU)：KernelSU 版所通信的内核接口
 * [APatch](https://github.com/bmax121/APatch)：APatch 版一并管理的内核补丁
 * [Dobby](https://github.com/LSPosed/Dobby)：ZN `inlineHook` API 背后的进程内代码 hook 引擎
-* [LSPlt](https://github.com/JingMatrix/LSPlt)：ZN `pltHook` API 背后的 PLT Hook 库
+* [LSPlt](https://github.com/Anatdx/LSPlt)：ZN `pltHook` API 背后的 PLT Hook 库，与 YukiZygisk 使用的是同一个
 * [PLTI](https://github.com/PerformanC/PLTI)：注入器自身使用的 PLT Hook
 * [CSOLoader](https://github.com/ThePedroo/CSOLoader)：映射标准 Zygisk 模块的自定义 ELF 加载器
 * [xz-embedded](https://tukaani.org/xz/embedded.html)：用于 `.gnu_debugdata` 的公有领域 XZ 解压器

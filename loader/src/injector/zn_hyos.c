@@ -117,6 +117,15 @@ static zn_hyos_setcontext_fn zn_hyos_original_setcontext = NULL;
 static int zn_hyos_child_session_fd = -1;
 static bool zn_hyos_child_ready = false;
 static bool zn_hyos_child_dispatched = false;
+
+/* INFO: Whether this process was forked by the spawner, whatever became of the
+         session it was handed. The two are separate questions on purpose: a
+         child whose session could not be opened is still an application, and
+         still wants the answers that are about being one - the cached commit
+         below all - while a child that is told is the one `child_ready`
+         describes. */
+static bool zn_hyos_in_child = false;
+
 static char zn_hyos_process_name[ZN_HYOS_VALUE_MAX];
 static char zn_hyos_package_name[ZN_HYOS_VALUE_MAX];
 static char zn_hyos_se_info[ZN_HYOS_VALUE_MAX];
@@ -394,6 +403,7 @@ static pid_t zn_hyos_replacement_fork(void) {
     if (zn_hyos_child_session_fd >= 0) close(zn_hyos_child_session_fd);
 
     zn_hyos_child_session_fd = session;
+    zn_hyos_in_child = true;
     zn_hyos_reset_child_state(session >= 0);
   } else if (session >= 0) {
     /* INFO: The parent keeps no session: it belongs to the child that was just
@@ -426,6 +436,10 @@ static int zn_hyos_replacement_setcontext(uid_t uid, int is_system_server, const
 
 int zn_hyos_child_session(void) {
   return zn_hyos_child_session_fd;
+}
+
+bool zn_hyos_in_child(void) {
+  return zn_hyos_in_child;
 }
 
 /* INFO: Puts the hooks back the way they were found. Both are registered again

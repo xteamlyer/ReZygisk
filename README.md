@@ -215,7 +215,7 @@ pieces to their sources.
 * [KernelSU](https://github.com/tiann/KernelSU): The kernel interface the KernelSU flavour talks to
 * [APatch](https://github.com/bmax121/APatch): The kernel patch that the APatch flavour manages alongside
 * [Dobby](https://github.com/LSPosed/Dobby): In-process code hooking engine behind the ZN `inlineHook` API
-* [LSPlt](https://github.com/JingMatrix/LSPlt): PLT hooking library behind the ZN `pltHook` API
+* [LSPlt](https://github.com/Anatdx/LSPlt): PLT hooking library behind the ZN `pltHook` API, the same one YukiZygisk vendors
 * [PLTI](https://github.com/PerformanC/PLTI): PLT hooking used by the injector itself
 * [CSOLoader](https://github.com/ThePedroo/CSOLoader): The custom ELF loader that maps standard Zygisk modules
 * [xz-embedded](https://tukaani.org/xz/embedded.html): Public-domain XZ decompressor for `.gnu_debugdata`

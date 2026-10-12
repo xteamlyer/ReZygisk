@@ -23,3 +23,11 @@ extern "C" int zn_lsplt_commit_hook(void) {
     return -1;
   }
 }
+
+extern "C" int zn_lsplt_commit_hook_cached(void) {
+  try {
+    return lsplt::CommitHookCached() ? 0 : -1;
+  } catch (...) {
+    return -1;
+  }
+}

@@ -79,6 +79,16 @@ bool zn_hyos_install_hooks(void);
          what the fork opened on its behalf. */
 int zn_hyos_child_session(void);
 
+/* INFO: Whether this process was forked by the spawner - the application side
+         of the runtime, whether or not its session came up.
+
+         It is asked where the answer changes what is right rather than what is
+         possible: an application inherits the spawner's memory, the map
+         snapshot LSPlt took when it installed the runtime's own hooks included,
+         so it can commit against that snapshot instead of reading
+         /proc/self/maps again. See zn_lsplt.h. */
+bool zn_hyos_in_child(void);
+
 /* INFO: Tells the runtime which module is being loaded, so a registration made
          from inside that module's onModuleLoaded can be attributed to it. The
          string is not copied: the caller keeps it alive for the life of the

@@ -1,5 +1,8 @@
+#include <dirent.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -15,16 +18,27 @@
 #include "zn_hyos.h"
 #include "zn_loader.h"
 
-/* INFO: LSPlt identifies libraries by file identity (device + inode) while the ZN
-          API hands us a base address, so the owning mapping is looked up in the
-          process maps.
+/* INFO: The library a base address belongs to, as LSPlt identifies one.
+
+          The ZN API hands out a base address while LSPlt keys a library on its
+          file identity (device + inode), so the owning mapping is looked up in
+          the process maps and resolved to the mapping at offset zero.
+
+          A zero base names no library. The reference reads that as this
+          process's own executable - a module asking to hook its own PLT is
+          asking a sensible question - so that is the answer here too.
+
+          The path and the load base come back as well when the caller wants
+          them: the symbol resolver has to read the file a mapping names rather
+          than the name it was given, and the load base is where the image
+          starts with no bias folded in.
 
           The scan is redone per call, which is what the reference does and what
           keeps the answer honest: a cached identity goes stale the moment a
           library is unloaded and another one is mapped where it was, and a
           pltHook then lands on the wrong file. Nothing here is shared between
           threads either, so no lock is needed. */
-static bool get_lib_location_by_base(uintptr_t base_addr, dev_t *dev, ino_t *inode) {
+static bool zn_map_for_base(uintptr_t base_addr, dev_t *dev, ino_t *inode, char **out_path, void **out_load_base) {
   struct maps_info *maps = parse_maps_safe("self");
   if (maps == NULL) {
     LOGE("Failed to scan maps for the library at %p", (void *)base_addr);
@@ -32,40 +46,77 @@ static bool get_lib_location_by_base(uintptr_t base_addr, dev_t *dev, ino_t *ino
     return false;
   }
 
-  /* INFO: The module may pass the load base, the load bias or any address
-            inside the library, so the owning mapping is found first and its
-            file identity is then resolved to the mapping at offset zero,
-            which is what LSPlt keys on. */
+  char exe[PATH_MAX] = { 0 };
+  size_t exe_len = 0;
+
+  if (base_addr == 0) {
+    const ssize_t got = read_exe_path((int)getpid(), exe, sizeof(exe));
+
+    if (got <= 0) {
+      LOGE("Failed to resolve this process's own executable");
+
+      free_maps(maps);
+
+      return false;
+    }
+
+    exe_len = (size_t)got;
+  }
+
   bool found = false;
-  for (size_t i = 0; i < maps->length; i++) {
+
+  for (size_t i = 0; i < maps->length && !found; i++) {
     struct map_entry *entry = &maps->maps[i];
 
     if (entry->inode == 0 || entry->path == NULL) continue;
 
-    uintptr_t load_base = entry->start - entry->offset;
-    bool inside = (base_addr >= entry->start && base_addr < entry->end) ||
-                  base_addr == entry->start || base_addr == load_base;
-    if (!inside) continue;
+    if (base_addr == 0) {
+      const size_t path_len = strip_deleted_suffix(entry->path, strlen(entry->path));
 
+      if (entry->offset != 0 || path_len != exe_len || memcmp(entry->path, exe, exe_len) != 0) continue;
+    } else {
+      /* INFO: The module may pass the load base, the load bias or any address
+                inside the library, so all three are accepted here. */
+      const uintptr_t load_base = entry->start - entry->offset;
+      const bool inside = (base_addr >= entry->start && base_addr < entry->end) ||
+                          base_addr == entry->start || base_addr == load_base;
+
+      if (!inside) continue;
+    }
+
+    /* INFO: Any address inside the library names it, but the identity LSPlt
+              wants is the image's own: the mapping at offset zero. */
     for (size_t j = 0; j < maps->length; j++) {
       struct map_entry *head = &maps->maps[j];
 
-      if (head->dev == entry->dev && head->inode == entry->inode && head->offset == 0) {
-        *dev = head->dev;
-        *inode = head->inode;
-        found = true;
+      if (head->dev != entry->dev || head->inode != entry->inode || head->offset != 0) continue;
+
+      entry = head;
+
+      break;
+    }
+
+    if (dev != NULL) *dev = entry->dev;
+    if (inode != NULL) *inode = entry->inode;
+    if (out_load_base != NULL) *out_load_base = (void *)(entry->start - entry->offset);
+
+    if (out_path != NULL) {
+      char *copy = strdup(entry->path);
+
+      if (copy == NULL) {
+        LOGE("Failed to copy the path of the library at %p", (void *)base_addr);
 
         break;
       }
+
+      /* INFO: A mapping of a file that was replaced while it was mapped
+                carries the suffix the kernel appends; the path a caller can
+                open is the one without it. */
+      copy[strip_deleted_suffix(copy, strlen(copy))] = '\0';
+      *out_path = copy;
     }
 
-    if (!found) {
-      *dev = entry->dev;
-      *inode = entry->inode;
-      found = true;
-    }
-
-    break;
+    found = true;
   }
 
   free_maps(maps);
@@ -79,40 +130,95 @@ static bool get_lib_location_by_base(uintptr_t base_addr, dev_t *dev, ino_t *ino
   return true;
 }
 
+/* INFO: Whether a mapping's path is the library a caller named.
+
+          The contract lets a resolver be named by bare soname ("libc.so") as
+          well as by path, and the reference accepts three spellings of one
+          answer: the map path in full, its last component, and - for anything
+          that is not itself an absolute path - the end of it. The kernel
+          appends " (deleted)" to a file that was replaced while it was mapped,
+          so the map side is compared cleaned. */
+static bool zn_path_matches_map(const char *want, const char *map_path) {
+  if (want == NULL || want[0] == '\0' || map_path == NULL) return false;
+
+  const size_t want_len = strlen(want);
+  const size_t map_len = strip_deleted_suffix(map_path, strlen(map_path));
+
+  if (map_len == want_len && memcmp(map_path, want, want_len) == 0) return true;
+
+  size_t base_at = 0;
+
+  for (size_t i = 0; i < map_len; i++) {
+    if (map_path[i] == '/') base_at = i + 1;
+  }
+
+  if (map_len - base_at == want_len && memcmp(map_path + base_at, want, want_len) == 0) return true;
+
+  if (want[0] == '/') return false;
+
+  return map_len > want_len && memcmp(map_path + map_len - want_len, want, want_len) == 0;
+}
+
+/* INFO: The path of the library a caller named, taken from the mappings rather
+          than from the string it passed. A soname is what a caller usually has
+          and a path is what has to be read, and the mapping is where one
+          becomes the other. */
+static char *zn_mapped_lib_path(const char *want) {
+  struct maps_info *maps = parse_maps_safe("self");
+  if (maps == NULL) return NULL;
+
+  char *found = NULL;
+
+  for (size_t i = 0; i < maps->length && found == NULL; i++) {
+    struct map_entry *entry = &maps->maps[i];
+
+    /* INFO: [heap], [stack] and the anonymous mappings are not files, and the
+              image has to be the one the library starts at. */
+    if (entry->inode == 0 || entry->offset != 0 || entry->path == NULL) continue;
+    if (entry->path[0] == '[') continue;
+    if (!zn_path_matches_map(want, entry->path)) continue;
+
+    found = strdup(entry->path);
+  }
+
+  free_maps(maps);
+
+  return found;
+}
+
 static int zn_plt_hook(void *base_addr, const char *symbol, void *hook_handler, void **original) {
-  if (base_addr == NULL || symbol == NULL || hook_handler == NULL) return ZN_FAILED;
+  if (symbol == NULL || hook_handler == NULL) return ZN_FAILED;
 
   dev_t dev = 0;
   ino_t inode = 0;
-  if (!get_lib_location_by_base((uintptr_t)base_addr, &dev, &inode)) return ZN_FAILED;
+  if (!zn_map_for_base((uintptr_t)base_addr, &dev, &inode, NULL, NULL)) return ZN_FAILED;
 
   /* INFO: LSPlt implements the ZN unhook contract natively: registering the
              backup of a previous call back as the handler restores the GOT
-             entries and cleans up. */
-  void *backup = NULL;
-  if (zn_lsplt_register_hook(dev, inode, symbol, hook_handler, &backup) != 0) {
+             entries and cleans up.
+
+             `original` is handed straight through and may be NULL. A symbol the
+             image does not import is left untouched and the call still
+             succeeds - that is the answer the reference gives, and this fork
+             used to turn it into a failure, which a module could tell apart
+             from the same call made there. */
+  if (zn_lsplt_register_hook(dev, inode, symbol, hook_handler, original) != 0) {
     LOGE("Failed registering the PLT hook for %s", symbol);
 
     return ZN_FAILED;
   }
 
-  if (zn_lsplt_commit_hook() != 0) {
+  /* INFO: An application the spawner forked inherits the map snapshot the
+             spawner's own commit took, so it commits against that snapshot
+             instead of reading /proc/self/maps again - which is the form the
+             reference picks on that side, and the reason the cached entry point
+             exists at all. */
+  const int committed = zn_hyos_in_child() ? zn_lsplt_commit_hook_cached() : zn_lsplt_commit_hook();
+  if (committed != 0) {
     LOGE("Failed committing the PLT hook for %s", symbol);
 
     return ZN_FAILED;
   }
-
-  /* INFO: A NULL backup means LSPlt never replaced an entry for this symbol.
-           The previous code still reported success and handed the module a
-           NULL original, which a module that trusts the return value would
-           then call. Fail instead, before *original is touched. */
-  if (backup == NULL) {
-    LOGE("No PLT entry was replaced for %s", symbol);
-
-    return ZN_FAILED;
-  }
-
-  if (original != NULL) *original = backup;
 
   return ZN_SUCCESS;
 }
@@ -121,17 +227,67 @@ static int zn_plt_hook(void *base_addr, const char *symbol, void *hook_handler, 
          the hooked addresses are remembered: a second request for one of them
          is rejected instead of piling a second trampoline on top. The table
          itself is unbounded on purpose - a module that hooks many addresses is
-         not refused at an arbitrary cap; it only fails when memory does. */
+         not refused at an arbitrary cap; it only fails when memory does.
+
+         What counts as "one address" is the window a hook rewrites, not the
+         address itself: two targets a few bytes apart are one hook. The
+         reference measures that window as the length of the patch it plants, so
+         the same constant is used for it here. */
+#if defined(__aarch64__)
+#define ZN_INLINE_HOOK_PATCH_SIZE 8
+#else
+#define ZN_INLINE_HOOK_PATCH_SIZE 10
+#endif
+
 static pthread_mutex_t zn_hooked_lock = PTHREAD_MUTEX_INITIALIZER;
 static uintptr_t *zn_hooked = NULL;
 static size_t zn_hooked_count = 0;
 static size_t zn_hooked_capacity = 0;
 
-static bool zn_is_hooked(uintptr_t address) {
-  for (size_t i = 0; i < zn_hooked_count; i++)
-    if (zn_hooked[i] == address) return true;
+/* INFO: A range that cannot be reasoned about at all answers true, which is
+         "treat it as an overlap" rather than "no overlap". */
+static bool zn_ranges_overlap(uintptr_t first, size_t first_size, uintptr_t second, size_t second_size) {
+  if (first_size == 0 || second_size == 0 ||
+      first > UINTPTR_MAX - first_size || second > UINTPTR_MAX - second_size) {
+    return true;
+  }
 
-  return false;
+  return first < second + second_size && second < first + first_size;
+}
+
+/* INFO: Whether this process has a single thread to its name.
+
+         The reference refuses an inline hook anywhere else, because its engine
+         rewrites the instruction stream while other threads may still be
+         executing it. Dobby stops the other threads itself, so the engine here
+         does not need the gate - but the refusal is something a module can see,
+         and the same call has to answer the same way on either implementation,
+         so it is kept rather than dropped. */
+static bool zn_process_is_single_threaded(void) {
+  DIR *tasks = opendir("/proc/self/task");
+  if (tasks == NULL) return false;
+
+  unsigned int count = 0;
+  struct dirent *entry;
+
+  while ((entry = readdir(tasks)) != NULL) {
+    if (entry->d_name[0] < '0' || entry->d_name[0] > '9') continue;
+    if (++count > 1) break;
+  }
+
+  closedir(tasks);
+
+  return count == 1;
+}
+
+static bool zn_window_is_free(uintptr_t address) {
+  for (size_t i = 0; i < zn_hooked_count; i++) {
+    if (zn_ranges_overlap(address, ZN_INLINE_HOOK_PATCH_SIZE, zn_hooked[i], ZN_INLINE_HOOK_PATCH_SIZE)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 static void zn_forget_hooked(uintptr_t address) {
@@ -150,7 +306,7 @@ static void zn_forget_hooked(uintptr_t address) {
 static int zn_claim_address(uintptr_t address) {
   pthread_mutex_lock(&zn_hooked_lock);
 
-  if (zn_is_hooked(address)) {
+  if (!zn_window_is_free(address)) {
     pthread_mutex_unlock(&zn_hooked_lock);
 
     LOGW("The address %p already carries an inline hook, rejecting the new one", (void *)address);
@@ -185,6 +341,12 @@ static int zn_claim_address(uintptr_t address) {
 static int zn_inline_hook(void *target, void *addr, void **original) {
   if (target == NULL || addr == NULL) return ZN_FAILED;
 
+  if (!zn_process_is_single_threaded()) {
+    LOGE("Refusing the inline hook on %p: this process has more than one thread", target);
+
+    return ZN_FAILED;
+  }
+
   if (zn_claim_address((uintptr_t)target) != ZN_SUCCESS) return ZN_FAILED;
 
   dobby_dummy_func_t backup = NULL;
@@ -205,6 +367,12 @@ static int zn_inline_hook(void *target, void *addr, void **original) {
 
 static int zn_inline_unhook(void *target) {
   if (target == NULL) return ZN_FAILED;
+
+  if (!zn_process_is_single_threaded()) {
+    LOGE("Refusing to unhook %p: this process has more than one thread", target);
+
+    return ZN_FAILED;
+  }
 
   if (DobbyDestroy(target) != 0) {
     LOGE("Failed removing the inline hook on %p", target);
@@ -331,57 +499,58 @@ static void zn_for_each_symbols(struct ZnSymbolResolver *resolver, bool (*callba
   free(seen);
 }
 
-/* INFO: The contract lets a resolver be requested by bare file name ("libc.so"
-         instead of "/apex/.../libc.so"). The ELF reader opens the file itself,
-         so a name without a directory is resolved against the libraries
-         actually mapped in this process first. */
-static char *get_lib_path_by_name(const char *name) {
-  struct maps_info *maps = parse_maps_safe("self");
-  if (maps == NULL) return NULL;
+/* INFO: The resolver the contract asks for, built the way the reference builds
+         one.
 
+         The library has to be one this process has mapped, and the mapping is
+         what supplies both the load base and the path the image is read from: a
+         caller may name the library by soname, and the mapping is what that name
+         resolved to. A library that is not mapped has no load base to hand back
+         and no symbols to resolve, so the answer is a null resolver - which is
+         also the answer the reference gives.
+
+         A base address is tried first and the name second, in that order and
+         for the same reason the reference does it: when the caller already knows
+         where the library is, nothing about the name can change the answer, and
+         only a base that names nothing falls back to it.
+
+         Symbols are read here rather than on the first lookup, so a library
+         whose symbols cannot be read is refused while the caller can still see
+         why. */
+static struct ZnSymbolResolver *zn_new_symbol_resolver(const char *path, void *base_addr) {
   char *lib_path = NULL;
-  for (size_t i = 0; i < maps->length; i++) {
-    struct map_entry *entry = &maps->maps[i];
-    if (entry->path == NULL || entry->offset != 0) continue;
+  void *load_base = NULL;
 
-    /* INFO: [heap], [stack] and the anon mappings are not files. Handing one
-              back as a path would only produce an open() that fails. */
-    if (entry->path[0] == '[') continue;
-
-    const char *base = strrchr(entry->path, '/');
-    base = base == NULL ? entry->path : base + 1;
-
-    if (strcmp(base, name) != 0) continue;
-
-    lib_path = strdup(entry->path);
-
-    break;
+  if (base_addr != NULL) {
+    (void)zn_map_for_base((uintptr_t)base_addr, NULL, NULL, &lib_path, &load_base);
   }
 
-  free_maps(maps);
+  if (lib_path == NULL) {
+    if (path == NULL) return NULL;
 
-  return lib_path;
-}
+    lib_path = zn_mapped_lib_path(path);
+    if (lib_path == NULL) {
+      LOGE("No library named \"%s\" is mapped in this process", path);
 
-static struct ZnSymbolResolver *zn_new_symbol_resolver(const char *path, void *base_addr) {
-  if (path == NULL) return NULL;
+      return NULL;
+    }
 
-  /* INFO: The path is tried as given first, exactly as the reference does. A
-            bare soname is only resolved against the loaded mappings when it
-            does not open - a caller that passes a real path that happens to
-            resolve should get that file, not whatever the maps hold under the
-            same name. */
-  struct ZnSymbolResolver *resolver = (struct ZnSymbolResolver *)ElfImg_create(path, base_addr);
-  if (resolver != NULL) return resolver;
+    load_base = NULL;
+  }
 
-  if (strchr(path, '/') != NULL) return NULL;
+  struct ZnSymbolResolver *resolver = (struct ZnSymbolResolver *)ElfImg_create(lib_path, load_base);
 
-  char *resolved = get_lib_path_by_name(path);
-  if (resolved == NULL) return NULL;
+  free(lib_path);
 
-  resolver = (struct ZnSymbolResolver *)ElfImg_create(resolved, base_addr);
+  if (resolver == NULL) return NULL;
 
-  free(resolved);
+  if (!ElfImg_load_symbols((ElfImg *)resolver)) {
+    LOGE("Failed to read the symbols of the resolver's library");
+
+    ElfImg_destroy((ElfImg *)resolver);
+
+    return NULL;
+  }
 
   return resolver;
 }
