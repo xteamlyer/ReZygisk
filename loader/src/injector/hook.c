@@ -35,6 +35,29 @@
 
 void *start_addr = NULL;
 size_t block_size = 0;
+void *injector_handle = NULL;
+
+/* INFO: dlclose, reached through the exact type of the hook that calls it.
+
+         The teardown has to leave this library with a jump and not a call: a
+         call's return would land on an instruction in a library that is gone by
+         the time it runs, which is the whole reason the reference
+         implementation wraps its own unmap in musttail. clang allows that only
+         between functions whose signatures agree - the same number of
+         parameters and the same types, which is what the two errors that
+         produced this line said in turn - and the hook around it takes the
+         (void *, size_t) of the function it replaces. dlclose takes one
+         parameter, so nothing about it matches on its own: the reference never
+         met this because munmap happens to take two, of a matching kind.
+
+         So the call goes through this, and on AArch64 the argument dlclose does
+         not declare is a register it never reads. What the cast buys is the
+         jump; the pragma is only there because the conversion is the point of
+         the line and a build does not need to be told so on every file. */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wcast-function-type-mismatch"
+static int (*const injector_close)(void *handle, size_t unused) = (int (*)(void *, size_t))dlclose;
+#pragma clang diagnostic pop
 
 /* INFO: Flag indices */
 enum {
@@ -354,14 +377,16 @@ static void unhook_functions(void);
            process was never meant to name stop naming anything, before there is
            an application around to look.
 
-         The library itself stays mapped, as an anonymous copy of itself. The
-           target's linker loaded it, so the linker holds a module entry for it,
-           and unmapping the block left that entry describing memory that is no
-           longer there - which is how a detector walking the module list ended
-           up reading a header that had been unmapped underneath it and taking
-           the application down with it. A copy at the same address keeps every
-           pointer the linker holds valid, and the name is gone from the maps
-           listing all the same. */
+         The library is closed here rather than unmapped, and the difference is
+           the whole of what the process keeps. Unmapping the block by hand is
+           what an earlier design did, and it left the linker holding a module
+           entry for memory that was gone: a detector walking that list read a
+           header that had been unmapped under it and took the application down,
+           which is why the block was then kept as an anonymous copy of itself
+           instead. Closing the handle takes the entry and the mapping out
+           together, so neither problem exists to be worked around - and an
+           application that has loaded nothing of ours has nothing of ours to
+           find. */
 DCL_HOOK_FUNC(int, pthread_attr_setstacksize, void *target, size_t size) {
   int res = old_pthread_attr_setstacksize((pthread_attr_t *)target, size);
   LOGV("Call pthread_attr_setstacksize in [tid, pid]: %d, %d", gettid(), getpid());
@@ -413,7 +438,40 @@ DCL_HOOK_FUNC(int, pthread_attr_setstacksize, void *target, size_t size) {
       LOGW("Failed to hide the module mappings");
     }
 
-    LOGD("kept libzygisk.so mapped at %p with size %zu", start_addr, block_size);
+    /* INFO: And then the library itself goes, which is the one thing that pass
+               cannot do for it: a name that has been replaced is still a
+               mapping, and a mapping is what a scan reads.
+
+               Closing the handle is the consequence of how the injection is
+               done. The target's own linker loaded this library (ptracer.c), so
+               the loader is in that linker's module list, and unmapping the
+               block under it is what used to take an application down. dlclose
+               removes the entry and the mapping in one step.
+
+               It runs after the pass above on purpose, so a linker that
+               declines to unload - bionic returns without unloading when the
+               library has handed out a TLS block - leaves the process in the
+               state every earlier release shipped: hidden, not gone. That is
+               the floor, and it is why trying costs nothing.
+
+               musttail, for the reason the reference implementation needs it
+               for its own unmap: the return would otherwise be an instruction
+               in a library that no longer exists by the time dlclose comes
+               back. Jumping out of the frame means libart - the caller of
+               pthread_attr_setstacksize - resumes instead.
+
+               It goes through injector_close rather than calling dlclose
+               directly, because a musttail cannot change arity; the note on
+               that pointer says the rest. */
+    if (injector_handle == NULL) {
+      LOGD("kept libzygisk.so mapped at %p with size %zu (no handle to close)", start_addr, block_size);
+
+      return res;
+    }
+
+    LOGD("closing libzygisk.so at %p with size %zu", start_addr, block_size);
+
+    [[clang::musttail]] return injector_close(injector_handle, 0);
   }
 
   return res;

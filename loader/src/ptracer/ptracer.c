@@ -82,12 +82,13 @@ static void log_remote_dlerror(int pid, struct user_regs_struct *regs, struct ma
 
 static bool find_injected_range(int pid, const char *lib_path,
                                 uintptr_t *out_base, size_t *out_size) {
-  /* INFO: The entry keeps the (base, size) pair the manual loader used to hand
-            it. With dlopen the mapping belongs to the linker, so the load bias
-            is recovered from the target's own maps instead of from the manual
-            layout the loader used to compute. dladdr is deliberately not used
-            here: it would write a Dl_info into the *target's* memory, which
-            this process cannot read back through remote_call.
+  /* INFO: Where the injector was loaded, handed to entry() with the handle.
+            The manual loader used to compute this pair from the layout it was
+            about to map; with dlopen the mapping belongs to the linker, so it
+            is recovered from the target's own maps instead. dladdr is
+            deliberately not used here: it would write a Dl_info into the
+            *target's* memory, which this process cannot read back through
+            remote_call.
 
             The maps have to be re-read: `map` predates the dlopen, so the
             object is not in it yet. */
@@ -105,8 +106,7 @@ static bool find_injected_range(int pid, const char *lib_path,
             path test is not a safe key here: a module that replaced its own
             file leaves the old one mapped under a "(deleted)" suffix, and any
             second mapping whose path merely contains the same basename would
-            be folded into the range entry() later hands to munmap - unmapping
-            pages that belong to something else. dev+inode names the file
+            be read as part of the injected block. dev+inode names the file
             itself, and because anonymous mappings carry inode 0 they are
             excluded for free.
 
@@ -235,12 +235,18 @@ static bool dlopen_inject(int pid, struct user_regs_struct *regs, struct maps_in
 
   LOGI("injected library base %p size %zu", (void *)base, size);
 
-  long entry_args[2] = {
+  /* INFO: Three arguments and not two. The handle comes first so the injector
+            can close this library at its own teardown, which is what leaves the
+            process with no mapping of ours in it at all - a replaced name is
+            still a mapping, and a mapping is what a scan reads. It is the same
+            value dlsym above was called with. */
+  long entry_args[3] = {
+    (long)handle,
     (long)base,
     (long)size
   };
 
-  remote_call(pid, regs, entry, (uintptr_t)return_addr, entry_args, 2);
+  remote_call(pid, regs, entry, (uintptr_t)return_addr, entry_args, 3);
 
   return (uintptr_t)regs->REG_IP == (uintptr_t)return_addr;
 }
