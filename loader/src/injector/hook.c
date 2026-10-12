@@ -30,7 +30,6 @@
 #include "registers.h"
 #include "hiding.h"
 #include "unmount.h"
-#include "zn_api.h"
 #include "zn_loader.h"
 
 void *start_addr = NULL;
@@ -1468,45 +1467,6 @@ static void rz_app_specialize_post(struct zygisk_context *ctx) {
     /* INFO: Nothing was loaded into this process, so the scan could only come
               back empty and it is the whole cost of asking. */
     if (zygisk_module_length > 0 || zn_loaded_library_count() > 0) hide_module_maps();
-  }
-
-  /* INFO: HyperOS runtime dispatch. Modules registered through
-             getRuntime().registerModule in the spawner (and inherited by
-             every forked child) are told about the specialization here —
-             after uid, groups and the SELinux context are applied, which is
-             where our post hook runs. The package name is the process name
-             up to the first ':', mirroring how Android derives one from the
-             other. */
-  if (zn_hyos_modules_registered()) {
-    const char *package = ctx->process;
-    const char *colon = strchr(ctx->process, ':');
-    char package_buffer[256];
-
-    if (colon != NULL && (size_t)(colon - ctx->process) < sizeof(package_buffer)) {
-      memcpy(package_buffer, ctx->process, (size_t)(colon - ctx->process));
-      package_buffer[colon - ctx->process] = '\0';
-      package = package_buffer;
-    }
-
-    /* INFO: The contract promises non-null strings; an OOM inside
-              GetStringUTFChars clears its pending exception and degrades to
-              an empty se_info instead of handing the module a NULL. */
-    const char *se_info = "";
-    const char *se_info_chars = NULL;
-    if (ctx->args.app->se_info != NULL) {
-      se_info_chars = (*ctx->env)->GetStringUTFChars(ctx->env, *ctx->args.app->se_info, NULL);
-      if (se_info_chars != NULL) {
-        se_info = se_info_chars;
-      } else {
-        (*ctx->env)->ExceptionClear(ctx->env);
-      }
-    }
-
-    zn_runtime_notify_app_specialized(ctx->process, package, se_info);
-
-    if (se_info_chars != NULL) {
-      (*ctx->env)->ReleaseStringUTFChars(ctx->env, *ctx->args.app->se_info, se_info_chars);
-    }
   }
 
   /* INFO: Allow the process name string to be released */

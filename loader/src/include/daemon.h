@@ -23,6 +23,13 @@
          apart, which is the window this matches. */
 #define REZYGISKD_RETRY_DELAY_SPAWNER_US 1000000
 
+/* INFO: How long a Zygisk Next module id can be, which is the module directory
+         name the daemon resolves a library from. The bound is the daemon's, and
+         it is repeated here because the runtime sends the id back in a report: a
+         report the daemon cannot read whole ends the session it was sent on, so
+         an id that does not fit is refused here rather than sent. */
+#define MODULE_ID_MAX_LEN (256 + 1)
+
 /* INFO: Must stay in step with enum DaemonSocketAction on the daemon. */
 enum rezygiskd_actions {
   ZygoteInjected,
@@ -35,7 +42,9 @@ enum rezygiskd_actions {
   UpdateMountNamespace,
   RemoveModule,
   ReadZnModules,
-  SpawnZnCompanion
+  SpawnZnCompanion,
+  OpenZnControlSession,
+  ReportZnRuntime
 };
 
 struct zygisk_modules {
@@ -44,10 +53,11 @@ struct zygisk_modules {
 };
 
 /* INFO: A Zygisk Next library as handed over by the daemon: the path it was
-         resolved from, whether the module asked for a companion, and the fd of
-         the already opened file. */
+         resolved from, the module it belongs to, whether the module asked for a
+         companion, and the fd of the already opened file. */
 struct zn_module_file {
   char *lib_path;
+  char *module_id;
   bool companion;
   int fd;
 };
@@ -101,6 +111,18 @@ void free_modules(struct zygisk_modules *modules);
 bool rezygiskd_read_zn_modules(const char *process_name, const char *process_path, uint8_t retry, uint32_t retry_delay_us, struct zn_module_file **out, size_t *out_len);
 
 void free_zn_module_files(struct zn_module_file *files, size_t len);
+
+/* INFO: Opens the control session the HyperOS runtime reports over, and returns
+         its descriptor or -1. The connection is kept by the daemon rather than
+         answered and closed, and the descriptor is inherited by the
+         applications the spawner forks - they are the ones that report. */
+int rezygiskd_open_zn_control_session(void);
+
+/* INFO: Writes one module report over an open session: this module was told
+         about a specialization. Returns false when the record could not be
+         written, which no caller acts on - the module has been told either
+         way, and the report is the record of it. */
+bool rezygiskd_report_zn_runtime(int session_fd, const char *module_id);
 
 /* INFO: Has the daemon spawn a companion for this library and returns its
          control socket, or -1 when it is unavailable. */

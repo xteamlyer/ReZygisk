@@ -7,6 +7,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -57,12 +58,30 @@ struct Context {
 
   struct ZnCompanion *zn_companions;
   size_t zn_companions_len;
+
+  /* INFO: The HyperOS runtime's control sessions, one descriptor per forked
+           application that still holds one. They are sessions and not requests:
+           the connection is accepted, answered once, and then kept open for as
+           long as the process behind it reports - which is why they are watched
+           rather than served.
+
+           Nothing is accumulated per report: what a session carries is the
+           runtime's own record of what it did, and the daemon's side of it is
+           the log line each record produces. A fork with no Zygisk Next status
+           surface to answer has no table to keep, and one that nobody reads
+           would only go stale. */
+  int *zn_sessions;
+  size_t zn_sessions_len;
 };
 
 /* INFO: A Zygisk Next library resolved for one target: its path, whether the
          module asked for a companion, and the fd of the opened file. */
 struct ZnModuleFile {
   char *lib_path;
+  /* INFO: The module directory the library was resolved from, which is what the
+           module is named by: in the plan the loader hands out, in the log, and
+           in the runtime's report of a specialization. */
+  char *module_id;
   bool companion;
   int fd;
   bool owned;  /* INFO: false when fd is a daemon-cached shared memfd. */
@@ -380,6 +399,7 @@ static void free_modules(struct Context *restrict context) {
 static void free_zn_module_files(struct ZnModuleFile *files, size_t len) {
   for (size_t i = 0; i < len; i++) {
     free(files[i].lib_path);
+    free(files[i].module_id);
     /* INFO: Shared memfds belong to the staging cache and outlive this
               request on purpose; only per-call copies are ours to close. */
     if (files[i].owned && files[i].fd >= 0) close(files[i].fd);
@@ -1033,6 +1053,17 @@ static bool collect_zn_modules(const char *process_name, const char *process_pat
   const char *served[ZN_PLAN_DEDUP_MAX];
   size_t served_len = 0;
 
+  /* INFO: What "why did this process get nothing" needs, and the only place
+           that can answer it: how many module directories were walked, how many
+           of them held a list at all, how many rows those lists had, and how
+           many of those named this process. An empty plan looks the same from
+           the loader whichever of those went wrong, and every one of them has
+           been mistaken for one of the others while this was being chased. */
+  size_t dirs_walked = 0;
+  size_t lists_valid = 0;
+  size_t rows_examined = 0;
+  size_t rows_matched = 0;
+
   struct stat dir_st;
   if (stat(ZYGISK_MODULES_DIR, &dir_st) == -1) {
     LOGE("Failed stating %s: %s", ZYGISK_MODULES_DIR, strerror(errno));
@@ -1044,6 +1075,8 @@ static bool collect_zn_modules(const char *process_name, const char *process_pat
 
   for (size_t i = 0; i < zn_dir_cache_len; i++) {
     const char *entry_name = zn_dir_cache[i].name;
+
+    dirs_walked++;
 
     char module_dir[PATH_MAX];
     module_dir_path(module_dir, PATH_MAX, entry_name);
@@ -1070,10 +1103,16 @@ static bool collect_zn_modules(const char *process_name, const char *process_pat
     struct zn_cached_module *cached = zn_parse_cache_get(entry_name, module_dir, zn_file);
     if (cached == NULL || !cached->valid) continue;
 
+    lists_valid++;
+
     for (size_t row = 0; row < cached->lines_len; row++) {
       struct zn_cached_line *line = &cached->lines[row];
 
+      rows_examined++;
+
       if (!zn_matches_target(line->target, line->is_name, process_name, process_path)) continue;
+
+      rows_matched++;
 
       bool already_served = false;
 
@@ -1120,7 +1159,19 @@ static bool collect_zn_modules(const char *process_name, const char *process_pat
         continue;
       }
 
+      char *module_id_copy = strdup(entry_name);
+      if (module_id_copy == NULL) {
+        LOGE("Failed copying the Zygisk Next module id \"%s\"", entry_name);
+
+        free(lib_path_copy);
+
+        if (!shared) close(fd);
+
+        continue;
+      }
+
       (*out)[*out_len].lib_path = lib_path_copy;
+      (*out)[*out_len].module_id = module_id_copy;
       (*out)[*out_len].companion = line->companion;
       (*out)[*out_len].fd = fd;
       (*out)[*out_len].owned = !shared;
@@ -1128,6 +1179,18 @@ static bool collect_zn_modules(const char *process_name, const char *process_pat
 
       if (served_len < ZN_PLAN_DEDUP_MAX) served[served_len++] = lib_path_copy;
     }
+  }
+
+  /* INFO: One line, and only when the object it describes is empty and there
+           was something that could have filled it: a process no manifest names
+           is the common case and this runs on every fork, while an empty plan
+           that had material behind it is the one worth reading. The counters are
+           read by the condition and not only by the log line on purpose - a
+           release build compiles every LOG* out entirely, which would leave them
+           set but unused, and -Werror is on. */
+  if (*out_len == 0 && rows_matched == 0 && dirs_walked > 0 && lists_valid > 0 && rows_examined > 0) {
+    LOGW("Zygisk Next: no library for \"%s\" - nothing of %zu row(s) in %zu list(s) named it, %zu dir(s) walked",
+         process_name, rows_examined, lists_valid, dirs_walked);
   }
 
   return true;
@@ -1192,6 +1255,10 @@ struct Client {
   struct Context *context;
   char *restrict *argv;
   bool *first_process;
+  /* INFO: Set by the one handler that answers without giving the connection
+           back: a control session is a session, not a request, and the accept
+           loop closes every connection it is not told to keep. */
+  bool keep_open;
 };
 
 typedef void (*action_handler_t)(struct Client *client);
@@ -1505,6 +1572,15 @@ static void handle_read_zn_modules(struct Client *client) {
       break;
     }
 
+    /* INFO: The module id follows its library, so the two names of one module
+              arrive together: the loader keys its entry on the path and reports
+              it back by the id. */
+    if (write_string(client->fd, files[i].module_id) == -1) {
+      LOGE("Failed writing a Zygisk Next module id.");
+
+      break;
+    }
+
     ret = write_uint8_t(client->fd, (uint8_t)(files[i].companion ? 1 : 0));
     if (ret != (ssize_t)sizeof(uint8_t)) {
       LOGE("Failed writing a Zygisk Next companion flag.");
@@ -1694,6 +1770,54 @@ static void handle_remove_module(struct Client *client) {
   ASSURE_SIZE_WRITE("RemoveModule", "response", ret, sizeof(uint8_t), return);
 }
 
+/* INFO: Takes an accepted connection over as a HyperOS runtime control session.
+
+         This is the one action that answers without giving the connection back.
+         The runtime reports over it later, from processes that cannot open one
+         of their own by then - an application is specialized, and the daemon's
+         socket is not its to connect to - so the descriptor is kept here and the
+         process that asked for it is expected to fork with it open. What the
+         loop below watches, therefore, is not a request that is still running
+         but a session that has not ended.
+
+         The caller is not checked against anything: a session grants nothing
+         but the ability to say that a module was told about a specialization,
+         and every process that can reach this socket already runs as root. */
+static void handle_open_zn_control_session(struct Client *client) {
+  ssize_t ret = write_uint8_t(client->fd, 1);
+  if (ret != (ssize_t)sizeof(uint8_t)) {
+    LOGE("Failed confirming a Zygisk Next control session.");
+
+    return;
+  }
+
+  struct Context *context = client->context;
+
+  int *grown = realloc(context->zn_sessions, (context->zn_sessions_len + 1) * sizeof(int));
+  if (grown == NULL) {
+    LOGE("Failed growing the Zygisk Next control session list.");
+
+    return;
+  }
+
+  context->zn_sessions = grown;
+  context->zn_sessions[context->zn_sessions_len] = client->fd;
+  context->zn_sessions_len++;
+
+  /* INFO: A session is read while it is quiet and reports whenever the process
+            behind it specializes, which can be minutes later. The exchange
+            budget that bounds every request would end it at the first quiet
+            moment, so it is cleared for this descriptor. */
+  struct timeval timeout = { .tv_sec = 0, .tv_usec = 0 };
+  setsockopt(client->fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+  setsockopt(client->fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
+  /* INFO: The loop closes every accepted connection it is not told to keep. */
+  client->keep_open = true;
+
+  LOGI("Opened a Zygisk Next control session (%zu open)", context->zn_sessions_len);
+}
+
 /* INFO: Ordered by action value; the table is small enough that a linear scan
          costs less than the socket round trip around it. */
 static const struct ActionHandler kActionHandlers[] = {
@@ -1707,8 +1831,14 @@ static const struct ActionHandler kActionHandlers[] = {
   { UpdateMountNamespace,   "UpdateMountNamespace",   handle_update_mount_namespace  },
   { RemoveModule,           "RemoveModule",           handle_remove_module           },
   { ReadZnModules,          "ReadZnModules",          handle_read_zn_modules         },
-  { SpawnZnCompanion,       "SpawnZnCompanion",       handle_spawn_zn_companion      }
+  { SpawnZnCompanion,       "SpawnZnCompanion",       handle_spawn_zn_companion      },
+  { OpenZnControlSession,   "OpenZnControlSession",   handle_open_zn_control_session }
 };
+
+/* INFO: ReportZnRuntime is deliberately not in the table. It is a record on an
+         already open session, not an action a client opens a connection to ask
+         for, and the only thing a listener could do with it is refuse it - which
+         is what an unregistered action gets. */
 
 static const struct ActionHandler *find_action_handler(enum DaemonSocketAction action) {
   for (size_t i = 0; i < sizeof(kActionHandlers) / sizeof(kActionHandlers[0]); i++) {
@@ -1718,10 +1848,163 @@ static const struct ActionHandler *find_action_handler(enum DaemonSocketAction a
   return NULL;
 }
 
+/* INFO: Reads one record from a control session. Everything the runtime reports
+         is a report: this is a channel one way, opened by the spawner and
+         written by the applications it forks, and none of them is waiting for
+         anything to come back.
+
+         Returns false when the session is over. Three readings mean that, and
+         they are deliberately one answer: the last process holding the session
+         exited (end of file), the record is not one this build knows, or it did
+         not arrive whole. A stream this build cannot parse is not one it can
+         stay in step with - the alternative is reading the next record at the
+         wrong offset and reporting whatever is found there. */
+static bool serve_zn_session(struct Context *restrict context, size_t index) {
+  const int fd = context->zn_sessions[index];
+
+  uint8_t action8 = 0;
+  ssize_t len = read_uint8_t(fd, &action8);
+  if (len <= 0) return false;
+
+  if (action8 != (uint8_t)ReportZnRuntime) {
+    LOGW("Unknown record %u on a Zygisk Next control session, ending it", (unsigned int)action8);
+
+    return false;
+  }
+
+  /* INFO: The pid is the one the reporter sent rather than the peer credential
+            of this socket: the session was opened by the spawner, so the peer is
+            the spawner for every report its children make, and a line that named
+            it would name the wrong process. */
+  uint32_t pid = 0;
+  if (read_uint32_t(fd, &pid) == -1) return false;
+
+  char module_id[MODULE_ID_MAX_LEN];
+  if (read_string(fd, module_id, sizeof(module_id)) <= 0) return false;
+
+  LOGI("HyperOS runtime: module \"%s\" was told about the specialization of pid %u", module_id, pid);
+
+  return true;
+}
+
+/* INFO: Serves one accepted connection: the action is read, dispatched, and the
+         connection closed again - unless the handler took it over, which only
+         the control session does. */
+static void serve_accepted(int client_fd, struct Context *restrict context, char *restrict argv[], bool *first_process) {
+  /* INFO: Bound a single exchange so a stuck client cannot stall the zygote
+            forks waiting behind it. A control session clears this for itself:
+            it is read while it is quiet, which is most of its life. */
+  struct timeval timeout = { .tv_sec = DAEMON_EXCHANGE_TIMEOUT_SECS, .tv_usec = 0 };
+  setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+  setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
+  uint8_t action8 = 0;
+  ssize_t len = read_uint8_t(client_fd, &action8);
+  if (len == -1) {
+    PLOGE("read action");
+
+    close(client_fd);
+
+    return;
+  } else if (len == 0) {
+    /* INFO: A client that connects and leaves used to end the loop and take
+              the daemon down; only a failed accept should do that. */
+    LOGI("Client disconnected before sending an action");
+
+    close(client_fd);
+
+    return;
+  }
+
+  const struct ActionHandler *handler = find_action_handler((enum DaemonSocketAction)action8);
+  if (handler == NULL) {
+    LOGE("Unknown daemon action: %u", (unsigned int)action8);
+
+    close(client_fd);
+
+    return;
+  }
+
+  struct Client client = {
+    .fd            = client_fd,
+    .context       = context,
+    .argv          = argv,
+    .first_process = first_process,
+    .keep_open     = false
+  };
+
+  handler->handler(&client);
+
+  if (!client.keep_open) close(client_fd);
+}
+
 static void serve_loop(int socket_fd, struct Context *restrict context, char *restrict argv[]) {
   bool first_process = true;
 
   while (1) {
+    const size_t session_count = context->zn_sessions_len;
+
+    /* INFO: The listener and every control session are waited on together. A
+              spawner forks an application per launch and opens a session per
+              fork, so there can be many of them at once, and waiting on any one
+              of them alone would leave the listener unserved for as long as that
+              one is quiet - while the requests behind it are zygotes about to
+              specialize, where a wait is felt by the user. */
+    struct pollfd *polled = malloc((session_count + 1) * sizeof(struct pollfd));
+    if (polled == NULL) {
+      /* INFO: Without room to watch the sessions, accepting more requests
+                would only fill their buffers with records nobody reads; that is
+                worse than returning here, where the monitor forks a new daemon
+                at the next zygote start. */
+      LOGE("Failed allocating the poll set");
+
+      return;
+    }
+
+    polled[0].fd = socket_fd;
+    polled[0].events = POLLIN;
+    polled[0].revents = 0;
+
+    for (size_t i = 0; i < session_count; i++) {
+      polled[i + 1].fd = context->zn_sessions[i];
+      polled[i + 1].events = POLLIN;
+      polled[i + 1].revents = 0;
+    }
+
+    const int ready = poll(polled, (nfds_t)(session_count + 1), -1);
+    if (ready == -1) {
+      free(polled);
+
+      /* A signal (EINTR) only interrupts this one wait; keep serving. */
+      if (errno == EINTR) continue;
+
+      PLOGE("poll");
+
+      return;
+    }
+
+    const bool listener_ready = (polled[0].revents & POLLIN) != 0;
+
+    /* INFO: The sessions are read first and walked backwards, so that one
+              ending here cannot move the index of one that has not been read
+              yet: dropping the entry at i shifts everything after it left, and
+              those have already been served by then. */
+    for (size_t i = session_count; i > 0; i--) {
+      if (polled[i].revents == 0) continue;
+
+      if (serve_zn_session(context, i - 1)) continue;
+
+      close(context->zn_sessions[i - 1]);
+
+      memmove(&context->zn_sessions[i - 1], &context->zn_sessions[i],
+              (context->zn_sessions_len - i) * sizeof(int));
+      context->zn_sessions_len--;
+    }
+
+    free(polled);
+
+    if (!listener_ready) continue;
+
     /* INFO: CLOEXEC on the accepted fd keeps client connections out of the
               companion processes forked while a handler runs. */
     int client_fd = accept4(socket_fd, NULL, NULL, SOCK_CLOEXEC);
@@ -1749,51 +2032,28 @@ static void serve_loop(int socket_fd, struct Context *restrict context, char *re
       return;
     }
 
-    /* INFO: Bound a single exchange so a stuck client cannot stall the zygote
-             forks waiting behind it. */
-    struct timeval timeout = { .tv_sec = DAEMON_EXCHANGE_TIMEOUT_SECS, .tv_usec = 0 };
-    setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-    setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-
-    uint8_t action8 = 0;
-    ssize_t len = read_uint8_t(client_fd, &action8);
-    if (len == -1) {
-      PLOGE("read action");
-
-      close(client_fd);
-
-      continue;
-    } else if (len == 0) {
-      /* INFO: A client that connects and leaves used to end the loop and take
-               the daemon down; only a failed accept should do that. */
-      LOGI("Client disconnected before sending an action");
-
-      close(client_fd);
-
-      continue;
-    }
-
-    const struct ActionHandler *handler = find_action_handler((enum DaemonSocketAction)action8);
-    if (handler == NULL) {
-      LOGE("Unknown daemon action: %u", (unsigned int)action8);
-
-      close(client_fd);
-
-      continue;
-    }
-
-    struct Client client = {
-      .fd            = client_fd,
-      .context       = context,
-      .argv          = argv,
-      .first_process = &first_process
-    };
-
-    handler->handler(&client);
-
-    close(client_fd);
+    serve_accepted(client_fd, context, argv, &first_process);
   }
 }
+
+/* INFO: Ends every control session that is still open.
+
+         Only the end of the daemon does this. A session belongs to the process
+         that opened it and to the applications it was passed to; ending one
+         because the daemon was asked for something - a zygote restart is the one
+         request that reloads the module list - would take the runtime's
+         reporting away from applications that are still running. */
+static void free_zn_sessions(struct Context *restrict context) {
+  for (size_t i = 0; i < context->zn_sessions_len; i++) {
+    close(context->zn_sessions[i]);
+  }
+
+  free(context->zn_sessions);
+
+  context->zn_sessions = NULL;
+  context->zn_sessions_len = 0;
+}
+
 void zygiskd_start(char *restrict argv[]) {
   /* load_modules and the socket handlers free through free_modules, so the
      context must start as a clean zeroed slate on every path. */
@@ -1824,6 +2084,7 @@ void zygiskd_start(char *restrict argv[]) {
   serve_loop(socket_fd, &context, argv);
 
   close(socket_fd);
+  free_zn_sessions(&context);
   free_modules(&context);
   root_impl_cleanup();
 }

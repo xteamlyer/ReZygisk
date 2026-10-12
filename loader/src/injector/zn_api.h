@@ -3,39 +3,18 @@
 
 #include "zygisk_next_api.h"
 
-/* INFO: The API table handed to every Zygisk Next module. PLT hooking is
-         served by PLTI, inline hooking by Dobby and the symbol resolver by the
-         ELF reader already linked into this library.
+/* INFO: The oldest Zygisk Next module contract this fork serves.
 
-         The table is picked from the version the module was built against,
-         mirroring the upstream tiering: modules older than API 2 predate the
-         symbol resolver and are refused it, API v2/v3 predate the runtime
-         entry, and API v4 receives the full table. */
-const struct ZygiskNextAPI *zn_get_api_for_version(int target_api_version);
+         The table below is one object whose every entry is real, and that only
+         works while what is served it is the contract as it stands. An older
+         module is not refused for being old: it describes a table whose fields
+         have moved since, and handing it one whose entries it would read at the
+         wrong offsets is worse than telling it no. Zygisk Next's own versions 3
+         and 4 are the two the reference implementation accepts, and the two
+         this one serves. */
+#define ZN_MODULE_API_MIN 3
 
-/* INFO: Fires every HyperOS runtime module's onAppSpecialized with the
-         specialization strings; called from the app specialize post hook.
-         No-op until a module registered through getRuntime().registerModule
-         in this process (or the spawner it was forked from). */
-void zn_runtime_notify_app_specialized(const char *process_name, const char *package_name, const char *se_info);
-
-/* INFO: Whether the HyperOS Rust runtime is reachable from this process, asked
-         as "is the runtime image mapped in here" rather than by executable
-         name: the process hosting it is an app_process binary that has
-         /system_ext/bin/hyos_spawner mapped into it, so its /proc/self/exe
-         reads app_process64. Children forked from it inherit the mapping and
-         answer yes too, which is what the runtime contract wants. The injector
-         uses it to skip the zygote-only hooks. */
-bool zn_is_hyos_spawner(void);
-
-/* INFO: Pins this process as the one the HyperOS runtime belongs to, so every
-         later process can tell whether it is a child of it. Call once, in the
-         spawner, before any module registers. */
-void zn_init_hyos_runtime(void);
-
-/* INFO: Whether any HyperOS runtime module registered in this process —
-         the specialize post hook checks it before doing the JNI work of
-         collecting the callback arguments. */
-bool zn_hyos_modules_registered(void);
+/* INFO: The table handed to every Zygisk Next module this loader loads. */
+const struct ZygiskNextAPI *zn_get_api(void);
 
 #endif /* ZN_API_H */

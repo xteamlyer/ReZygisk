@@ -6,6 +6,13 @@
 
 #define PROCESS_NAME_MAX_LEN (256 + 1)
 
+/* INFO: How long the module id of a Zygisk Next module can be. It is the module
+         directory name, which is why it shares its bound with a process name,
+         and the runtime sends it back in a report: both halves have to agree on
+         the bound or the daemon would end a session over a record it cannot
+         read. */
+#define MODULE_ID_MAX_LEN (256 + 1)
+
 #define ZYGOTE_INJECTED 4
 #define DAEMON_SET_INFO 6
 
@@ -34,7 +41,9 @@ enum DaemonSocketAction {
   UpdateMountNamespace   = 7,
   RemoveModule           = 8,
   ReadZnModules          = 9,
-  SpawnZnCompanion       = 10
+  SpawnZnCompanion       = 10,
+  OpenZnControlSession   = 11,
+  ReportZnRuntime        = 12
 };
 
 /* INFO: Two states, not four: how the implementation was found is answered by

@@ -1,8 +1,35 @@
 #ifndef ZN_LOADER_H
 #define ZN_LOADER_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+/* INFO: The extra connection attempts `entry` gives the daemon before it gives
+         up on the module plan, and what that window is for.
+
+         `entry` runs once per injected target, and both targets are one-shot
+         for a whole process tree: whatever is loaded there is what the processes
+         forked afterwards start with. The two are not equally one-shot, though,
+         and the attempts are not the same either:
+
+           - the HyperOS spawner's plan is the only one its apps ever see. An
+             app it forks is not injected again and does not ask for itself, so
+             the window is measured in seconds - and the failure it covers is a
+             daemon forked in the same breath as the spawner's own exec.
+           - a zygote's apps do ask again - each specialization asks the daemon
+             for the modules naming that process - so what a zygote can lose is
+             the modules that name the zygote itself, which nothing else loads.
+             Three attempts at the short spacing rides out a daemon whose socket
+             is still coming up without holding a boot on a daemon that is never
+             going to answer: a zygote blocked in here delays every app launch
+             behind it.
+
+         Both windows are measured against a delay that only elapses while the
+         daemon is unreachable, which is why they are attempts and not a fixed
+         sleep. */
+#define ZN_PLAN_ATTEMPTS_SPAWNER 5
+#define ZN_PLAN_ATTEMPTS_TREE 3
 
 /* INFO: Asks the daemon for the Zygisk Next libraries targeting this process
          and loads them. Meant for the zygote itself, where the process name
@@ -15,14 +42,10 @@
          daemon already serves - and a loader that reads the tree on its own can
          disagree with the daemon about what is installed.
 
-         `connect_retry` is the number of extra daemon connection attempts
-         after the first, spaced `connect_delay_us` apart. Ordinary targets
-         pass the default 0.1s spacing; the HyperOS spawner passes five
-         attempts a second apart, because it can exec in the same breath as
-         the daemon's own fork and its module plan is the only one its apps will
-         ever see - they inherit it and nothing asks again. NyaZygisk, whose
-         loader carries the same one-shot contract, waits out the same window;
-         the wait only ever costs anything while the daemon is unreachable. */
+         `connect_retry` is the number of extra daemon connection attempts after
+         the first, spaced `connect_delay_us` apart; the two constants above are
+         the windows this is called with, and the reasoning behind each. The wait
+         only ever costs anything while the daemon is unreachable. */
 void zn_load_all_modules(uint8_t connect_retry, uint32_t connect_delay_us);
 
 /* INFO: Same scan, but for a forked child that is about to specialize:
@@ -42,5 +65,17 @@ int zn_companion_connect(void *handle);
          count inherited from the zygote is inherited along with the libraries
          it was raised for. */
 size_t zn_loaded_library_count(void);
+
+/* INFO: The HyperOS runtime's reporting path, handed to zn_hyos_initialize() so
+         that the runtime itself knows nothing about the daemon.
+
+         `zn_open_runtime_session` is called from the spawner - before a fork,
+         while the process still has the privilege to reach the daemon - and what
+         it returns is inherited by the child. `zn_report_runtime_module` is
+         called in that child for every module the runtime told about a
+         specialization, and writes over the session rather than opening
+         anything. */
+int zn_open_runtime_session(void);
+bool zn_report_runtime_module(const char *module_id);
 
 #endif /* ZN_LOADER_H */
