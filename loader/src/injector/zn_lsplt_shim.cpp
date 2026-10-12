@@ -1,7 +1,8 @@
-/* INFO: The Zygisk Next pltHook is served by LSPlt, the hooking engine the
-         LSPosed ecosystem builds its modules against, exactly as NyaZygisk
-         does. The injector itself is C, so the C++ island is confined to this
-         bridge and the static library behind it. */
+/* INFO: The Zygisk Next pltHook is served by LSPlt - the hooking engine the
+         LSPosed ecosystem builds its modules against, and the one the modules
+         serviced here were compiled against. The injector itself is C, so the
+         C++ island is confined to this bridge and the static library behind
+         it. */
 #include <lsplt.hpp>
 
 /* INFO: LSPlt allocates through the standard library, so the C boundary also

@@ -128,7 +128,8 @@ DOBBY_INCLUDES = -I$(DOBBY_DIR)/include -I$(DOBBY_DIR)/source -I$(DOBBY_DIR)/sou
 				 -I$(DOBBY_DIR)/external -I$(DOBBY_DIR)/external/logging \
 				 -I$(DOBBY_DIR)/source/Backend/UserMode
 
-# INFO: LSPlt serves the Zygisk Next pltHook, the same engine NyaZygisk uses.
+# INFO: LSPlt serves the Zygisk Next pltHook - the engine the modules serviced
+#       here were compiled against.
 #       Like Dobby it is C++ and ships no plain Makefile, so its two sources
 #       are compiled here. Its own build defaults for the C++ runtime are
 #       kept (no -fno-exceptions/-fno-rtti) because it leans on the standard

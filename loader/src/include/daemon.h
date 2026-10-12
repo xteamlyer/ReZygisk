@@ -18,9 +18,9 @@
 /* INFO: The HyperOS spawner passes the long one. Its daemon may have been
          forked in the same breath as the spawner's own exec, and its module
          plan is loaded once for every app the spawner will ever fork: the
-         children inherit it, and nothing asks again. NyaZygisk, whose loader
-         carries the same one-shot contract, connects five times a second
-         apart, which is the window this matches. */
+         children inherit it, and nothing asks again. Five attempts a second
+         apart is the window that race needs; the retry only ever costs anything
+         while the daemon is unreachable. */
 #define REZYGISKD_RETRY_DELAY_SPAWNER_US 1000000
 
 /* INFO: How long a Zygisk Next module id can be, which is the module directory

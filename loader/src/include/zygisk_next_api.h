@@ -1,6 +1,7 @@
-/* INFO: Zygisk Next module API, taken from NyaZygisk (HSSkyBoy) which itself
-         follows the Zygisk Next and ZygiskNextNext module contract. Kept as is
-         so modules compiled against it link and run unmodified. */
+/* INFO: The Zygisk Next module API, as Zygisk Next itself declares it. The
+         reference implementations this fork was ported against carry the same
+         declaration field for field, and it is kept that way on purpose: a
+         module compiled against any of them links and runs here unmodified. */
 
 #pragma once
 

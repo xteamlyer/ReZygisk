@@ -120,9 +120,8 @@ static int zn_plt_hook(void *base_addr, const char *symbol, void *hook_handler, 
 /* INFO: The Zygisk Next contract allows a single inline hook per address, so
          the hooked addresses are remembered: a second request for one of them
          is rejected instead of piling a second trampoline on top. The table
-         itself is unbounded, exactly as NyaZygisk's is - a module that hooks
-         many addresses is not refused at an arbitrary cap; it only fails when
-         memory does. */
+         itself is unbounded on purpose - a module that hooks many addresses is
+         not refused at an arbitrary cap; it only fails when memory does. */
 static pthread_mutex_t zn_hooked_lock = PTHREAD_MUTEX_INITIALIZER;
 static uintptr_t *zn_hooked = NULL;
 static size_t zn_hooked_count = 0;
