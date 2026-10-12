@@ -206,7 +206,7 @@ This repository stands on other projects' work; the credits below map the
 pieces to their sources.
 
 * [ReZygisk](https://github.com/PerformanC/ReZygisk): The base project this repository forks and rewrites in C
-* [NyaZygisk](https://github.com/HSSkyBoy/NyaZygisk): Where this fork's Zygisk Next path was first ported from. Most of what came over — the HyperOS runtime above all — has since been rewritten against the contract Zygisk Next declares, so what is still recognisably its shape is the LSPlt bridge and the module loader
+* [NyaZygisk](https://github.com/HSSkyBoy/NyaZygisk): Where this fork's Zygisk Next path was first ported from. What came over has since been rewritten against the contract Zygisk Next declares — the HyperOS runtime above all, and the module loader with it — so the ZN path no longer carries its shape
 * [YukiZygisk](https://github.com/Rouyashiki/YukiZygisk): The reference implementation of the Zygisk Next contract this fork follows — the HyperOS runtime (how the spawner is found, the fork and `selinux_android_setcontext` hooks that deliver `onAppSpecialized`, and the control session a report travels back over), the `zn_modules.txt` reader and the module API gate
 * [ZygiskNext](https://github.com/Dr-TSNG/ZygiskNext): The original Zygisk Next module architecture and the API VexZygisk speaks
 * [ZygiskNextNext](https://github.com/VeryBaaad/ZygiskNextNext): Reference implementation for the standalone Zygisk Next API
@@ -215,7 +215,7 @@ pieces to their sources.
 * [KernelSU](https://github.com/tiann/KernelSU): The kernel interface the KernelSU flavour talks to
 * [APatch](https://github.com/bmax121/APatch): The kernel patch that the APatch flavour manages alongside
 * [Dobby](https://github.com/LSPosed/Dobby): In-process code hooking engine behind the ZN `inlineHook` API
-* [LSPlt](https://github.com/LSPosed/LSPlt): PLT hooking library behind the ZN `pltHook` API
+* [LSPlt](https://github.com/JingMatrix/LSPlt): PLT hooking library behind the ZN `pltHook` API
 * [PLTI](https://github.com/PerformanC/PLTI): PLT hooking used by the injector itself
 * [CSOLoader](https://github.com/ThePedroo/CSOLoader): The custom ELF loader that maps standard Zygisk modules
 * [xz-embedded](https://tukaani.org/xz/embedded.html): Public-domain XZ decompressor for `.gnu_debugdata`

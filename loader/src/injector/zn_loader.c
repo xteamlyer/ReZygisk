@@ -30,10 +30,15 @@
          the modules directory itself. */
 #define ZN_MAX_MODULES 32
 
+/* INFO: One loaded module, and the self handle its callbacks were given.
+
+         What is kept is what is used: the module id names the module in a
+         registration report, the path is what the duplicate check compares, and
+         the companion descriptor is what connectCompanion hands a socket from.
+         The target is not kept because nothing asks for it - the daemon did the
+         matching, and the handle is opaque to the module that receives it. */
 struct zn_entry {
-  bool is_name;
   bool companion;
-  char *target;
   char *module_id;
   char *lib_path;
   int companion_fd;
@@ -164,7 +169,7 @@ static bool load_entry(struct zn_entry *entry, void **lib_handle, int module_fd)
     }
   }
 
-  LOGD("Loading the Zygisk Next module [%s] targeting %s", entry->lib_path, entry->target);
+  LOGD("Loading the Zygisk Next module [%s] of [%s]", entry->lib_path, entry->module_id);
 
   /* INFO: From here on the library stays loaded for the life of the process:
              its callbacks and hooks outlive this call, unloading is not an
@@ -317,21 +322,17 @@ static void load_modules_from_daemon(const char *process_name, const char *proce
     }
 
     struct zn_entry *entry = &loaded_entries[loaded_libs_count];
-    entry->is_name = false;
     entry->companion = files[i].companion;
-    entry->target = strdup(process_name);
     entry->module_id = strdup(files[i].module_id);
     entry->lib_path = strdup(files[i].lib_path);
     entry->companion_fd = -1;
 
-    if (entry->target == NULL || entry->module_id == NULL || entry->lib_path == NULL) {
+    if (entry->module_id == NULL || entry->lib_path == NULL) {
       LOGE("Failed copying the Zygisk Next module \"%s\"", files[i].lib_path);
 
-      free(entry->target);
       free(entry->module_id);
       free(entry->lib_path);
 
-      entry->target = NULL;
       entry->module_id = NULL;
       entry->lib_path = NULL;
       entry->companion_fd = -1;
@@ -355,13 +356,11 @@ static void load_modules_from_daemon(const char *process_name, const char *proce
 
     if (entry->companion_fd >= 0) close(entry->companion_fd);
 
-    free(entry->target);
     free(entry->module_id);
     free(entry->lib_path);
 
     /* INFO: The slot is free again, so leave it as "no companion" rather than
              a zeroed struct whose fd would read as a valid descriptor. */
-    entry->target = NULL;
     entry->module_id = NULL;
     entry->lib_path = NULL;
     entry->companion_fd = -1;

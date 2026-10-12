@@ -156,7 +156,7 @@ make ROOT_IMPL=apatch release  # explicit form
 本仓库建立在其他项目的工作之上，下面的列表说明了各部分与其来源的对应关系。
 
 * [ReZygisk](https://github.com/PerformanC/ReZygisk)：本仓库所 fork 并用 C 重写的上游项目
-* [NyaZygisk](https://github.com/HSSkyBoy/NyaZygisk)：本仓库 Zygisk Next 路径最初的移植来源。其中大部分——尤其是 HyperOS Runtime——已按 Zygisk Next 声明的契约重写，仍保留其形状的是 LSPlt 桥接与模块加载器
+* [NyaZygisk](https://github.com/HSSkyBoy/NyaZygisk)：本仓库 Zygisk Next 路径最初的移植来源。移植过来的部分——尤其是 HyperOS Runtime 与模块加载器——已按 Zygisk Next 声明的契约重写，ZN 路径中已不再保留其形状
 * [YukiZygisk](https://github.com/Rouyashiki/YukiZygisk)：本仓库所遵循的 Zygisk Next 契约的参考实现——HyperOS Runtime（spawner 的识别方式、投递 `onAppSpecialized` 的 fork 与 `selinux_android_setcontext` hook，以及上报回传所走的控制会话）、`zn_modules.txt` 读取器与模块 API 版本门
 * [ZygiskNext](https://github.com/Dr-TSNG/ZygiskNext)：Zygisk Next 模块架构的最初设计，以及 VexZygisk 实现的那套 API
 * [ZygiskNextNext](https://github.com/VeryBaaad/ZygiskNextNext)：独立 Zygisk Next API 的参考实现
@@ -165,7 +165,7 @@ make ROOT_IMPL=apatch release  # explicit form
 * [KernelSU](https://github.com/tiann/KernelSU)：KernelSU 版所通信的内核接口
 * [APatch](https://github.com/bmax121/APatch)：APatch 版一并管理的内核补丁
 * [Dobby](https://github.com/LSPosed/Dobby)：ZN `inlineHook` API 背后的进程内代码 hook 引擎
-* [LSPlt](https://github.com/LSPosed/LSPlt)：ZN `pltHook` API 背后的 PLT Hook 库
+* [LSPlt](https://github.com/JingMatrix/LSPlt)：ZN `pltHook` API 背后的 PLT Hook 库
 * [PLTI](https://github.com/PerformanC/PLTI)：注入器自身使用的 PLT Hook
 * [CSOLoader](https://github.com/ThePedroo/CSOLoader)：映射标准 Zygisk 模块的自定义 ELF 加载器
 * [xz-embedded](https://tukaani.org/xz/embedded.html)：用于 `.gnu_debugdata` 的公有领域 XZ 解压器
