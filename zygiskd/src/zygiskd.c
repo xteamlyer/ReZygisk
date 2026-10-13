@@ -1713,10 +1713,20 @@ static void handle_read_zn_modules(struct Client *client) {
   /* INFO: The path of the HyperOS runtime image, from the process that hosts
             one. Empty for everything else, including an application the spawner
             forked: it inherits the runtime state, and inheriting it is not the
-            same as being the spawner. */
+            same as being the spawner.
+
+            An empty string is a valid answer here and not a failure, which is
+            why this one test is `ret < 0` where the name and the path above use
+            `ret <= 0`: read_string answers 0 for a string of length zero, and
+            refusing that would hang up on every request from a process that is
+            not the runtime host - which is all of them, the zygote and the apps
+            included. The plan would come back empty everywhere and no Zygisk
+            Next module would load anywhere, with nothing in any log to say
+            why. The name and the path cannot legitimately be empty, so refusing
+            those stays the right answer. */
   char image_path[PATH_MAX] = { 0 };
   ret = read_string(client->fd, image_path, sizeof(image_path));
-  if (ret <= 0) {
+  if (ret < 0) {
     LOGE("Failed reading the runtime image path for ReadZnModules.");
 
     return;
