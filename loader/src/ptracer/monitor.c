@@ -11,6 +11,7 @@
 #include <sys/epoll.h>
 #include <sys/mman.h>
 #include <sys/signalfd.h>
+#include <sys/timerfd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/wait.h>
@@ -158,6 +159,10 @@ static struct rezygiskd_status status = {
 
 static int monitor_epoll_fd;
 static bool monitor_events_running = true;
+
+/* INFO: The descriptor the card's refresh timer fires on, or -1 while there is
+         no timer to fire. */
+static int status_refresh_fd = -1;
 typedef void (*monitor_event_callback_t)(void);
 
 bool monitor_events_init() {
@@ -193,10 +198,65 @@ void monitor_events_stop() {
   monitor_events_running = false;
 }
 
+/* INFO: How often the card is written again while the Zygisk Next path has not
+         started working.
+
+         Every other write is an event - a command, an injection - and the
+         fastest of those lands in the first moments of a boot, when most of the
+         system has not started yet. A reader then sees "no spawner" and cannot
+         tell a system that has none from one that had not started it. One slow
+         tick while the answer is still no makes the card describe a booted
+         system instead, and it stops the moment there is nothing left to wait
+         for. */
+#define STATUS_REFRESH_SECONDS 60
+
+static void status_refresh_callback() {
+  uint64_t expirations = 0;
+
+  /* INFO: Read to disarm it. A timerfd nobody reads stays readable, and the
+            loop this is called from would spin on it. */
+  while (read(status_refresh_fd, &expirations, sizeof(expirations)) == -1 && errno == EINTR) {
+  }
+
+  (void)update_status(NULL);
+
+  if (status.spawner_seen) {
+    const struct itimerspec stop = { 0 };
+
+    if (timerfd_settime(status_refresh_fd, 0, &stop, NULL) == -1) PLOGE("timerfd_settime");
+  }
+}
+
+static bool status_refresh_init() {
+  status_refresh_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+  if (status_refresh_fd == -1) {
+    PLOGE("timerfd_create");
+
+    return false;
+  }
+
+  const struct itimerspec every = {
+    .it_interval = {
+      .tv_sec = STATUS_REFRESH_SECONDS
+    },
+    .it_value = {
+      .tv_sec = STATUS_REFRESH_SECONDS
+    }
+  };
+
+  if (timerfd_settime(status_refresh_fd, 0, &every, NULL) == -1) {
+    PLOGE("timerfd_settime");
+
+    return false;
+  }
+
+  return monitor_events_register_event(status_refresh_callback, status_refresh_fd, EPOLLIN);
+}
+
 void monitor_events_loop() {
-  struct epoll_event events[2];
+  struct epoll_event events[3];
   while (monitor_events_running) {
-    int nfds = epoll_wait(monitor_epoll_fd, events, 2, -1);
+    int nfds = epoll_wait(monitor_epoll_fd, events, 3, -1);
     if (nfds == -1 && errno != EINTR) {
       PLOGE("epoll_wait");
 
@@ -1684,8 +1744,19 @@ static void append_bounded_number(char *buf, size_t cap, size_t *off, unsigned l
          over /proc tells them apart, and it only runs while the answer is still
          no.
 
-         The executable name is all that is asked of each process here: the
-         image check reads maps, and this walks the whole table. */
+         The question asked of each candidate is the one the exec path asks -
+         program_is_spawner, name and image together - because anything weaker
+         would answer a different question. The name is tried first since it is
+         free; the image check reads that process's maps, so it is done for the
+         ART hosts only, and only for the first few of them: a booted system has
+         one app_process64 per running application.
+
+         The process count is reported as well, and that is not decoration: a
+         card written during the first moments of a boot is a card written
+         before most of the system exists, and the reader has to be able to tell
+         "there is no spawner" from "there was not much of anything yet". */
+#define SPAWNER_PROBE_IMAGE_CHECKS 8
+
 static void append_spawner_probe(char *out, size_t cap) {
   DIR *proc = opendir("/proc");
   if (proc == NULL) {
@@ -1697,6 +1768,9 @@ static void append_spawner_probe(char *out, size_t cap) {
   pid_t spawner_pid = 0;
   pid_t spawner_parent = 0;
   size_t host_named = 0;
+  size_t scanned = 0;
+  size_t image_checks = 0;
+  bool by_image = false;
 
   struct dirent *entry;
   while ((entry = readdir(proc)) != NULL) {
@@ -1709,6 +1783,8 @@ static void append_spawner_probe(char *out, size_t cap) {
     char program[PATH_MAX];
     if (!program_matches((int)pid_value, program, sizeof(program))) continue;
 
+    scanned++;
+
     if (zn_spawner_map_is_spawner(program)) {
       spawner_pid = (pid_t)pid_value;
       spawner_parent = parent_of((int)pid_value);
@@ -1716,7 +1792,21 @@ static void append_spawner_probe(char *out, size_t cap) {
       break;
     }
 
-    if (program_has_art_host_name(program)) host_named++;
+    if (!program_has_art_host_name(program)) continue;
+
+    host_named++;
+
+    if (image_checks >= SPAWNER_PROBE_IMAGE_CHECKS) continue;
+
+    image_checks++;
+
+    if (!program_is_spawner((pid_t)pid_value, program)) continue;
+
+    spawner_pid = (pid_t)pid_value;
+    spawner_parent = parent_of((int)pid_value);
+    by_image = true;
+
+    break;
   }
 
   closedir(proc);
@@ -1724,23 +1814,23 @@ static void append_spawner_probe(char *out, size_t cap) {
   str_append_bounded(out, cap, " (");
 
   if (spawner_pid == 0) {
-    /* INFO: Nothing in the system names itself the spawner. Either it is not
-              running, or it runs as one of the ART hosts - in which case only
-              the image behind that process could say, and the count is what
-              tells a reader whether there was anything to look at. */
-    str_append_bounded(out, cap, "no hyos_spawner process, ");
+    str_append_bounded(out, cap, "no process carries the spawner image, ");
 
     size_t off = strlen(out);
     append_bounded_number(out, cap, &off, (unsigned long)host_named);
-    str_append_bounded(out, cap, " app_process64/artd running");
+    str_append_bounded(out, cap, " app_process64/artd of ");
+    off = strlen(out);
+    append_bounded_number(out, cap, &off, (unsigned long)scanned);
+    str_append_bounded(out, cap, " process(es)");
 
     return;
   }
 
   size_t off = strlen(out);
-  str_append_bounded(out, cap, "hyos_spawner is pid ");
+  str_append_bounded(out, cap, "spawner is pid ");
   off = strlen(out);
   append_bounded_number(out, cap, &off, (unsigned long)spawner_pid);
+  if (by_image) str_append_bounded(out, cap, " (by image)");
   str_append_bounded(out, cap, ", parent ");
   off = strlen(out);
   append_bounded_number(out, cap, &off, (unsigned long)spawner_parent);
@@ -2107,6 +2197,10 @@ void init_monitor() {
 
     exit(1);
   }
+
+  /* INFO: Not fatal on its own: without it the card is only written on events,
+            which is what it did before the timer existed. */
+  if (!status_refresh_init()) LOGE("failed to start the status refresh timer");
 
   monitor_events_loop();
 
