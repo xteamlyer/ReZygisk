@@ -136,6 +136,13 @@ struct rezygiskd_status {
   bool supported;
   bool zygote_injected;
   bool daemon_running;
+
+  /* INFO: Whether this monitor has ever recognised the HyperOS spawner.
+            Latched, because the question the card answers is "did it ever
+            happen", and because nothing downstream of the Zygisk Next path
+            can happen until it does. */
+  bool spawner_seen;
+
   pid_t daemon_pid;
   char *daemon_error_info;
 };
@@ -144,6 +151,7 @@ static struct rezygiskd_status status = {
   .supported = false,
   .zygote_injected = false,
   .daemon_running = false,
+  .spawner_seen = false,
   .daemon_pid = -1,
   .daemon_error_info = NULL
 };
@@ -1299,6 +1307,8 @@ static bool hand_over_on_exec(pid_t pid) {
 
   if (!match_target(pid, program, &tracer, &is_spawner)) return false;
 
+  if (is_spawner) status.spawner_seen = true;
+
   /* INFO: The crash-loop counter is about the zygote restarting. The spawner
            has its own lifecycle and execs on its own schedule, so counting
            those execs the same way would trip the crash-loop stop after a burst
@@ -1623,6 +1633,76 @@ static void json_escape_into(char *dst, size_t cap, const char *src) {
 /* INFO: Appends the live status to `out`, every append bounded to its
          capacity: the daemon error text arrives over a socket and can be
          longer than the line is allowed to hold. */
+/* INFO: The Zygisk Next half of the status line.
+
+         Three different faults all look like "my Zygisk Next module does not
+         load": the spawner was never recognised, the daemon was never asked,
+         or a plan came back with nothing that named the process. Only the
+         first is visible from here; the other two are what the daemon writes
+         down, read back for the same line. A release build keeps no log of
+         any of it, and the card is where somebody actually looks. */
+static void append_zn_status_text(char *out, size_t cap) {
+  str_append_bounded(out, cap, status.spawner_seen ? ", ZN: spawner seen" : ", ZN: spawner unseen");
+
+  int fd = 0;
+
+  do {
+    fd = open(ZYGISK_ZN_STATUS, O_RDONLY | O_CLOEXEC);
+  } while (fd == -1 && errno == EINTR);
+
+  if (fd == -1) {
+    str_append_bounded(out, cap, " (no plan asked)");
+
+    return;
+  }
+
+  char contents[768] = { 0 };
+  ssize_t got = 0;
+
+  do {
+    got = read(fd, contents, sizeof(contents) - 1);
+  } while (got == -1 && errno == EINTR);
+
+  close(fd);
+
+  /* INFO: An empty file and no file say the same thing: nobody has asked,
+            which is itself the answer when the spawner was never injected. */
+  if (got <= 0) {
+    str_append_bounded(out, cap, " (no plan asked)");
+
+    return;
+  }
+
+  contents[(size_t)got] = '\0';
+
+  str_append_bounded(out, cap, " (");
+
+  bool first = true;
+  char *line = contents;
+
+  for (char *cursor = contents; ; cursor++) {
+    if (*cursor != '\n' && *cursor != '\0') continue;
+
+    const char saved = *cursor;
+    *cursor = '\0';
+
+    if (line[0] != '\0') {
+      if (!first) str_append_bounded(out, cap, " | ");
+
+      str_append_bounded(out, cap, line);
+      first = false;
+    }
+
+    *cursor = saved;
+
+    if (saved == '\0') break;
+
+    line = cursor + 1;
+  }
+
+  str_append_bounded(out, cap, ")");
+}
+
 static void append_status_text(char *out, size_t cap) {
   #define STATUS_APPEND(text) str_append_bounded(out, cap, (text))
 
@@ -1688,6 +1768,8 @@ static void append_status_text(char *out, size_t cap) {
       }
     }
   }
+
+  append_zn_status_text(out, cap);
 
   /* INFO: Why the monitor is not tracing, once that is known. The state alone
             says what happened but not why, and the reason is what tells a stop
@@ -1813,7 +1895,7 @@ static bool update_status(const char *message) {
     return true;
   }
 
-  char status_text[256] = "Monitor: ";
+  char status_text[512] = "Monitor: ";
   append_status_text(status_text, sizeof(status_text));
 
   fprintf(prop, "%s[%s] %s%s", pre_section, status_text, module_text, post_section);

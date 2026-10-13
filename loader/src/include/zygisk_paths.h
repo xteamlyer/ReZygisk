@@ -21,6 +21,17 @@
 #define ZYGISK_CONTROLLER_SOCKET ZYGISK_TMP_PATH "/init_monitor"
 #define ZYGISK_CP_SOCKET ZYGISK_TMP_PATH "/cp64.sock"
 
+/* INFO: What the daemon's last Zygisk Next plan came to, written by the daemon
+         for the monitor to put on the module's card.
+
+         The Zygisk Next path has several ways to end quietly - a spawner never
+         recognised, a plan with no row that named the process, a library that
+         would not open - and every one of them looks the same from outside the
+         process. A release build keeps no log of any of it, so the answer is
+         written here instead: the card is where somebody actually looks. */
+#define ZYGISK_ZN_STATUS ZYGISK_TMP_PATH "/zn-status.txt"
+#define ZYGISK_ZN_STATUS_TMP ZYGISK_ZN_STATUS ".tmp"
+
 /* INFO: Files the monitor owns inside the scratch directory, and the module
          property file it keeps a pristine copy of. */
 #define ZYGISK_STATE_JSON ZYGISK_TMP_PATH "/state.json"
