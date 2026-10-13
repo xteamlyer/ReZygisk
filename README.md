@@ -176,6 +176,23 @@ You can also ask the tracer directly, from a root shell:
 
 which prints the daemon PID, the root solution in use, and the loaded modules.
 
+### 4. If the module looks stopped
+
+The card can say the monitor is stopped, and while it is, nothing new is
+injected. Two things cause that, and the module's **action button** in the
+manager - the same button other modules show as "execute" - recovers from both:
+
+- **the module was just installed or updated.** The installer stops the monitor
+  so that its rewrite of `module.prop` cannot race, and starts nothing in its
+  place. The card says so, and a reboot clears it; the button does too, without
+  the reboot.
+- **`ctl stop` was sent** to the monitor, by hand or by a script. The card says
+  that separately.
+
+The button starts the monitor if it is gone and tells a stopped one to trace
+again. It is safe to tap at any time: a monitor that is already tracing is left
+alone.
+
 > [!NOTE]
 > VexZygisk builds and injects arm64 only. On a 64-bit device the secondary 32-bit Zygote is left untouched - it is rarely used and injecting it brings no benefit - and 32-bit only devices are no longer supported.
 

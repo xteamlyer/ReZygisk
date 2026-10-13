@@ -93,6 +93,7 @@ ui_print "- Extracting module files"
 extract "$ZIPFILE" 'module.prop'     "$MODPATH"
 extract "$ZIPFILE" 'post-fs-data.sh' "$MODPATH"
 extract "$ZIPFILE" 'uninstall.sh'    "$MODPATH"
+extract "$ZIPFILE" 'action.sh'       "$MODPATH"
 extract "$ZIPFILE" 'rezygisk.sh' "/data/adb/post-fs-data.d/"
 
 # INFO: Everything in the archive is 0644 and extract does not bring an
@@ -136,7 +137,7 @@ chmod 0755 "/data/adb/post-mount.d/rezygisk.sh"
 
 cp "$MODPATH/module.prop" "$MODPATH/module.prop.bak"
 
-chmod +x "$MODPATH/uninstall.sh"
+chmod +x "$MODPATH/uninstall.sh" "$MODPATH/action.sh"
 
 mv "$TMPDIR/sepolicy.rule" "$MODPATH"
 

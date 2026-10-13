@@ -33,7 +33,9 @@ ZIP_FILE = $(ZIP_DIR)/$(ZIP_NAME)
 #       KernelSU runs, and the APatch installer neither extracts it nor has a
 #       stage to install it into. Shipping it there leaves a script in the
 #       archive that nothing can ever run.
-SHARED_SCRIPTS = module/src/verify.sh module/src/rezygisk.sh
+#       action.sh is shared as well: both managers show a module's action button
+#       when one is present, and both flavours can be left stopped by an update.
+SHARED_SCRIPTS = module/src/verify.sh module/src/rezygisk.sh module/src/action.sh
 
 # INFO: The SELinux rules differ between the flavours only in the name of the
 #       root daemon's domain, so they are kept as a single template and
