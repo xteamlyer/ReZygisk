@@ -79,6 +79,7 @@ VexZygisk 实现了 Zygisk Next API，因此针对它编写的模块——其中
 - 模块通过 `zn_modules.txt` 列出，支持按目标解析与可选的 companion。companion 由守护进程 fork 而来，因此它保留的是守护进程的特权 SELinux 域，而不是加载该模块的进程所属的受限域。
 - 模块库以 memfd 形式交付，而不是模块文件本身的描述符，因此非特权目标无需改动模块文件自身的模式与 SELinux 标签即可加载它们。
 - Zygisk 与 Zygisk Next 模块可并存：一个模块可以同时提供 `zygisk/<arch>.so` 与 `zn_modules.txt`（LSPosed 就是如此），二者各走自己的路径，互不排斥。
+- 模块拿到的是**当前这一版** Zygisk Next API：声明版本 3 或 4 的模块会加载，声明其他版本的会被拒绝，而不是拿到一张自它构建以来字段已经挪位的表。
 
 ## 依赖
 
@@ -155,7 +156,8 @@ make ROOT_IMPL=apatch release  # explicit form
 本仓库建立在其他项目的工作之上，下面的列表说明了各部分与其来源的对应关系。
 
 * [ReZygisk](https://github.com/PerformanC/ReZygisk)：本仓库所 fork 并用 C 重写的上游项目
-* [NyaZygisk](https://github.com/HSSkyBoy/NyaZygisk)：HyperOS Runtime 支持（hyos_spawner 拦截、运行时表，以及投递 `onAppSpecialized` 的 fork 与 SELinux hook），以及从该项目移植的 Zygisk Next 修复——把符号查找限制在库自身的符号表内、`pltHook` 的备份语义、monitor 的 spawner 处理与升级时的 `module.prop` 保护
+* [NyaZygisk](https://github.com/HSSkyBoy/NyaZygisk)：本仓库 Zygisk Next 路径最初的移植来源。移植过来的部分——尤其是 HyperOS Runtime 与模块加载器——已按 Zygisk Next 声明的契约重写，ZN 路径中已不再保留其形状
+* [YukiZygisk](https://github.com/Rouyashiki/YukiZygisk)：本仓库所遵循的 Zygisk Next 契约的参考实现——HyperOS Runtime（spawner 的识别方式、投递 `onAppSpecialized` 的 fork 与 `selinux_android_setcontext` hook，以及上报回传所走的控制会话）、`zn_modules.txt` 读取器与模块 API 版本门
 * [ZygiskNext](https://github.com/Dr-TSNG/ZygiskNext)：Zygisk Next 模块架构的最初设计，以及 VexZygisk 实现的那套 API
 * [ZygiskNextNext](https://github.com/VeryBaaad/ZygiskNextNext)：独立 Zygisk Next API 的参考实现
 * [Magisk](https://github.com/topjohnwu/Magisk)：现代 Android Root 与 Zygisk 本身的基石
@@ -163,7 +165,7 @@ make ROOT_IMPL=apatch release  # explicit form
 * [KernelSU](https://github.com/tiann/KernelSU)：KernelSU 版所通信的内核接口
 * [APatch](https://github.com/bmax121/APatch)：APatch 版一并管理的内核补丁
 * [Dobby](https://github.com/LSPosed/Dobby)：ZN `inlineHook` API 背后的进程内代码 hook 引擎
-* [LSPlt](https://github.com/LSPosed/LSPlt)：ZN `pltHook` API 背后的 PLT Hook 库
+* [LSPlt](https://github.com/Anatdx/LSPlt)：ZN `pltHook` API 背后的 PLT Hook 库，与 YukiZygisk 使用的是同一个
 * [PLTI](https://github.com/PerformanC/PLTI)：注入器自身使用的 PLT Hook
 * [CSOLoader](https://github.com/ThePedroo/CSOLoader)：映射标准 Zygisk 模块的自定义 ELF 加载器
 * [xz-embedded](https://tukaani.org/xz/embedded.html)：用于 `.gnu_debugdata` 的公有领域 XZ 解压器

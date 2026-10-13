@@ -44,7 +44,8 @@ COMMON_SRCS = src/common/daemon.c src/common/elf_util.c   \
 INJECTOR_SRCS = src/injector/cpp_strings.c src/injector/entry.c \
 				src/injector/hiding.c src/injector/hook.c \
 				src/injector/ptrace_clear.c \
-				src/injector/zn_api.c src/injector/zn_loader.c \
+				src/injector/zn_api.c src/injector/zn_hyos.c \
+				src/injector/zn_loader.c \
 				src/injector/unmount.c
 PTRACER_SRCS = src/ptracer/main.c src/ptracer/monitor.c src/ptracer/ptracer.c \
 			   src/ptracer/utils.c
@@ -127,11 +128,18 @@ DOBBY_INCLUDES = -I$(DOBBY_DIR)/include -I$(DOBBY_DIR)/source -I$(DOBBY_DIR)/sou
 				 -I$(DOBBY_DIR)/external -I$(DOBBY_DIR)/external/logging \
 				 -I$(DOBBY_DIR)/source/Backend/UserMode
 
-# INFO: LSPlt serves the Zygisk Next pltHook, the same engine NyaZygisk uses.
+# INFO: LSPlt serves the Zygisk Next pltHook - the engine the modules serviced
+#       here were compiled against, and the one YukiZygisk vendors as well.
 #       Like Dobby it is C++ and ships no plain Makefile, so its two sources
 #       are compiled here. Its own build defaults for the C++ runtime are
 #       kept (no -fno-exceptions/-fno-rtti) because it leans on the standard
 #       library, which the final -static-libstdc++ link bundles.
+#
+#       LOG_DISABLED maps every one of its LOG* to 0, which is how the
+#       reference builds it too. It matters twice here: LSPlt logs under the
+#       "LSPlt" tag, a name a detector reading logcat can look for, and
+#       dropping the calls drops the liblog dependency it would otherwise
+#       carry into every injected process.
 LSPLT_DIR = src/external/lsplt
 LSPLT_JNI = $(LSPLT_DIR)/lsplt/src/main/jni
 
@@ -140,7 +148,7 @@ LSPLT_OBJ_DIR = $(BUILD_DIR)/obj/$(BUILD_TYPE)/lsplt/$(ARCH)
 LSPLT_OBJS = $(addsuffix .o,$(addprefix $(LSPLT_OBJ_DIR)/,$(LSPLT_SRCS)))
 LSPLT_LIB = $(BUILD_DIR)/obj/$(BUILD_TYPE)/lsplt/$(ARCH)/liblsplt.a
 
-LSPLT_CXXFLAGS = -std=c++20 -D_GNU_SOURCE -fno-stack-protector -fomit-frame-pointer \
+LSPLT_CXXFLAGS = -std=c++20 -D_GNU_SOURCE -DLOG_DISABLED -fno-stack-protector -fomit-frame-pointer \
 				 -Wno-unused -Wno-unused-parameter
 
 INJECTOR_CXX_SRCS = src/injector/zn_lsplt_shim.cpp

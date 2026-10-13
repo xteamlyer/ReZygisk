@@ -19,6 +19,7 @@
 #include "zygisk_paths.h"
 
 #include "zn_api.h"
+#include "zn_hyos.h"
 #include "zn_loader.h"
 
 /* INFO: The command byte and the control buffer live in the shared protocol
@@ -29,10 +30,16 @@
          the modules directory itself. */
 #define ZN_MAX_MODULES 32
 
+/* INFO: One loaded module, and the self handle its callbacks were given.
+
+         What is kept is what is used: the module id names the module in a
+         registration report, the path is what the duplicate check compares, and
+         the companion descriptor is what connectCompanion hands a socket from.
+         The target is not kept because nothing asks for it - the daemon did the
+         matching, and the handle is opaque to the module that receives it. */
 struct zn_entry {
-  bool is_name;
   bool companion;
-  char *target;
+  char *module_id;
   char *lib_path;
   int companion_fd;
 };
@@ -127,12 +134,16 @@ static bool load_entry(struct zn_entry *entry, void **lib_handle, int module_fd)
     return false;
   }
 
-  /* INFO: Only the upper bound is a rejection: a module declaring a version
-            below 2 still loads and is served the table it would have reached,
-            exactly as NyaZygisk serves its oldest modules. */
-  if (module->target_api_version > ZYGISK_NEXT_API_VERSION) {
-    LOGW("The module [%s] targets Zygisk Next API version %d, only up to %d is supported",
-         entry->lib_path, module->target_api_version, ZYGISK_NEXT_API_VERSION);
+  /* INFO: The version the module was built against is what decides whether it
+            can be served at all, and the answer is taken from the ends: a
+            module newer than this build describes a table this build does not
+            have, and one older than the two contracts this fork serves describes
+            a table whose entries have moved - both would be read at the wrong
+            offsets. ZN_MODULE_API_MIN and zn_api.h say where the line is and
+            why it is drawn there. */
+  if (module->target_api_version < ZN_MODULE_API_MIN || module->target_api_version > ZYGISK_NEXT_API_VERSION) {
+    LOGW("The module [%s] targets Zygisk Next API version %d, this build serves %d to %d",
+         entry->lib_path, module->target_api_version, ZN_MODULE_API_MIN, ZYGISK_NEXT_API_VERSION);
 
     dlclose(lib);
     if (module_fd >= 0) close(module_fd);
@@ -158,14 +169,23 @@ static bool load_entry(struct zn_entry *entry, void **lib_handle, int module_fd)
     }
   }
 
-  LOGD("Loading the Zygisk Next module [%s] targeting %s", entry->lib_path, entry->target);
+  LOGD("Loading the Zygisk Next module [%s] of [%s]", entry->lib_path, entry->module_id);
 
   /* INFO: From here on the library stays loaded for the life of the process:
              its callbacks and hooks outlive this call, unloading is not an
              option. */
   *lib_handle = lib;
 
-  module->onModuleLoaded((void *)entry, zn_get_api_for_version(module->target_api_version));
+  /* INFO: The module is told which one it is before it is loaded, because a
+            HyperOS runtime module registers from inside onModuleLoaded and the
+            registration has to be attributable to the module that made it: it
+            is what the runtime reports, and what the daemon's record of a
+            specialization names. The runtime gets the id by pointer and keeps
+            it for the life of the process, so the entry it points into is never
+            moved or freed. */
+  zn_hyos_begin_module_registration(entry->module_id);
+  module->onModuleLoaded((void *)entry, zn_get_api());
+  zn_hyos_end_module_registration();
 
   return true;
 }
@@ -302,19 +322,18 @@ static void load_modules_from_daemon(const char *process_name, const char *proce
     }
 
     struct zn_entry *entry = &loaded_entries[loaded_libs_count];
-    entry->is_name = false;
     entry->companion = files[i].companion;
-    entry->target = strdup(process_name);
+    entry->module_id = strdup(files[i].module_id);
     entry->lib_path = strdup(files[i].lib_path);
     entry->companion_fd = -1;
 
-    if (entry->target == NULL || entry->lib_path == NULL) {
+    if (entry->module_id == NULL || entry->lib_path == NULL) {
       LOGE("Failed copying the Zygisk Next module \"%s\"", files[i].lib_path);
 
-      free(entry->target);
+      free(entry->module_id);
       free(entry->lib_path);
 
-      entry->target = NULL;
+      entry->module_id = NULL;
       entry->lib_path = NULL;
       entry->companion_fd = -1;
 
@@ -337,12 +356,12 @@ static void load_modules_from_daemon(const char *process_name, const char *proce
 
     if (entry->companion_fd >= 0) close(entry->companion_fd);
 
-    free(entry->target);
+    free(entry->module_id);
     free(entry->lib_path);
 
     /* INFO: The slot is free again, so leave it as "no companion" rather than
              a zeroed struct whose fd would read as a valid descriptor. */
-    entry->target = NULL;
+    entry->module_id = NULL;
     entry->lib_path = NULL;
     entry->companion_fd = -1;
   }
@@ -397,4 +416,24 @@ void zn_load_modules_for_process(const char *process_name) {
 
 size_t zn_loaded_library_count(void) {
   return loaded_libs_count;
+}
+
+/* INFO: The two halves of the HyperOS runtime's reporting path, as zn_hyos.h
+         asks for them.
+
+         Neither knows anything about the runtime, and the runtime knows nothing
+         about the daemon: what passes between them is a descriptor and a module
+         id. That is the whole reason they are handed in rather than called
+         directly from the runtime - the contract stays where the contract is,
+         and the transport stays here, next to every other exchange with the
+         daemon. */
+int zn_open_runtime_session(void) {
+  return rezygiskd_open_zn_control_session();
+}
+
+bool zn_report_runtime_module(const char *module_id) {
+  const int session = zn_hyos_child_session();
+  if (session < 0) return false;
+
+  return rezygiskd_report_zn_runtime(session, module_id);
 }
