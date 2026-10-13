@@ -226,12 +226,16 @@ void monitor_events_stop() {
          still empty, and stopping there left it empty for the rest of the
          session.
 
-         Past ten minutes the monitor goes back to writing the card on events
-         alone, which is what it did before: a device whose spawner is genuinely
-         absent would otherwise rewrite its module property file every minute
-         for as long as it is running, on behalf of a question nobody is asking
-         any more. */
-#define STATUS_REFRESH_TICKS 10
+         Half an hour rather than ten minutes, because the spawner this waits
+         for does not come up on a schedule: on the device this was written for
+         it is there when applications are being started and not before, so a
+         card read twenty minutes into a boot had reported its absence for the
+         rest of the session. Past the bound the monitor goes back to writing
+         the card on events alone, which is what it did before: a device whose
+         spawner is genuinely absent would otherwise rewrite its module property
+         file every minute for as long as it is running, on behalf of a question
+         nobody is asking any more. */
+#define STATUS_REFRESH_TICKS 30
 
 static size_t status_refresh_ticks = 0;
 
