@@ -214,11 +214,23 @@ void monitor_events_stop() {
 
          The timer exists so that somebody reading the card after a boot sees a
          system that has finished starting rather than one that had barely
-         begun, and ten minutes is far longer than that takes. Past it the
-         monitor goes back to writing the card on events alone, which is what it
-         did before: a device whose spawner is genuinely absent would otherwise
-         rewrite its module property file every minute for as long as it is
-         running, on behalf of a question nobody is asking any more. */
+         begun, and because the two halves of that card arrive at different
+         times: the monitor knows at once whether it has recognised the spawner,
+         while the daemon's half - which plan was built for which process - only
+         exists once a loader has asked it, which is later. The card is written
+         on events, and the last event of a boot can land between the two.
+
+         So it ticks a fixed number of times and then stops. It used to stop
+         early, as soon as the spawner had been recognised, which is exactly the
+         wrong moment: that is the event that writes a card whose daemon half is
+         still empty, and stopping there left it empty for the rest of the
+         session.
+
+         Past ten minutes the monitor goes back to writing the card on events
+         alone, which is what it did before: a device whose spawner is genuinely
+         absent would otherwise rewrite its module property file every minute
+         for as long as it is running, on behalf of a question nobody is asking
+         any more. */
 #define STATUS_REFRESH_TICKS 10
 
 static size_t status_refresh_ticks = 0;
@@ -235,7 +247,7 @@ static void status_refresh_callback() {
 
   status_refresh_ticks++;
 
-  if (!status.spawner_seen && status_refresh_ticks < STATUS_REFRESH_TICKS) return;
+  if (status_refresh_ticks < STATUS_REFRESH_TICKS) return;
 
   const struct itimerspec stop = { 0 };
 
