@@ -1633,6 +1633,121 @@ static void json_escape_into(char *dst, size_t cap, const char *src) {
 /* INFO: Appends the live status to `out`, every append bounded to its
          capacity: the daemon error text arrives over a socket and can be
          longer than the line is allowed to hold. */
+/* INFO: Whether a process is one of the executables the spawner hides behind.
+
+         Only the name is asked here, not the image behind it: this runs over
+         every process in /proc and the image check reads the maps. */
+static bool program_has_art_host_name(const char *program) {
+  const char *base = strrchr(program, '/');
+  base = base == NULL ? program : base + 1;
+
+  return strcmp(base, "app_process64") == 0 || strcmp(base, "artd") == 0;
+}
+
+/* INFO: A number, appended where a caller already holds the offset. It exists
+         because the bounded append above takes text, and formatting a number
+         into a temporary to hand it that text is how the buffers on this card
+         were made too small before. */
+static void append_bounded_number(char *buf, size_t cap, size_t *off, unsigned long value) {
+  char digits[16];
+  size_t at = sizeof(digits);
+  unsigned long magnitude = value;
+
+  if (magnitude == 0) {
+    at--;
+
+    digits[at] = '0';
+  }
+
+  while (magnitude != 0 && at > 0) {
+    at--;
+
+    digits[at] = (char)('0' + (int)(magnitude % 10));
+    magnitude /= 10;
+  }
+
+  while (at < sizeof(digits) && *off + 1 < cap) buf[(*off)++] = digits[at++];
+
+  buf[*off] = '\0';
+}
+
+/* INFO: Why the spawner was never recognised, as far as this side can tell.
+
+         The monitor learns about a target from init: it seizes init, sees the
+         forks, and attaches each child to catch the exec that follows. That is
+         one level deep, and a child that turns out not to be a target is let
+         go - so whatever it forks afterwards is invisible.
+
+         "The spawner was never seen" therefore has two very different causes
+         needing different fixes. The process may not be running under a name
+         this monitor knows, or it may be running but out of reach. One pass
+         over /proc tells them apart, and it only runs while the answer is still
+         no.
+
+         The executable name is all that is asked of each process here: the
+         image check reads maps, and this walks the whole table. */
+static void append_spawner_probe(char *out, size_t cap) {
+  DIR *proc = opendir("/proc");
+  if (proc == NULL) {
+    str_append_bounded(out, cap, " (proc unreadable)");
+
+    return;
+  }
+
+  pid_t spawner_pid = 0;
+  pid_t spawner_parent = 0;
+  size_t host_named = 0;
+
+  struct dirent *entry;
+  while ((entry = readdir(proc)) != NULL) {
+    if (entry->d_name[0] < '0' || entry->d_name[0] > '9') continue;
+
+    char *endptr = NULL;
+    const long pid_value = strtol(entry->d_name, &endptr, 10);
+    if (endptr == entry->d_name || *endptr != '\0' || pid_value <= 1) continue;
+
+    char program[PATH_MAX];
+    if (!program_matches((int)pid_value, program, sizeof(program))) continue;
+
+    if (zn_spawner_map_is_spawner(program)) {
+      spawner_pid = (pid_t)pid_value;
+      spawner_parent = parent_of((int)pid_value);
+
+      break;
+    }
+
+    if (program_has_art_host_name(program)) host_named++;
+  }
+
+  closedir(proc);
+
+  str_append_bounded(out, cap, " (");
+
+  if (spawner_pid == 0) {
+    /* INFO: Nothing in the system names itself the spawner. Either it is not
+              running, or it runs as one of the ART hosts - in which case only
+              the image behind that process could say, and the count is what
+              tells a reader whether there was anything to look at. */
+    str_append_bounded(out, cap, "no hyos_spawner process, ");
+
+    size_t off = strlen(out);
+    append_bounded_number(out, cap, &off, (unsigned long)host_named);
+    str_append_bounded(out, cap, " app_process64/artd running");
+
+    return;
+  }
+
+  size_t off = strlen(out);
+  str_append_bounded(out, cap, "hyos_spawner is pid ");
+  off = strlen(out);
+  append_bounded_number(out, cap, &off, (unsigned long)spawner_pid);
+  str_append_bounded(out, cap, ", parent ");
+  off = strlen(out);
+  append_bounded_number(out, cap, &off, (unsigned long)spawner_parent);
+  str_append_bounded(out, cap, spawner_parent == 1 ? " (init - its exec was missed)"
+                                                  : " (not init - out of the traced tree)");
+}
+
 /* INFO: The Zygisk Next half of the status line.
 
          Three different faults all look like "my Zygisk Next module does not
@@ -1642,7 +1757,12 @@ static void json_escape_into(char *dst, size_t cap, const char *src) {
          down, read back for the same line. A release build keeps no log of
          any of it, and the card is where somebody actually looks. */
 static void append_zn_status_text(char *out, size_t cap) {
-  str_append_bounded(out, cap, status.spawner_seen ? ", ZN: spawner seen" : ", ZN: spawner unseen");
+  if (status.spawner_seen) {
+    str_append_bounded(out, cap, ", ZN: spawner seen");
+  } else {
+    str_append_bounded(out, cap, ", ZN: spawner unseen");
+    append_spawner_probe(out, cap);
+  }
 
   int fd = 0;
 

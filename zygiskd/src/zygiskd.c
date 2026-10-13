@@ -1066,10 +1066,12 @@ static bool refresh_module_dir_cache(const struct stat *dir_st) {
          answer is written to a file instead, and the monitor puts it on the
          card, which is where a user looks.
 
-         Only requests from a process that hosts the runtime are kept: something
-         a zygote-class target names, or the process that reported a runtime
-         image. An application asking for its own plan is the common case and
-         says nothing about whether the Zygisk Next path works. */
+         Only requests from a process that hosts the runtime are kept: one the
+         zygote-class names resolve to - which is a question about the process's
+         own name, not about the spelling a manifest wrote - or the process that
+         reported a runtime image. An application asking for its own plan is the
+         common case and says nothing about whether the Zygisk Next path
+         works. */
 #define ZN_STATUS_SLOTS 3
 #define ZN_STATUS_NAME_MAX 64
 #define ZN_STATUS_LINE_MAX 220
@@ -1353,7 +1355,7 @@ static bool collect_zn_modules(const char *process_name, const char *process_pat
 
   /* INFO: Written for the same reason the line above is logged, and for the
             case the log cannot reach: a release build has no log at all. */
-  if ((image_path != NULL && image_path[0] != '\0') || zn_target_is_zygote_class(process_name)) {
+  if ((image_path != NULL && image_path[0] != '\0') || zn_process_is_zygote_class(process_name)) {
     zn_status_record(process_name, dirs_walked, lists_valid, rows_examined, rows_matched, example_target);
   }
 
