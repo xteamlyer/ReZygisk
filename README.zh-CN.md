@@ -4,7 +4,7 @@
 
 VexZygisk 是一个面向 KernelSU 与 APatch 的独立 Zygisk 实现，基于 ReZygisk。
 
-整个代码库已完全用 C 重写，不仅结构更清晰、更易读懂，二进制也更小更快。此外还引入了自定义链接器，让 VexZygisk 能够应对未来的检测手段：标准 Zygisk 模块改由内置的 csoloader 映射，不再经过系统链接器，从而规避该路径上基于链接器的检测；而 Zygisk Next 模块仍按契约预期通过系统链接器加载。
+整个代码库已用 C 重写，不仅结构更清晰、更易读懂，二进制也更小更快。仅有的两处 C++ 是 vendored 引擎要求的桥接——LSPlt 桥与 inline hook 引擎——各自收敛在一个翻译单元里，注入器其余部分仍是 C。此外还引入了自定义链接器，让 VexZygisk 能够应对未来的检测手段：标准 Zygisk 模块改由内置的 csoloader 映射，不再经过系统链接器，从而规避该路径上基于链接器的检测；而 Zygisk Next 模块仍按契约预期通过系统链接器加载。
 
 本项目**每次只构建一种 Root 方案**：KernelSU 版与 APatch 版是同一次 CI 运行产出的两个独立压缩包，各自只携带自己的后端——包内不含另一种 Root 方案的任何痕迹。
 
@@ -93,7 +93,7 @@ VexZygisk 实现了 Zygisk Next API，因此针对它编写的模块——其中
 |-------------------|----------------------------------------------------------|
 | `PLTI`            | 供注入器自身使用的简单 Android PLT Hook |
 | `LSPlt`           | Android PLT Hook 库，支撑 ZN 的 `pltHook` API |
-| `Dobby`           | 进程内 inline hook 引擎，支撑 ZN 的 `inlineHook` API |
+| `ihook`           | 从 YukiZygisk 整份取用的 inline hook 引擎，支撑 ZN 的 `inlineHook` API |
 | `CSOLoader`       | 自定义 ELF 加载器，用于映射标准 Zygisk 模块          |
 | `xz-embedded`     | 用于 ELF `.gnu_debugdata` 的 XZ 解压                |
 
@@ -156,15 +156,13 @@ make ROOT_IMPL=apatch release  # explicit form
 本仓库建立在其他项目的工作之上，下面的列表说明了各部分与其来源的对应关系。
 
 * [ReZygisk](https://github.com/PerformanC/ReZygisk)：本仓库所 fork 并用 C 重写的上游项目
-* [NyaZygisk](https://github.com/HSSkyBoy/NyaZygisk)：本仓库 Zygisk Next 路径最初的移植来源。移植过来的部分——尤其是 HyperOS Runtime 与模块加载器——已按 Zygisk Next 声明的契约重写，ZN 路径中已不再保留其形状
-* [YukiZygisk](https://github.com/Rouyashiki/YukiZygisk)：本仓库所遵循的 Zygisk Next 契约的参考实现——HyperOS Runtime（spawner 的识别方式、投递 `onAppSpecialized` 的 fork 与 `selinux_android_setcontext` hook，以及上报回传所走的控制会话）、`zn_modules.txt` 读取器与模块 API 版本门
+* [YukiZygisk](https://github.com/Rouyashiki/YukiZygisk)：本仓库所遵循的 Zygisk Next 契约的参考实现——HyperOS Runtime（spawner 的识别方式、投递 `onAppSpecialized` 的 fork 与 `selinux_android_setcontext` hook，以及上报回传所走的控制会话）、`zn_modules.txt` 读取器、模块 API 版本门，以及整份取入 `loader/src/external/ihook/` 的 inline hook 引擎
 * [ZygiskNext](https://github.com/Dr-TSNG/ZygiskNext)：Zygisk Next 模块架构的最初设计，以及 VexZygisk 实现的那套 API
 * [ZygiskNextNext](https://github.com/VeryBaaad/ZygiskNextNext)：独立 Zygisk Next API 的参考实现
 * [Magisk](https://github.com/topjohnwu/Magisk)：现代 Android Root 与 Zygisk 本身的基石
 * [OnyxZygisk](https://github.com/OnyxZygisk/OnyxZygisk)：仅回滚的挂载模型——痕迹选择逻辑，以及被隐藏进程在自身挂载树副本上执行的就地回滚
 * [KernelSU](https://github.com/tiann/KernelSU)：KernelSU 版所通信的内核接口
 * [APatch](https://github.com/bmax121/APatch)：APatch 版一并管理的内核补丁
-* [Dobby](https://github.com/LSPosed/Dobby)：ZN `inlineHook` API 背后的进程内代码 hook 引擎
 * [LSPlt](https://github.com/Anatdx/LSPlt)：ZN `pltHook` API 背后的 PLT Hook 库，与 YukiZygisk 使用的是同一个
 * [PLTI](https://github.com/PerformanC/PLTI)：注入器自身使用的 PLT Hook
 * [CSOLoader](https://github.com/ThePedroo/CSOLoader)：映射标准 Zygisk 模块的自定义 ELF 加载器

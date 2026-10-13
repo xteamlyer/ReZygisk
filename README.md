@@ -4,7 +4,7 @@
 
 VexZygisk is a standalone implementation of Zygisk for KernelSU and APatch, based on ReZygisk.
 
-The codebase has been rewritten to C entirely, bringing not only a much cleaner codebase that is easier to follow, but also lighter binaries that are also faster. Custom linkers also have been introduced to future-proof VexZygisk against future detections: standard Zygisk modules are mapped by the built-in csoloader instead of the system linker, defeating linker-based detection on that path, while Zygisk Next modules keep loading through the system linker as their contract expects.
+The codebase has been rewritten to C, bringing not only a much cleaner codebase that is easier to follow, but also lighter binaries that are also faster. The two places where a vendored engine is C++ - the LSPlt bridge and the inline hook engine - are confined to one translation unit each, so the rest of the injector stays C. Custom linkers also have been introduced to future-proof VexZygisk against future detections: standard Zygisk modules are mapped by the built-in csoloader instead of the system linker, defeating linker-based detection on that path, while Zygisk Next modules keep loading through the system linker as their contract expects.
 
 The project builds for **one root solution at a time**: the KernelSU flavour and the APatch flavour are separate archives produced by the same CI run, and each one carries only its own backend — no traces of the other root solution ship inside.
 
@@ -142,7 +142,7 @@ VexZygisk speaks the Zygisk Next API, so modules written against it — recent L
 |-------------------|----------------------------------------------------------|
 | `PLTI`            | Simple PLT Hook for Android, used by the injector itself |
 | `LSPlt`           | PLT hooking library for Android, serves the ZN `pltHook` API |
-| `Dobby`           | In-process inline hooking engine, serves the ZN `inlineHook` API |
+| `ihook`           | Inline hooking engine taken whole from YukiZygisk, serves the ZN `inlineHook` API |
 | `CSOLoader`       | Custom ELF loader, maps standard Zygisk modules          |
 | `xz-embedded`     | XZ decompression for ELF `.gnu_debugdata`                |
 
@@ -206,15 +206,13 @@ This repository stands on other projects' work; the credits below map the
 pieces to their sources.
 
 * [ReZygisk](https://github.com/PerformanC/ReZygisk): The base project this repository forks and rewrites in C
-* [NyaZygisk](https://github.com/HSSkyBoy/NyaZygisk): Where this fork's Zygisk Next path was first ported from. What came over has since been rewritten against the contract Zygisk Next declares — the HyperOS runtime above all, and the module loader with it — so the ZN path no longer carries its shape
-* [YukiZygisk](https://github.com/Rouyashiki/YukiZygisk): The reference implementation of the Zygisk Next contract this fork follows — the HyperOS runtime (how the spawner is found, the fork and `selinux_android_setcontext` hooks that deliver `onAppSpecialized`, and the control session a report travels back over), the `zn_modules.txt` reader and the module API gate
+* [YukiZygisk](https://github.com/Rouyashiki/YukiZygisk): The reference implementation of the Zygisk Next contract this fork follows — the HyperOS runtime (how the spawner is found, the fork and `selinux_android_setcontext` hooks that deliver `onAppSpecialized`, and the control session a report travels back over), the `zn_modules.txt` reader, the module API gate, and the inline hook engine, taken whole into `loader/src/external/ihook/`
 * [ZygiskNext](https://github.com/Dr-TSNG/ZygiskNext): The original Zygisk Next module architecture and the API VexZygisk speaks
 * [ZygiskNextNext](https://github.com/VeryBaaad/ZygiskNextNext): Reference implementation for the standalone Zygisk Next API
 * [Magisk](https://github.com/topjohnwu/Magisk): The foundation of modern Android root and Zygisk itself
 * [OnyxZygisk](https://github.com/OnyxZygisk/OnyxZygisk): The revert-only mount model — the trace selection and the in-place revert a hidden process runs on its own copy of the mount tree
 * [KernelSU](https://github.com/tiann/KernelSU): The kernel interface the KernelSU flavour talks to
 * [APatch](https://github.com/bmax121/APatch): The kernel patch that the APatch flavour manages alongside
-* [Dobby](https://github.com/LSPosed/Dobby): In-process code hooking engine behind the ZN `inlineHook` API
 * [LSPlt](https://github.com/Anatdx/LSPlt): PLT hooking library behind the ZN `pltHook` API, the same one YukiZygisk vendors
 * [PLTI](https://github.com/PerformanC/PLTI): PLT hooking used by the injector itself
 * [CSOLoader](https://github.com/ThePedroo/CSOLoader): The custom ELF loader that maps standard Zygisk modules
