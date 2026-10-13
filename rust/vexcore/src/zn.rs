@@ -18,6 +18,11 @@ use core::ffi::{c_char, CStr};
 /// The prefix that says whether the target is a process name or a path.
 const PREFIX_LEN: usize = 5;
 
+/// The two spellings of the module id in a library path, longest first so the
+/// braced one is answered before the bare one can match a prefix of it.
+const MODULE_ID_BRACED: &[u8] = b"${moduleId}";
+const MODULE_ID_BARE: &[u8] = b"$moduleId";
+
 /// How many whitespace-separated tokens one line may have. The format needs
 /// three and the C version stopped at eight; a line with more is read as its
 /// first eight, which is what that version did with it too.
@@ -93,22 +98,88 @@ unsafe fn write_cstr(out: *mut c_char, capacity: usize, value: &[u8]) -> bool {
     true
 }
 
-/// The library path when the line gave a relative one: the module directory, a
-/// separator, and then the name - which is what the C version built with a
-/// `malloc` and an `snprintf`, for the same result.
-unsafe fn write_joined(out: *mut c_char, capacity: usize, dir: &[u8], name: &[u8]) -> bool {
-    let total = dir.len() + 1 + name.len();
-    if total + 1 > capacity {
+/// Writes the library path a line asked for, and answers false when it does not
+/// fit.
+///
+/// A relative library is relative to the module's own directory, which is what
+/// makes the per-module switches mean anything - the same join the C version
+/// built with a `malloc` and an `snprintf`.
+///
+/// Both spellings of the module id stand for the directory's *name* rather than
+/// its path, which is the name the root solution knows the module by. Neither
+/// used to be expanded, so a manifest that wrote one resolved to a literal file
+/// name that cannot exist and the module silently never loaded - the same class
+/// of failure as a target that names a process this build never injects.
+///
+/// The expansion happens before the absolute test, exactly as the reference
+/// does it. A placeholder expands to a name, so it can never turn a relative
+/// path into an absolute one, and the test stays answerable from the raw token.
+unsafe fn write_lib_path(out: *mut c_char, capacity: usize, dir: &[u8], value: &[u8],
+                         module_name: &[u8]) -> bool {
+    let dst = out as *mut u8;
+    let mut at: usize = 0;
+
+    if value.first() != Some(&b'/') {
+        if dir.len() + 1 > capacity {
+            return false;
+        }
+
+        // SAFETY: the check above sized the directory and the separator.
+        unsafe {
+            core::ptr::copy_nonoverlapping(dir.as_ptr(), dst, dir.len());
+            *dst.add(dir.len()) = b'/';
+        }
+
+        at = dir.len() + 1;
+    }
+
+    let mut cursor = 0usize;
+
+    while cursor < value.len() {
+        let rest = &value[cursor..];
+
+        let expanded = if rest.starts_with(MODULE_ID_BRACED) {
+            Some((module_name, MODULE_ID_BRACED.len()))
+        } else if rest.starts_with(MODULE_ID_BARE) {
+            Some((module_name, MODULE_ID_BARE.len()))
+        } else {
+            None
+        };
+
+        // SAFETY: every write is bounded by `capacity`, and the answer is false
+        //         rather than a truncation - a half-written path is a path to
+        //         something else.
+        unsafe {
+            match expanded {
+                Some((name, skip)) => {
+                    if at + name.len() > capacity {
+                        return false;
+                    }
+
+                    core::ptr::copy_nonoverlapping(name.as_ptr(), dst.add(at), name.len());
+                    at += name.len();
+                    cursor += skip;
+                }
+                None => {
+                    if at + 1 > capacity {
+                        return false;
+                    }
+
+                    *dst.add(at) = value[cursor];
+                    at += 1;
+                    cursor += 1;
+                }
+            }
+        }
+    }
+
+    if at + 1 > capacity {
         return false;
     }
 
-    // SAFETY: the three copies together come to `total` bytes plus the
-    //         terminator, all inside the buffer the check above sized.
+    // SAFETY: the terminator is inside the buffer the check above sized.
     unsafe {
-        core::ptr::copy_nonoverlapping(dir.as_ptr(), out as *mut u8, dir.len());
-        *out.add(dir.len()) = b'/' as c_char;
-        core::ptr::copy_nonoverlapping(name.as_ptr(), out.add(dir.len() + 1) as *mut u8, name.len());
-        *out.add(total) = 0;
+        *dst.add(at) = 0;
     }
 
     true
@@ -173,23 +244,50 @@ pub unsafe extern "C" fn vexcore_zn_parse_line(
 
     let target = &first[PREFIX_LEN..];
 
-    // INFO: The flag is looked for between the target and the library - the
-    //       library is always last, so the two ends are never flags.
-    let companion = tokens.items[1..tokens.count - 1]
-        .iter()
-        .any(|token| token.bytes == b"companion");
+    // INFO: `companion` is a flag and not a position. It is recognised wherever
+    //       it sits between the target and the library, and the library is the
+    //       last token that is not a flag. Reading the library as "the last
+    //       token" gave a manifest that wrote the flag after it a library path
+    //       of the literal string "companion" - a module that silently never
+    //       loaded.
+    let mut library_index = tokens.count - 1;
+    while library_index > 1 && tokens.items[library_index].bytes == b"companion" {
+        library_index -= 1;
+    }
 
-    let library = tokens.items[tokens.count - 1].bytes;
+    // INFO: What is left there has to be a library rather than another flag: a
+    //       line of nothing but flags after the target says nothing.
+    if tokens.items[library_index].bytes == b"companion" {
+        return false;
+    }
 
-    // SAFETY: each write is bounded by the capacity passed alongside the
-    //         buffer, and answers false rather than truncating.
+    let library = tokens.items[library_index].bytes;
+
+    // INFO: Every other occurrence of the flag is a flag, wherever it sits -
+    //       before the library, after it, or in both places at once.
+    let mut companion = false;
+    for index in 1..tokens.count {
+        if index != library_index && tokens.items[index].bytes == b"companion" {
+            companion = true;
+        }
+    }
+
+    // INFO: The name the root solution knows the module by: the last component
+    //       of the directory the manifest was read from. This is what the two
+    //       placeholders in a library path stand for.
+    let mut name_at = 0usize;
+    for (index, &byte) in module_dir.iter().enumerate() {
+        if byte == b'/' {
+            name_at = index + 1;
+        }
+    }
+
+    // SAFETY: the write is bounded by the capacity passed alongside the buffer,
+    //         and answers false rather than truncating.
     let written = unsafe {
         write_cstr(out_target, out_target_cap, target)
-            && if library.first() == Some(&b'/') {
-                write_cstr(out_lib, out_lib_cap, library)
-            } else {
-                write_joined(out_lib, out_lib_cap, module_dir, library)
-            }
+            && write_lib_path(out_lib, out_lib_cap, module_dir, library,
+                              &module_dir[name_at..])
     };
 
     if !written {

@@ -505,36 +505,83 @@ fn a_path_line_keeps_an_absolute_library_as_it_is() {
 }
 
 #[test]
-fn the_companion_flag_is_read_between_the_target_and_the_library() {
-    // INFO: The flag is looked for strictly between the target and the library,
-    //       and the library is the last token - so a line that puts "companion"
-    //       at the end sets no flag and hands "companion" back as the library.
+fn the_companion_flag_is_read_wherever_it_sits() {
+    // INFO: `companion` is a flag and not a position. It is recognised wherever
+    //       it sits between the target and the library, and the library is the
+    //       last token that is not a flag - so a manifest that writes the flag
+    //       after the library still gets a library.
     //
-    //       That is what the C version did with the same line, and it is pinned
-    //       here rather than corrected: this change moves the parser, it does
-    //       not change what a module's file means. Anything that reads the flag
-    //       as a position instead wants a change of its own, with the module
-    //       documents to go with it.
-    assert_eq!(
-        parse(c"name=com.example.app companion lib64/lib.so", MODULE_DIR),
-        Parsed::Line {
-            is_name: true,
-            companion: true,
-            target: "com.example.app".to_string(),
-            library: "/data/adb/modules/example/lib64/lib.so".to_string(),
-        },
-        "the flag before the library is read"
-    );
+    //       This used to be pinned the other way round: the library was read as
+    //       "the last token", which gave such a manifest a library path of the
+    //       literal string "companion" and a module that silently never loaded.
+    //       The reference reads it as a flag, and so does this.
+    for line in [
+        c"name=com.example.app companion lib64/lib.so",
+        c"name=com.example.app lib64/lib.so companion",
+        c"name=com.example.app companion lib64/lib.so companion",
+    ] {
+        assert_eq!(
+            parse(line, MODULE_DIR),
+            Parsed::Line {
+                is_name: true,
+                companion: true,
+                target: "com.example.app".to_string(),
+                library: "/data/adb/modules/example/lib64/lib.so".to_string(),
+            },
+            "line {:?}",
+            line
+        );
+    }
+}
 
+#[test]
+fn the_module_id_stands_for_the_directory_name_in_a_library_path() {
+    // INFO: Both spellings expand to the directory's *name*, which is the name
+    //       the root solution knows the module by - not to its path, and not to
+    //       nothing. Neither used to be expanded, so a manifest that wrote one
+    //       resolved to a literal file name that cannot exist.
+    const NAMED: &CStr = c"/data/adb/modules/zygisk_lsposed";
+
+    for line in [
+        c"path=/system_ext/bin/hyos_spawner /data/adb/modules/${moduleId}/lib/arm64-v8a/libzygisk.so",
+        c"path=/system_ext/bin/hyos_spawner /data/adb/modules/$moduleId/lib/arm64-v8a/libzygisk.so",
+    ] {
+        assert_eq!(
+            parse(line, NAMED),
+            Parsed::Line {
+                is_name: false,
+                companion: false,
+                target: "/system_ext/bin/hyos_spawner".to_string(),
+                library: "/data/adb/modules/zygisk_lsposed/lib/arm64-v8a/libzygisk.so"
+                    .to_string(),
+            },
+            "line {:?}",
+            line
+        );
+    }
+
+    // A relative library is joined first and expanded after, so the module
+    // directory appears once and the placeholder once.
     assert_eq!(
-        parse(c"name=com.example.app lib64/lib.so companion", MODULE_DIR),
+        parse(c"name=zygote ${moduleId}/lib.so", NAMED),
         Parsed::Line {
             is_name: true,
             companion: false,
-            target: "com.example.app".to_string(),
-            library: "/data/adb/modules/example/companion".to_string(),
-        },
-        "the flag after the library is not, and the last token is the library"
+            target: "zygote".to_string(),
+            library: "/data/adb/modules/zygisk_lsposed/zygisk_lsposed/lib.so".to_string(),
+        }
+    );
+
+    // The braced spelling is answered as a whole: the brace is consumed, not
+    // emitted, and what follows it is left alone.
+    assert_eq!(
+        parse(c"name=x ${moduleId}.so", NAMED),
+        Parsed::Line {
+            is_name: true,
+            companion: false,
+            target: "x".to_string(),
+            library: "/data/adb/modules/zygisk_lsposed/zygisk_lsposed.so".to_string(),
+        }
     );
 }
 
@@ -559,6 +606,8 @@ fn lines_that_say_nothing_are_refused() {
         c"# a comment",                   // one token
         c"name=",                         // a prefix and nothing else
         c"name=x",                        // a target but no library
+        c"name=x companion",              // a target and a flag, still no library
+        c"name=x companion companion",    // flags and nothing else
         c"com.example.app lib.so",        // no prefix
         c"lib=com.example.app lib.so",    // a prefix this format does not have
         c"path=",                         // a prefix and nothing else
