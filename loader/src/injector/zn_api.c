@@ -444,7 +444,7 @@ _Static_assert(sizeof(struct ZygiskNextAPI) == 10 * sizeof(void *),
 _Static_assert(offsetof(struct ZygiskNextAPI, getRuntime) == 9 * sizeof(void *),
                "getRuntime is the last entry of the Zygisk Next API table");
 _Static_assert(offsetof(struct ZygiskNextRuntime, registerModule) ==
-               ((2 * sizeof(int) + alignof(void *) - 1) & ~(alignof(void *) - 1)),
+               ((2 * sizeof(int) + _Alignof(void *) - 1) & ~(_Alignof(void *) - 1)),
                "registerModule sits after the two ints of the runtime table");
 
 /* INFO: The table every Zygisk Next module is served.
