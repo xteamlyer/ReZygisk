@@ -547,7 +547,7 @@ static void dispatch_daemon_command(uint8_t cmd) {
         LOGI("Stop tracing requested");
 
         tracing_state = STOPPING;
-        monitor_stop_reason = "user requested";
+        monitor_stop_reason = "stopped with `ctl stop`";
 
         ptrace(PTRACE_INTERRUPT, 1, 0, 0);
         update_status(NULL);
@@ -559,7 +559,17 @@ static void dispatch_daemon_command(uint8_t cmd) {
       LOGI("Prepare for exit ...");
 
       tracing_state = EXITING;
-      monitor_stop_reason = "user requested";
+
+      /* INFO: The only thing in this repository that sends this is the module's
+                own installer, which stops the monitor so that its rewrite of
+                module.prop cannot race the status line, and which does not
+                start one again in that session - the manager's own flow is
+                "install, then reboot". Nothing is injected from that moment to
+                the next boot, so the line the card keeps until then is the last
+                thing a user sees, and "user requested" read as "the module is
+                broken" for as long as it took to work out that the injection
+                had simply stopped at the install. */
+      monitor_stop_reason = "an update was installed - reboot to start it";
 
       update_status(NULL);
       monitor_events_stop();
