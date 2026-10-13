@@ -210,6 +210,19 @@ void monitor_events_stop() {
          for. */
 #define STATUS_REFRESH_SECONDS 60
 
+/* INFO: And how many times it is worth doing.
+
+         The timer exists so that somebody reading the card after a boot sees a
+         system that has finished starting rather than one that had barely
+         begun, and ten minutes is far longer than that takes. Past it the
+         monitor goes back to writing the card on events alone, which is what it
+         did before: a device whose spawner is genuinely absent would otherwise
+         rewrite its module property file every minute for as long as it is
+         running, on behalf of a question nobody is asking any more. */
+#define STATUS_REFRESH_TICKS 10
+
+static size_t status_refresh_ticks = 0;
+
 static void status_refresh_callback() {
   uint64_t expirations = 0;
 
@@ -220,11 +233,13 @@ static void status_refresh_callback() {
 
   (void)update_status(NULL);
 
-  if (status.spawner_seen) {
-    const struct itimerspec stop = { 0 };
+  status_refresh_ticks++;
 
-    if (timerfd_settime(status_refresh_fd, 0, &stop, NULL) == -1) PLOGE("timerfd_settime");
-  }
+  if (!status.spawner_seen && status_refresh_ticks < STATUS_REFRESH_TICKS) return;
+
+  const struct itimerspec stop = { 0 };
+
+  if (timerfd_settime(status_refresh_fd, 0, &stop, NULL) == -1) PLOGE("timerfd_settime");
 }
 
 static bool status_refresh_init() {
