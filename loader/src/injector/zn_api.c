@@ -1,17 +1,15 @@
-#include <dirent.h>
 #include <limits.h>
-#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include <dobby.h>
 #include <sys/types.h>
 
 #include "elf_util.h"
 #include "logging.h"
 #include "misc.h"
+#include "zn_ihook.h"
 #include "zn_lsplt.h"
 
 #include "zn_api.h"
@@ -223,168 +221,21 @@ static int zn_plt_hook(void *base_addr, const char *symbol, void *hook_handler, 
   return ZN_SUCCESS;
 }
 
-/* INFO: The Zygisk Next contract allows a single inline hook per address, so
-         the hooked addresses are remembered: a second request for one of them
-         is rejected instead of piling a second trampoline on top. The table
-         itself is unbounded on purpose - a module that hooks many addresses is
-         not refused at an arbitrary cap; it only fails when memory does.
+/* INFO: The inline hook entry, served by the engine the reference for this
+         contract uses (zn_ihook.h, injector/ihook_shim.cpp).
 
-         What counts as "one address" is the window a hook rewrites, not the
-         address itself: two targets a few bytes apart are one hook. The
-         reference measures that window as the length of the patch it plants, so
-         the same constant is used for it here. */
-#if defined(__aarch64__)
-#define ZN_INLINE_HOOK_PATCH_SIZE 8
-#else
-#define ZN_INLINE_HOOK_PATCH_SIZE 10
-#endif
-
-static pthread_mutex_t zn_hooked_lock = PTHREAD_MUTEX_INITIALIZER;
-static uintptr_t *zn_hooked = NULL;
-static size_t zn_hooked_count = 0;
-static size_t zn_hooked_capacity = 0;
-
-/* INFO: A range that cannot be reasoned about at all answers true, which is
-         "treat it as an overlap" rather than "no overlap". */
-static bool zn_ranges_overlap(uintptr_t first, size_t first_size, uintptr_t second, size_t second_size) {
-  if (first_size == 0 || second_size == 0 ||
-      first > UINTPTR_MAX - first_size || second > UINTPTR_MAX - second_size) {
-    return true;
-  }
-
-  return first < second + second_size && second < first + first_size;
-}
-
-/* INFO: Whether this process has a single thread to its name.
-
-         The reference refuses an inline hook anywhere else, because its engine
-         rewrites the instruction stream while other threads may still be
-         executing it. Dobby stops the other threads itself, so the engine here
-         does not need the gate - but the refusal is something a module can see,
-         and the same call has to answer the same way on either implementation,
-         so it is kept rather than dropped. */
-static bool zn_process_is_single_threaded(void) {
-  DIR *tasks = opendir("/proc/self/task");
-  if (tasks == NULL) return false;
-
-  unsigned int count = 0;
-  struct dirent *entry;
-
-  while ((entry = readdir(tasks)) != NULL) {
-    if (entry->d_name[0] < '0' || entry->d_name[0] > '9') continue;
-    if (++count > 1) break;
-  }
-
-  closedir(tasks);
-
-  return count == 1;
-}
-
-static bool zn_window_is_free(uintptr_t address) {
-  for (size_t i = 0; i < zn_hooked_count; i++) {
-    if (zn_ranges_overlap(address, ZN_INLINE_HOOK_PATCH_SIZE, zn_hooked[i], ZN_INLINE_HOOK_PATCH_SIZE)) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-static void zn_forget_hooked(uintptr_t address) {
-  for (size_t i = 0; i < zn_hooked_count; i++) {
-    if (zn_hooked[i] != address) continue;
-
-    zn_hooked[i] = zn_hooked[zn_hooked_count - 1];
-    zn_hooked_count--;
-
-    return;
-  }
-}
-
-/* INFO: The slot is claimed before hooking so two threads racing for the same
-         address cannot both get past the check. */
-static int zn_claim_address(uintptr_t address) {
-  pthread_mutex_lock(&zn_hooked_lock);
-
-  if (!zn_window_is_free(address)) {
-    pthread_mutex_unlock(&zn_hooked_lock);
-
-    LOGW("The address %p already carries an inline hook, rejecting the new one", (void *)address);
-
-    return ZN_FAILED;
-  }
-
-  if (zn_hooked_count == zn_hooked_capacity) {
-    size_t capacity = zn_hooked_capacity == 0 ? 16 : zn_hooked_capacity * 2;
-
-    uintptr_t *grown = (uintptr_t *)realloc(zn_hooked, capacity * sizeof(uintptr_t));
-
-    if (grown == NULL) {
-      pthread_mutex_unlock(&zn_hooked_lock);
-
-      LOGE("Failed growing the inline hook table for %p", (void *)address);
-
-      return ZN_FAILED;
-    }
-
-    zn_hooked = grown;
-    zn_hooked_capacity = capacity;
-  }
-
-  zn_hooked[zn_hooked_count++] = address;
-
-  pthread_mutex_unlock(&zn_hooked_lock);
-
-  return ZN_SUCCESS;
-}
-
+         What used to be here - the table of hooked addresses, the window
+         comparison and the single-thread gate - went with the engine, because
+         all three are its rules rather than the contract's: the window is the
+         length of the patch it plants, and the gate is there because it
+         rewrites the instruction stream. A second copy of them on this side
+         would be a second answer to the same question. */
 static int zn_inline_hook(void *target, void *addr, void **original) {
-  if (target == NULL || addr == NULL) return ZN_FAILED;
-
-  if (!zn_process_is_single_threaded()) {
-    LOGE("Refusing the inline hook on %p: this process has more than one thread", target);
-
-    return ZN_FAILED;
-  }
-
-  if (zn_claim_address((uintptr_t)target) != ZN_SUCCESS) return ZN_FAILED;
-
-  dobby_dummy_func_t backup = NULL;
-  if (DobbyHook(target, (dobby_dummy_func_t)(uintptr_t)addr, &backup) != RS_SUCCESS) {
-    LOGE("Failed placing the inline hook on %p", target);
-
-    pthread_mutex_lock(&zn_hooked_lock);
-    zn_forget_hooked((uintptr_t)target);
-    pthread_mutex_unlock(&zn_hooked_lock);
-
-    return ZN_FAILED;
-  }
-
-  if (original != NULL) *original = (void *)backup;
-
-  return ZN_SUCCESS;
+  return zn_ihook_install(target, addr, original) ? ZN_SUCCESS : ZN_FAILED;
 }
 
 static int zn_inline_unhook(void *target) {
-  if (target == NULL) return ZN_FAILED;
-
-  if (!zn_process_is_single_threaded()) {
-    LOGE("Refusing to unhook %p: this process has more than one thread", target);
-
-    return ZN_FAILED;
-  }
-
-  if (DobbyDestroy(target) != 0) {
-    LOGE("Failed removing the inline hook on %p", target);
-
-    return ZN_FAILED;
-  }
-
-  pthread_mutex_lock(&zn_hooked_lock);
-  zn_forget_hooked((uintptr_t)target);
-  pthread_mutex_unlock(&zn_hooked_lock);
-
-  return ZN_SUCCESS;
+  return zn_ihook_uninstall(target) ? ZN_SUCCESS : ZN_FAILED;
 }
 
 /* INFO: st_value is a link-time vaddr; the runtime address is the mapped ELF

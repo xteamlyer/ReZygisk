@@ -4,10 +4,6 @@
 [submodule "CSOLoader"]
 	path = loader/src/external/csoloader
 	url = https://github.com/ThePedroo/CSOLoader
-[submodule "Dobby"]
-	path = loader/src/external/dobby
-	url = https://github.com/LSPosed/Dobby.git
-
 [submodule "LSPlt"]
 	path = loader/src/external/lsplt
 	url = https://github.com/Anatdx/LSPlt.git

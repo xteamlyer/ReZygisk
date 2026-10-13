@@ -31,10 +31,9 @@
            the entry — and nothing else. Two things a real linker does on top of
            that were therefore never done:
 
-             - DT_INIT_ARRAY was never walked, so the five C++ global
-               constructors of the bundled engines never ran. Dobby and LSPlt
-               kept zeroed internal state, so hooks were accepted and then did
-               nothing.
+             - DT_INIT_ARRAY was never walked, so the C++ global constructors
+               of the bundled engines never ran. LSPlt kept zeroed internal
+               state, so hooks were accepted and then did nothing.
              - the object was never registered in the linker's soinfo list, so
                dl_iterate_phdr/dladdr could not see it from inside the target.
                That is what LSPosed probes when it reports "Zygisk Next API is
@@ -43,8 +42,8 @@
            Letting the target's own linker do the load fixes both by
            construction rather than by imitation: it walks DT_INIT_ARRAY itself
            and publishes a soinfo. This mirrors what the reference
-           implementation does, and it is why adding Dobby there required no
-           change to its injection code at all. */
+           implementation does, and it is why a bundled engine needs no
+           accommodation in the injection path at all. */
 /* INFO: The message dlopen left in the target, read back out of it. It is the
          only place the real reason (missing soname, bad ELF, denied namespace)
          shows up - this side sees a NULL and nothing else.

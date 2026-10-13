@@ -1,7 +1,8 @@
 //! Fails when a built binary grows past its size budget.
 //!
-//! libzygisk.so statically links five engines (csoloader, PLTI, Dobby, LSPlt
-//! and the LZMA decoder), so a careless dependency can balloon it unnoticed.
+//! libzygisk.so statically links its engines (csoloader, PLTI, LSPlt, the
+//! vendored inline hook engine and the LZMA decoder), so a careless dependency
+//! can balloon it unnoticed.
 //! The limits sit roughly 15% above the sizes measured when the budget was
 //! introduced; raise them deliberately when a feature genuinely needs the
 //! space, and re-measure both flavours when the loader's dependency set

@@ -28,8 +28,8 @@ else
 	TYPE_LDFLAGS =
 endif
 
-# INFO: The loader is pure C, so the C++-only switches stay with Dobby's own
-#       CXXFLAGS below.
+# INFO: The loader itself is C. The two C++ islands it links - the LSPlt bridge
+#       and the inline hook bridge - carry their own flags where they are built.
 LOADER_CFLAGS = -std=c18 -D_GNU_SOURCE -Wall -Wextra -fno-stack-protector -fomit-frame-pointer \
 				-Wno-builtin-macro-redefined                                                 \
 				$(ROOT_IMPL_DEF)                                                            \
@@ -56,7 +56,6 @@ PTRACER_OBJS = $(patsubst src/ptracer/%.c,$(OBJ_DIR)/ptracer/%.o,$(PTRACER_SRCS)
 
 PLTI_LIB = $(BUILD_DIR)/obj/$(BUILD_TYPE)/plti/$(ARCH)/libplti.a
 CSOLOADER_LIB = $(BUILD_DIR)/obj/$(BUILD_TYPE)/csoloader/$(ARCH)/libcsoloader.a
-DOBBY_LIB = $(BUILD_DIR)/obj/$(BUILD_TYPE)/dobby/$(ARCH)/libdobby.a
 
 LIBCOMMON = $(OBJ_DIR)/libcommon.a
 
@@ -67,73 +66,30 @@ LIBPTRACE_STRIPPED = $(OBJ_DIR)/stripped/libzygisk_ptrace.so
 
 PLTI_DIR = src/external/plti
 CSOLOADER_DIR = src/external/csoloader
-DOBBY_DIR = src/external/dobby
+IHOOK_DIR = src/external/ihook
 LZMA_DIR = src/external/lzma
 
 COMMON_INCLUDES = -Isrc/include -I$(LZMA_DIR)
-INJECTOR_INCLUDES = -Isrc/include -I$(PLTI_DIR)/src -I$(CSOLOADER_DIR)/include -I$(DOBBY_DIR)/include
+INJECTOR_INCLUDES = -Isrc/include -I$(PLTI_DIR)/src -I$(CSOLOADER_DIR)/include -I$(IHOOK_DIR)
 
-# INFO: Dobby is C++ and ships no Makefile, so its sources are compiled here
-#       instead of being delegated to a submake like PLTI and CSOLoader. The
-#       list mirrors Dobby's own CMakeLists for Linux/Android on ARM: the
-#       x86/ia32 and Darwin/Windows backends are left out, and the symbol
-#       resolver plugin is skipped because nothing in the hook path uses it.
-DOBBY_SRCS = \
-	source/core/arch/CpuFeature.cc \
-	source/core/arch/CpuRegister.cc \
-	source/core/assembler/assembler.cc \
-	source/core/assembler/assembler-arm.cc \
-	source/core/assembler/assembler-arm64.cc \
-	source/core/codegen/codegen-arm.cc \
-	source/core/codegen/codegen-arm64.cc \
-	source/MemoryAllocator/CodeBuffer/CodeBufferBase.cc \
-	source/MemoryAllocator/AssemblyCodeBuilder.cc \
-	source/MemoryAllocator/MemoryAllocator.cc \
-	source/MemoryAllocator/NearMemoryAllocator.cc \
-	source/InstructionRelocation/arm/InstructionRelocationARM.cc \
-	source/InstructionRelocation/arm64/InstructionRelocationARM64.cc \
-	source/InterceptRouting/InterceptRouting.cpp \
-	source/InterceptRouting/Routing/FunctionInlineHook/FunctionInlineHook.cc \
-	source/InterceptRouting/Routing/FunctionInlineHook/RoutingImpl.cc \
-	source/InterceptRouting/Routing/InstructionInstrument/InstructionInstrument.cc \
-	source/InterceptRouting/Routing/InstructionInstrument/RoutingImpl.cc \
-	source/InterceptRouting/Routing/InstructionInstrument/instrument_routing_handler.cc \
-	source/InterceptRouting/RoutingPlugin/RoutingPlugin.cc \
-	source/InterceptRouting/RoutingPlugin/NearBranchTrampoline/NearBranchTrampoline.cc \
-	source/InterceptRouting/RoutingPlugin/NearBranchTrampoline/near_trampoline_arm64.cc \
-	source/TrampolineBridge/Trampoline/arm/trampoline_arm.cc \
-	source/TrampolineBridge/Trampoline/arm64/trampoline_arm64.cc \
-	source/TrampolineBridge/ClosureTrampolineBridge/common_bridge_handler.cc \
-	source/TrampolineBridge/ClosureTrampolineBridge/arm/helper_arm.cc \
-	source/TrampolineBridge/ClosureTrampolineBridge/arm/closure_bridge_arm.cc \
-	source/TrampolineBridge/ClosureTrampolineBridge/arm/ClosureTrampolineARM.cc \
-	source/TrampolineBridge/ClosureTrampolineBridge/arm64/helper_arm64.cc \
-	source/TrampolineBridge/ClosureTrampolineBridge/arm64/closure_bridge_arm64.cc \
-	source/TrampolineBridge/ClosureTrampolineBridge/arm64/ClosureTrampolineARM64.cc \
-	source/Backend/UserMode/PlatformUtil/Linux/ProcessRuntimeUtility.cc \
-	source/Backend/UserMode/UnifiedInterface/platform-posix.cc \
-	source/Backend/UserMode/ExecMemory/code-patch-tool-posix.cc \
-	source/Backend/UserMode/ExecMemory/clear-cache-tool-all.c \
-	source/dobby.cpp source/Interceptor.cpp source/InterceptEntry.cpp \
-	external/logging/logging.c external/logging/cxxlogging.cc
-
-DOBBY_OBJ_DIR = $(BUILD_DIR)/obj/$(BUILD_TYPE)/dobby/$(ARCH)
-DOBBY_OBJS = $(addsuffix .o,$(addprefix $(DOBBY_OBJ_DIR)/,$(DOBBY_SRCS)))
-
-DOBBY_CXXFLAGS = -std=c++14 -D_GNU_SOURCE -fno-rtti -fno-exceptions -fno-stack-protector \
-				 -fomit-frame-pointer -fno-unwind-tables -fno-asynchronous-unwind-tables \
-				 -Wno-deprecated-register -Wno-unused -Wno-unused-parameter \
-				 -D__DOBBY_BUILD_VERSION__='"Dobby"' -DLOGGING_DISABLE -DNDEBUG
-DOBBY_INCLUDES = -I$(DOBBY_DIR)/include -I$(DOBBY_DIR)/source -I$(DOBBY_DIR)/source/include \
-				 -I$(DOBBY_DIR)/external -I$(DOBBY_DIR)/external/logging \
-				 -I$(DOBBY_DIR)/source/Backend/UserMode
+# INFO: The inline hook engine, vendored whole from YukiZygisk (Apache-2.0,
+#       (c) Anatdx) into src/external/ihook/. Its five headers are C++ and are
+#       pulled in by src/injector/ihook_shim.cpp, which is the only translation
+#       unit that sees them; the assembler file beside them holds the capture
+#       stub the engine copies into each trampoline, and is built below.
+#
+#       This replaced Dobby, which served the same one entry - the Zygisk Next
+#       inlineHook - and was the fork's only reason to vendor a second hooking
+#       engine at all.
+IHOOK_ASM_SRC = $(IHOOK_DIR)/ihook_self_unmap.S
+IHOOK_ASM_OBJ = $(OBJ_DIR)/external/ihook/ihook_self_unmap.o
 
 # INFO: LSPlt serves the Zygisk Next pltHook - the engine the modules serviced
 #       here were compiled against, and the one YukiZygisk vendors as well.
-#       Like Dobby it is C++ and ships no plain Makefile, so its two sources
-#       are compiled here. Its own build defaults for the C++ runtime are
-#       kept (no -fno-exceptions/-fno-rtti) because it leans on the standard
-#       library, which the final -static-libstdc++ link bundles.
+#       It is C++ and ships no plain Makefile, so its two sources are compiled
+#       here. Its own build defaults for the C++ runtime are kept (no
+#       -fno-exceptions/-fno-rtti) because it leans on the standard library,
+#       which the final -static-libstdc++ link bundles.
 #
 #       LOG_DISABLED maps every one of its LOG* to 0, which is how the
 #       reference builds it too. It matters twice here: LSPlt logs under the
@@ -151,7 +107,7 @@ LSPLT_LIB = $(BUILD_DIR)/obj/$(BUILD_TYPE)/lsplt/$(ARCH)/liblsplt.a
 LSPLT_CXXFLAGS = -std=c++20 -D_GNU_SOURCE -DLOG_DISABLED -fno-stack-protector -fomit-frame-pointer \
 				 -Wno-unused -Wno-unused-parameter
 
-INJECTOR_CXX_SRCS = src/injector/zn_lsplt_shim.cpp
+INJECTOR_CXX_SRCS = src/injector/ihook_shim.cpp src/injector/zn_lsplt_shim.cpp
 INJECTOR_CXX_OBJS = $(patsubst src/injector/%.cpp,$(OBJ_DIR)/injector/%.o,$(INJECTOR_CXX_SRCS))
 
 .PHONY: all arch clean
@@ -164,7 +120,6 @@ clean:
 	rm -rf $(BUILD_DIR)/obj/$(BUILD_TYPE)/loader
 	rm -rf $(BUILD_DIR)/obj/$(BUILD_TYPE)/plti
 	rm -rf $(BUILD_DIR)/obj/$(BUILD_TYPE)/csoloader
-	rm -rf $(BUILD_DIR)/obj/$(BUILD_TYPE)/dobby
 	rm -rf $(BUILD_DIR)/obj/$(BUILD_TYPE)/lsplt
 	rm -rf $(BUILD_DIR)/obj/$(BUILD_TYPE)/vexcore
 	rm -rf $(BUILD_DIR)/obj/$(BUILD_TYPE)/vexcore-target
@@ -172,8 +127,8 @@ clean:
 # INFO: The build is delegated to a sub-make, so this one cannot see the
 #       sources it reads. Without a prerequisite the library would be built
 #       once and then taken as up to date forever, and a later submodule update
-#       would link a stale .a into libzygisk. Dobby and LSPlt below list their
-#       sources for the same reason.
+#       would link a stale .a into libzygisk. LSPlt below lists its sources for
+#       the same reason, and so does the assembler file of the ihook engine.
 PLTI_INPUTS = $(shell find $(PLTI_DIR) -type f 2>/dev/null | sort)
 CSOLOADER_INPUTS = $(shell find $(CSOLOADER_DIR) -type f 2>/dev/null | sort)
 
@@ -189,25 +144,9 @@ $(CSOLOADER_LIB): $(CSOLOADER_INPUTS)
 		NDK_PATH=$(NDK_PATH) API_LEVEL=$(API_LEVEL)                   \
 		out=$(BUILD_DIR)/obj/$(BUILD_TYPE)/csoloader/$(ARCH)
 
-$(DOBBY_OBJ_DIR)/%.c.o: $(DOBBY_DIR)/%.c
+$(IHOOK_ASM_OBJ): $(IHOOK_ASM_SRC)
 	@mkdir -p $(dir $@)
-	$(CC_ARCH) $(NDK_CFLAGS) -D_GNU_SOURCE -std=c11 -fno-stack-protector  \
-		-fomit-frame-pointer -Wno-unused -Wno-unused-parameter -DNDEBUG   \
-		$(DOBBY_INCLUDES) -fPIC -c $< -o $@
-
-$(DOBBY_OBJ_DIR)/%.cc.o: $(DOBBY_DIR)/%.cc
-	@mkdir -p $(dir $@)
-	$(CXX_ARCH) $(NDK_CFLAGS) $(DOBBY_CXXFLAGS) $(TYPE_CFLAGS) \
-		$(DOBBY_INCLUDES) -fPIC -c $< -o $@
-
-$(DOBBY_OBJ_DIR)/%.cpp.o: $(DOBBY_DIR)/%.cpp
-	@mkdir -p $(dir $@)
-	$(CXX_ARCH) $(NDK_CFLAGS) $(DOBBY_CXXFLAGS) $(TYPE_CFLAGS) \
-		$(DOBBY_INCLUDES) -fPIC -c $< -o $@
-
-$(DOBBY_LIB): $(DOBBY_OBJS)
-	@mkdir -p $(dir $@)
-	$(AR) rcs $@ $^
+	$(CC_ARCH) $(NDK_CFLAGS) -D_GNU_SOURCE -fPIC -c $< -o $@
 
 $(LSPLT_OBJ_DIR)/%.cc.o: $(LSPLT_JNI)/%.cc
 	@mkdir -p $(dir $@)
@@ -259,13 +198,13 @@ $(LIBCOMMON): $(COMMON_OBJS) $(LZMA_OBJS)
 	@mkdir -p $(dir $@)
 	$(AR) rcs $@ $^
 
-$(LIBZYGISK): $(INJECTOR_OBJS) $(INJECTOR_CXX_OBJS) $(LIBCOMMON) $(VEXCORE_LIB) $(PLTI_LIB) $(CSOLOADER_LIB) $(DOBBY_LIB) $(LSPLT_LIB)
+$(LIBZYGISK): $(INJECTOR_OBJS) $(INJECTOR_CXX_OBJS) $(IHOOK_ASM_OBJ) $(LIBCOMMON) $(VEXCORE_LIB) $(PLTI_LIB) $(CSOLOADER_LIB) $(LSPLT_LIB)
 	@mkdir -p $(dir $@)
 	$(CXX_ARCH) -fPIC -shared -Wl,-soname,libzygisk.so                    \
 		$(COMMON_LDFLAGS) $(TYPE_LDFLAGS) -nostartfiles                   \
-		$(INJECTOR_OBJS) $(INJECTOR_CXX_OBJS) $(LIBCOMMON)                \
+		$(INJECTOR_OBJS) $(INJECTOR_CXX_OBJS) $(IHOOK_ASM_OBJ) $(LIBCOMMON) \
 		$(VEXCORE_LIB)                                                    \
-		$(PLTI_LIB) $(CSOLOADER_LIB) $(DOBBY_LIB) $(LSPLT_LIB)            \
+		$(PLTI_LIB) $(CSOLOADER_LIB) $(LSPLT_LIB)                        \
 		-llog -lm -o $@
 
 $(LIBPTRACE): $(PTRACER_OBJS) $(LIBCOMMON) $(VEXCORE_LIB)
