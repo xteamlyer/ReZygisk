@@ -1,5 +1,6 @@
 #include <limits.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -154,7 +155,14 @@ static bool zn_path_matches_map(const char *want, const char *map_path) {
 
   if (want[0] == '/') return false;
 
-  return map_len > want_len && memcmp(map_path + map_len - want_len, want, want_len) == 0;
+  /* INFO: The suffix has to begin at a component boundary. Without that, a
+            name like "libc.so" would also match ".../xyzlibc.so", and the
+            resolver would hand back another library's symbols - the reference
+            draws the line in the same place. */
+  if (map_len <= want_len) return false;
+  if (map_path[map_len - want_len - 1] != '/') return false;
+
+  return memcmp(map_path + map_len - want_len, want, want_len) == 0;
 }
 
 /* INFO: The path of the library a caller named, taken from the mappings rather
@@ -426,6 +434,18 @@ static int zn_connect_companion(void *handle) {
 
   return fd;
 }
+
+/* INFO: The table is handed to a module compiled against this same header, so
+         its layout is the contract rather than an implementation detail: a field
+         that moved would hand a module the wrong function pointer without
+         anything failing to compile. The reference pins exactly these facts. */
+_Static_assert(sizeof(struct ZygiskNextAPI) == 10 * sizeof(void *),
+               "the Zygisk Next API table is ten pointers");
+_Static_assert(offsetof(struct ZygiskNextAPI, getRuntime) == 9 * sizeof(void *),
+               "getRuntime is the last entry of the Zygisk Next API table");
+_Static_assert(offsetof(struct ZygiskNextRuntime, registerModule) ==
+               ((2 * sizeof(int) + alignof(void *) - 1) & ~(alignof(void *) - 1)),
+               "registerModule sits after the two ints of the runtime table");
 
 /* INFO: The table every Zygisk Next module is served.
 

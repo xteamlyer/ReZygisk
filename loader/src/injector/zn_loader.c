@@ -59,10 +59,21 @@ static size_t loaded_libs_count = 0;
          it forks among them. */
 static void *dlopen_from_fd(int fd, const char *name, int flags) {
   android_dlextinfo info = { 0 };
-  info.flags = ANDROID_DLEXT_USE_LIBRARY_FD;
+  info.flags = ANDROID_DLEXT_USE_LIBRARY_FD | ANDROID_DLEXT_FORCE_LOAD;
   info.library_fd = fd;
 
-  void *lib = android_dlopen_ext(name, flags, &info);
+  /* INFO: The basename is tried first and the whole path second, which is the
+            reference's order: the name handed to the linker is the one the
+            library is known by inside this process, and a soname keeps the
+            soinfo and the maps listing tidy. FORCE_LOAD asks for a fresh load
+            rather than a second handle to one already loaded - and the
+            duplicate check in this file is what stops that from initialising a
+            module twice. */
+  const char *slash = strrchr(name, '/');
+  const char *base = slash == NULL ? name : slash + 1;
+
+  void *lib = android_dlopen_ext(base, flags, &info);
+  if (lib == NULL) lib = android_dlopen_ext(name, flags, &info);
   if (lib == NULL) LOGE("dlopen %s from fd %d failed: %s", name, fd, dlerror());
 
   return lib;
