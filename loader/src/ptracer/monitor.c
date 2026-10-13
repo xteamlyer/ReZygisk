@@ -23,7 +23,29 @@
 #include "monitor.h"
 
 #define MONITOR_ABI "64"
+
+/* INFO: The executables that host Android's application runtime, and so the
+         processes this monitor exists to inject.
+
+         app_process64 is the classic one. Android 15 moved the ART host into
+         the ART APEX, where the same role is carried by
+         /apex/com.android.art/bin/artd - which is also a process the Zygisk
+         Next modules of this generation ask for by name, "name=artd" being one
+         of the two targets LSPosed declares on HyperOS. Knowing only the first
+         spelling meant such a device was never injected at all, and no module
+         of that generation ever loaded. An exec of anything else is left to
+         whichever monitor owns it.
+
+         The two are kept apart from the crash-loop counter below, which is
+         about a zygote that keeps coming back rather than about every exec
+         this monitor serves. */
 #define APP_PROCESS_NAME "/system/bin/app_process64"
+#define ART_DAEMON_NAME "/apex/com.android.art/bin/artd"
+
+/* INFO: Whether this executable is a host of the application runtime. */
+static bool is_runtime_host(const char *program) {
+  return strcmp(program, APP_PROCESS_NAME) == 0 || strcmp(program, ART_DAEMON_NAME) == 0;
+}
 #define CMD_ZYGOTE_INJECTED ZYGOTE64_INJECTED
 #define CMD_DAEMON_SET_INFO DAEMON64_SET_INFO
 #define CMD_DAEMON_SET_ERROR_INFO DAEMON64_SET_ERROR_INFO
@@ -557,8 +579,16 @@ void rezygiskd_listener_stop() {
          on this side: both are a zygote that went away and came back. Counting
          a soft reboot towards the crash-loop stop is what shuts injection off
          on the third one in a row, and a single reboot costs more than one
-         count - every process matched here is /system/bin/app_process64, which
-         is also what the WebView zygote runs as, and the reboot restarts both. */
+         count - the classic zygote binary is also what the WebView zygote runs
+         as, and the reboot restarts both.
+
+         Only the classic binary counts. The ART daemon execs on its own
+         schedule for its own reasons, and counting those would shut injection
+         off the first time it did so a few times in a row. */
+static bool counts_as_zygote_restart(const char *program) {
+  return strcmp(program, APP_PROCESS_NAME) == 0;
+}
+
 #define SOFT_REBOOT_MARKER ZYGISK_TMP_PATH "/soft-reboot"
 
 static bool should_stop_inject() {
@@ -848,9 +878,9 @@ bool sigchld_listener_init() {
 static bool program_is_spawner(pid_t pid, const char *program) {
   if (zn_spawner_map_is_spawner(program)) return true;
 
-  /* INFO: Only app_process64 is ambiguous: anything else that is not the
+  /* INFO: Only a runtime host is ambiguous: anything else that is not the
             spawner by name is not the spawner. */
-  if (strcmp(program, APP_PROCESS_NAME) != 0) return false;
+  if (!is_runtime_host(program)) return false;
 
   char pid_str[32];
   snprintf(pid_str, sizeof(pid_str), "%d", pid);
@@ -889,7 +919,7 @@ static bool program_is_spawner(pid_t pid, const char *program) {
          for both instead of keeping a second copy of the table. */
 static bool match_target(pid_t pid, const char *program, const char **tracer, bool *is_spawner) {
   bool matched_spawner = program_is_spawner(pid, program);
-  if (strcmp(program, APP_PROCESS_NAME) != 0 && !matched_spawner) return false;
+  if (!is_runtime_host(program) && !matched_spawner) return false;
 
   if (tracer != NULL) *tracer = "./bin/zygisk-ptrace" MONITOR_ABI;
   if (is_spawner != NULL) *is_spawner = matched_spawner;
@@ -1273,7 +1303,7 @@ static bool hand_over_on_exec(pid_t pid) {
            has its own lifecycle and execs on its own schedule, so counting
            those execs the same way would trip the crash-loop stop after a burst
            of app launches. */
-  if (!is_spawner && should_stop_inject()) {
+  if (counts_as_zygote_restart(program) && should_stop_inject()) {
     LOGW("Zygote" MONITOR_ABI " restart too many times, stop injecting");
 
     tracing_state = STOPPING;
