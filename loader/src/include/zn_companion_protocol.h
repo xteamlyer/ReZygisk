@@ -31,20 +31,14 @@
          a companion left over from an older build never acknowledges, and
          blocking on it would turn a version skew into a hung connectCompanion
          instead of a socket that still works. */
+#include "socket_protocol.h"
+
 #define ZN_COMPANION_ACK_TIMEOUT_MS 1000
 
-/* INFO: The kernel may copy a cmsghdr into the control buffer, so it has to be
-         aligned as one instead of being a plain byte array.
-
-         Both halves of this socket need that buffer, and this header is the one
-         they already share, so it lives here. It cannot be taken from
-         socket_utils.h even though the same union sits there: that header also
-         declares read_string with the loader's signature, and this header is
-         included by the daemon, whose read_string takes a buffer and a length
-         instead. Pulling it in would be a conflicting declaration. */
-union zn_cmsg_buffer {
-  struct cmsghdr header;
-  char control[CMSG_SPACE(sizeof(int))];
-};
+/* INFO: The control-message buffer the descriptor handshake needs is in
+         socket_protocol.h, which this header includes: it is part of the
+         framing, and the framing is now shared with the daemon. It used to be
+         written out here as a second copy, because the only shared header
+         available at the time also declared the loader's read_string. */
 
 #endif /* ZN_COMPANION_PROTOCOL_H */
