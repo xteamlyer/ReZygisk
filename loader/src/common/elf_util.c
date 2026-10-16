@@ -232,7 +232,14 @@ static ElfW(Word) *offsetOf_Word(ElfW(Ehdr) *head, ElfW(Off) off) {
           caller has no directory to compare against and every mapped path has
           one. */
 static bool _find_module_base(ElfImg *img) {
-  struct maps_info *maps = parse_maps("self");
+  /* INFO: The reader that leaves no trace. This runs inside the injected
+            process, which is exactly where a read of /proc/self/maps is
+            something a detector can look for: the plain reader updates the
+            file's access time, and the fork-based one hands the descriptor
+            over from a child instead. It costs a fork per lookup, which is
+            why the tracer and the daemon keep using the plain one - their
+            reads are their own and nobody is watching them. */
+  struct maps_info *maps = parse_maps_safe("self");
   if (maps == NULL) {
     LOGE("Failed to read maps for %s", img->elf);
 
