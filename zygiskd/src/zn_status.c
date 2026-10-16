@@ -21,6 +21,7 @@
 
 #include "zn_status.h"
 
+/* INFO: What the last plans came to, for the module card.
 
          An empty plan looks the same from the loader whichever of several
          things went wrong - no module held a list, no row named this process,
