@@ -133,7 +133,8 @@ static const char kKsuMountinfo[] =
     "14 36 0:42 / /data/adb/modules rw - overlay /dev/block/loop14 rw\n"
     "15 14 0:42 /adb/modules/zygisk_test /data/adb/modules/zygisk_test/zygisk rw - overlay /dev/block/loop14 rw\n"
     "16 14 0:42 /adb/modules/violet /data/adb/modules/violet rw - overlay /dev/block/loop14 rw\n"
-    "18 36 0:29 / /mnt/passage rw - tmpfs tmpfs rw\n";
+    "18 36 0:29 / /mnt/passage rw - tmpfs tmpfs rw\n"
+    "19 36 0:43 / /data/adb/modules_extra rw - tmpfs tmpfs rw\n";
 
 static void check_parse_and_select(void) {
   printf("-- mountinfo parse and selection\n");
@@ -160,8 +161,8 @@ static void check_parse_and_select(void) {
 
   struct mount_list all = { 0 };
   CHECK(mount_list_parse(path, &all), "mount_list_parse failed");
-  CHECK(all.len == 7, "expected 7 parsed entries, got %zu", all.len);
-  if (all.len == 7) {
+  CHECK(all.len == 8, "expected 8 parsed entries, got %zu", all.len);
+  if (all.len == 8) {
     /* INFO: The second section of each line must have been split off
              correctly, or the sources would carry the fs options. */
     CHECK(strcmp(all.items[4].target, "/data/adb/modules/zygisk_test/zygisk") == 0,
@@ -188,6 +189,15 @@ static void check_parse_and_select(void) {
   CHECK(!carries_root_trace(&all.items[1], loop_source), "/system falsely selected");
   CHECK(carries_root_trace(&all.items[3], loop_source), "modules dir overlay not selected");
   CHECK(!carries_root_trace(&all.items[6], loop_source), "tmpfs mount falsely selected");
+
+  /* INFO: The boundary the shared decision is careful about, and the one case
+            here that is about the prefix rather than the source: a sibling of
+            the module directory starts with the same sixteen bytes and must
+            not be selected, or a process would lose mounts that have nothing
+            to do with the root solution. The fixture line is deliberately not
+            on the loop device, so only the path rule could select it. */
+  CHECK(!carries_root_trace(&all.items[7], loop_source),
+        "sibling of the module directory falsely selected");
 
   mount_list_free(&all);
   remove(path);
