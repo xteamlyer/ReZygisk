@@ -42,7 +42,8 @@ ZYGISKD_CFLAGS = -D_GNU_SOURCE -std=c99 -Wpedantic -Wall -Wextra -Werror  \
 ROOT_IMPL_SRC = $(if $(filter apatch,$(ROOT_IMPL)),src/root_impl/apatch.c,src/root_impl/kernelsu.c)
 
 SRCS = src/root_impl/common.c $(ROOT_IMPL_SRC) \
-	   src/companion.c src/main.c src/utils.c src/zygiskd.c src/zn_companion.c
+	   src/companion.c src/main.c src/utils.c src/zygiskd.c src/zn_companion.c \
+	   src/zn_status.c
 
 OBJS = $(patsubst src/%.c,$(OBJ_DIR)/%.o,$(SRCS))
 BIN = $(OBJ_DIR)/zygiskd
