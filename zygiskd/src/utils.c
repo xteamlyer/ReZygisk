@@ -212,10 +212,125 @@ int unix_listener_from_path(const char *restrict path) {
   return socket_fd;
 }
 
-/* INFO: The kernel copies a struct cmsghdr into the control buffer, so it has
-         to be aligned as one rather than being a plain byte array. The loader
-         uses the same shape for its side of the exchange.
+/* INFO: memfd_create() only reaches bionic from API 30, while common.mk builds
+         against a much older one, so the syscall is issued directly. */
+#ifndef MFD_CLOEXEC
+  #define MFD_CLOEXEC 0x0001U
+#endif
 
+/* INFO: Sharing a staged memfd is only safe once nobody can rewrite it:
+         F_ADD_SEALS (Linux 3.17+) makes the pages immutable for every
+         holder, so a receiver cannot map it writable and poison the loads
+         of the processes that come after it. Guarded so the file builds
+         against older headers too. */
+#ifndef MFD_ALLOW_SEALING
+  #define MFD_ALLOW_SEALING 0x0008U
+#endif
+#ifndef F_ADD_SEALS
+  #define F_ADD_SEALS 1033
+#endif
+#ifndef F_SEAL_SHRINK
+  #define F_SEAL_SHRINK 0x0002U
+  #define F_SEAL_GROW 0x0004U
+  #define F_SEAL_WRITE 0x0008U
+#endif
+
+/* INFO: One staged library: an immutable memfd copy keyed by the source
+         file's identity. ReadZnModules resolves matching modules for every
+         fork, and restaging a multi-megabyte library each time is the most
+         expensive thing the daemon does on that path; with the seal in
+         place the same memfd is handed out repeatedly at descriptor-dup
+         cost. Entries live for the daemon's lifetime; a module update
+         lands on a new identity and is restaged over its slot. */
+struct staged_library {
+  char *path;
+  struct stat st;
+  int mem_fd;
+};
+
+#define STAGED_LIBRARY_MAX 16
+
+static struct staged_library staged_libraries[STAGED_LIBRARY_MAX];
+
+/* INFO: Fills a fresh memfd with the contents of file_fd, optionally
+         sealing it. Returns -1 when the staging or the seal fails. */
+static int stage_library_bytes(int file_fd, const char *restrict path, bool seal) {
+  /* INFO: path names the failures; under NDEBUG the logs vanish and the
+            parameter would read as unused. */
+  (void) path;
+
+  int mem_fd = (int)syscall(__NR_memfd_create, "zn-module",
+                            MFD_CLOEXEC | (seal ? MFD_ALLOW_SEALING : 0));
+  if (mem_fd == -1) return -1;
+
+  /* INFO: sendfile moves the bytes inside the kernel — the source is a
+            regular file and the memfd a tmpfs one — which halves the syscall
+            count for multi-megabyte libraries; the byte loop stays as the
+            fallback for filesystem pairs that refuse it, restarting the copy
+            from scratch since sendfile may have moved part of the file. */
+  bool copied = true;
+  off_t offset = 0;
+
+  for (;;) {
+    ssize_t sent = sendfile(mem_fd, file_fd, &offset, 1 << 20);
+
+    if (sent == 0) break;
+
+    if (sent < 0) {
+      if (errno == EINTR) continue;
+
+      if (ftruncate(mem_fd, 0) == -1 || lseek(mem_fd, 0, SEEK_SET) == -1) {
+        copied = false;
+
+        break;
+      }
+
+      char buffer[65536];
+
+      for (;;) {
+        ssize_t got = read(file_fd, buffer, sizeof(buffer));
+        if (got == -1) {
+          if (errno == EINTR) continue;
+
+          LOGE("Failed reading \"%s\": %s", path, strerror(errno));
+
+          copied = false;
+
+          break;
+        }
+
+        if (got == 0) break;
+
+        if (write_loop(mem_fd, buffer, (size_t)got) != got) {
+          LOGE("Failed filling the memfd of \"%s\"", path);
+
+          copied = false;
+
+          break;
+        }
+      }
+
+      break;
+    }
+  }
+
+  if (!copied) {
+    close(mem_fd);
+
+    return -1;
+  }
+
+  /* INFO: No log on seal failure on purpose: on a kernel without sealing
+            this fires for every staged library, and the INFO comment above
+            already documents the per-call fallback. */
+  if (seal && fcntl(mem_fd, F_ADD_SEALS, F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_WRITE) == -1) {
+    close(mem_fd);
+
+    return -1;
+  }
+
+  return mem_fd;
+}
 
 /* INFO: Hands a library over as a memfd instead of a descriptor of the file
          itself, which is what lets an unprivileged target load it at all.

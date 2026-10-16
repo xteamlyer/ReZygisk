@@ -146,6 +146,6 @@ cc -std=c18 -D_GNU_SOURCE -Wall -Wextra -Werror \
 /tmp/test_zn_hyos
 
 cc -std=c18 -D_GNU_SOURCE -Wall -Wextra -Werror \
-   -Itests/host -Izygiskd/src -Izygiskd/src/root_impl \
+   -Itests/host -Iloader/src/include -Izygiskd/src -Izygiskd/src/root_impl \
    tests/host/test_apatch.c -o /tmp/test_apatch
 /tmp/test_apatch
