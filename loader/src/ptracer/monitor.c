@@ -2001,10 +2001,16 @@ static void append_status_text(char *out, size_t cap) {
       if (injected && status.daemon_running) STATUS_APPEND("✅");
       else STATUS_APPEND("⚠️");
     } else if (injected) {
-      /* INFO: "paused" is already said by the emoji at the start of this line,
-                and why by the reason appended at the end; repeating it here
-                pushed the line longer without adding anything. */
-      STATUS_APPEND("✅ injected");
+      /* INFO: Both halves of the state, because either one alone has been
+                read as the whole story. The loader is in the zygote and every
+                process forked since carries it, but a monitor that is not
+                tracing injects nothing new: a zygote or spawner that restarts
+                from here on gets nothing, and the boot ends with no injection
+                at all. A bare "✅ injected" next to the pause emoji is what
+                had people reporting a stopped monitor with a green line beside
+                it. The way back is named here because it is the one thing
+                neither the emoji nor the reason says. */
+      STATUS_APPEND("⚠️ injected, but not tracing - a restarted zygote is not injected again (resume from the module action)");
     } else {
       STATUS_APPEND("❌");
     }
@@ -2159,6 +2165,45 @@ static bool update_status(const char *message) {
   return true;
 }
 
+/* INFO: A description a previous monitor wrote carries its status run in
+         front of the pristine text, and the capture below takes the whole tail
+         verbatim - so without this, every later write prints that old run
+         again under the new one. That is not cosmetic: a card whose last write
+         happened while the monitor was stopped kept saying "stopped" for the
+         rest of the boot, next to a fresh run that said it was running, and a
+         reader had no way to tell which of the two described the process in
+         front of them. It is also the only way a stale run ever outlives the
+         session that wrote it, since the boot-stage reset only restores the
+         file between boots.
+
+         One run is "[<status>] <Modules: ... · >", and nothing else is ever
+         written in front of the description, so the cut is anchored at the
+         start. The loop is for a file that already accumulated runs: each pass
+         removes the frontmost one. */
+static void strip_written_status(char *tail) {
+  for (int pass = 0; pass < 8; pass++) {
+    if (tail[0] != '[') return;
+
+    char *closing = strchr(tail, ']');
+    if (closing == NULL) return;
+
+    char *rest = closing + 1;
+    if (*rest == ' ') rest++;
+
+    /* INFO: The module list follows the status inside the same run and is
+              regenerated on every write as well; left in place it would be
+              printed once per accumulated run. */
+    if (strncmp(rest, "Modules: ", sizeof("Modules: ") - 1) == 0) {
+      char *separator = strstr(rest, " \u00b7 ");
+      if (separator == NULL) return;
+
+      rest = separator + sizeof(" \u00b7 ") - 1;
+    }
+
+    memmove(tail, rest, strlen(rest) + 1);
+  }
+}
+
 static bool prepare_environment() {
   FILE *orig_prop = fopen(ZYGISK_MODULE_PROP, "r");
   if (orig_prop == NULL) {
@@ -2175,8 +2220,16 @@ static bool prepare_environment() {
               so a module.prop with lines longer than expected cannot walk
               either section past its end. */
     if (strncmp(line, "description=", strlen("description=")) == 0) {
+      const size_t tag_len = strlen("description=");
+
       str_append_bounded(pre_section, sizeof(pre_section), "description=");
-      str_append_bounded(post_section, sizeof(post_section), line + strlen("description="));
+
+      /* INFO: Stripped in place, on the reader's own buffer: what survives is
+                the pristine text the file carried before any monitor wrote to
+                it, and that is the only part a write has to preserve. */
+      strip_written_status(line + tag_len);
+      str_append_bounded(post_section, sizeof(post_section), line + tag_len);
+
       after_description = true;
 
       continue;
