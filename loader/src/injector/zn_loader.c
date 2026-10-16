@@ -395,7 +395,14 @@ static void load_modules_from_daemon(const char *process_name, const char *proce
          connection window measured in seconds, and why an ordinary one still
          keeps the short spacing it can afford; zn_loader.h states the same
          contract for those callers. */
+bool zn_injected_target = false;
+
 void zn_load_all_modules(uint8_t connect_retry, uint32_t connect_delay_us) {
+  /* INFO: This process is a target: the loader runs in it because the monitor
+            injected it here, and the modules it is about to load are mapped into
+            it as they load. */
+  zn_injected_target = true;
+
   char *process_path = read_process_path();
   if (process_path == NULL) {
     LOGE("Failed resolving the current process path");

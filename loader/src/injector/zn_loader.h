@@ -55,6 +55,16 @@ void zn_load_all_modules(uint8_t connect_retry, uint32_t connect_delay_us);
          specializes, so one connection attempt is enough. */
 void zn_load_modules_for_process(const char *process_name);
 
+/* INFO: Whether this process is one the loader was injected into, as opposed to
+         one it was loaded into on an application's behalf.
+
+         The two differ in what is still happening to their mapping tables: a
+         target is having its own modules mapped into it while they load, so
+         anything read about it has to be current, and an application's table is
+         already complete by the time a module asks about it. The Zygisk Next
+         entries keep their mapping table accordingly - see zn_api.c. */
+extern bool zn_injected_target;
+
 /* INFO: Opens a fresh connection to the companion of the module behind
          `handle`, which is the self handle it received in onModuleLoaded.
          Returns the socket, or -1 when there is no reachable companion. */

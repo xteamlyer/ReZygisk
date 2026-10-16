@@ -46,98 +46,157 @@
          into freed memory handed to a module. parse_maps_safe is what makes the
          read safe at all: it hands the file over from a child, so a maps read
          can never deadlock against this process's own allocator. */
-static struct maps_info *zn_own_maps(const char *what, const void *at) {
-  struct maps_info *maps = parse_maps_safe("self");
-  if (maps == NULL) LOGE("Failed to scan maps for the %s at %p", what, at);
+/* INFO: The mapping table kept for the Zygisk Next entries, and the rule for
+         when it is read again.
 
-  return maps;
+         Reading the table costs a fork, and an application pays it once per
+         module that targets it: the plan for an application is loaded on every
+         fork, and each module's onModuleLoaded may resolve a library. So the
+         table is taken once per application and reused, which is what the
+         reference does too and for the same reason.
+
+         A process the loader was injected into is not cached. Its own modules
+         are being mapped into it while they load, so a table read a moment ago
+         is already behind; zn_injected_target is what tells the two apart.
+
+         The risk of a kept table is a library that has gone, answered as though
+         it were still there - a base address into freed memory handed to a
+         module. zn_forget_maps bounds it: a miss drops the table, so a library
+         mapped after it was taken is found by the next call, and the answer a
+         stale table gives in the meantime is "not mapped", which is the safe
+         direction to be wrong in. */
+static struct maps_info *zn_maps_cache = NULL;
+
+static struct maps_info *zn_maps_for_lookup(void) {
+  if (zn_injected_target) {
+    struct maps_info *fresh = parse_maps_safe("self");
+
+    if (fresh == NULL) {
+      LOGE("Failed to scan this process's maps");
+
+      return zn_maps_cache;
+    }
+
+    if (zn_maps_cache != NULL) free_maps(zn_maps_cache);
+    zn_maps_cache = fresh;
+
+    return zn_maps_cache;
+  }
+
+  if (zn_maps_cache == NULL) {
+    zn_maps_cache = parse_maps_safe("self");
+
+    if (zn_maps_cache == NULL) LOGE("Failed to scan this process's maps");
+  }
+
+  return zn_maps_cache;
+}
+
+/* INFO: Drop the kept table, so the next lookup reads the process as it is now.
+            A miss is the only signal a caller gets that what it holds is
+            behind. */
+static void zn_forget_maps(void) {
+  if (zn_maps_cache == NULL) return;
+
+  free_maps(zn_maps_cache);
+  zn_maps_cache = NULL;
 }
 
 static bool zn_map_for_base(uintptr_t base_addr, dev_t *dev, ino_t *inode, char **out_path, void **out_load_base) {
-  struct maps_info *maps = zn_own_maps("library", (void *)base_addr);
-  if (maps == NULL) return false;
+  bool found = false;
 
-  char exe[PATH_MAX] = { 0 };
-  size_t exe_len = 0;
-
-  if (base_addr == 0) {
-    const ssize_t got = read_exe_path((int)getpid(), exe, sizeof(exe));
-
-    if (got <= 0) {
-      LOGE("Failed to resolve this process's own executable");
-
-      free_maps(maps);
+  /* INFO: Twice at most. A miss drops the kept table and asks again with a
+            current one, because a library mapped after the table was taken is
+            the one case a kept table answers wrongly. In a process the loader
+            was injected into the table is current already and the second pass
+            finds the same thing. */
+  for (int attempt = 0; attempt < 2 && !found; attempt++) {
+    struct maps_info *maps = zn_maps_for_lookup();
+    if (maps == NULL) {
+      LOGE("Failed to scan maps for the library at %p", (void *)base_addr);
 
       return false;
     }
 
-    exe_len = (size_t)got;
-  }
-
-  /* INFO: The image the mapping being looked at belongs to: the last
-            offset-zero entry with the same identity, because the maps are
-            listed by address and a file's first mapping is the one at offset
-            zero. It is carried along the walk rather than searched for in it,
-            which is what this did before - a second full scan of the table for
-            every candidate, so a quadratic pass over a table that runs to
-            hundreds of entries on a running system, to find something the walk
-            had already passed. */
-  const struct map_entry *head = NULL;
-  bool found = false;
-
-  for (size_t i = 0; i < maps->length && !found; i++) {
-    struct map_entry *entry = &maps->maps[i];
-
-    if (entry->inode == 0 || entry->path == NULL) continue;
-
-    head = entry->offset == 0
-               ? entry
-               : (head != NULL && head->dev == entry->dev && head->inode == entry->inode ? head : NULL);
+    char exe[PATH_MAX] = { 0 };
+    size_t exe_len = 0;
 
     if (base_addr == 0) {
-      const size_t path_len = strip_deleted_suffix(entry->path, strlen(entry->path));
+      const ssize_t got = read_exe_path((int)getpid(), exe, sizeof(exe));
 
-      if (entry->offset != 0 || path_len != exe_len || memcmp(entry->path, exe, exe_len) != 0) continue;
-    } else {
-      /* INFO: The module may pass the load base, the load bias or any address
-                inside the library, so all three are accepted here. */
-      const uintptr_t load_base = entry->start - entry->offset;
-      const bool inside = (base_addr >= entry->start && base_addr < entry->end) ||
-                          base_addr == entry->start || base_addr == load_base;
+      if (got <= 0) {
+        LOGE("Failed to resolve this process's own executable");
 
-      if (!inside) continue;
-    }
-
-    /* INFO: Any address inside the library names it, but the identity LSPlt
-              wants is the image's own: the mapping at offset zero. A mapping
-              whose image is not in the table at all still answers, as itself -
-              which is what the scan this replaces did when it found nothing. */
-    const struct map_entry *image = head != NULL ? head : entry;
-
-    if (dev != NULL) *dev = image->dev;
-    if (inode != NULL) *inode = image->inode;
-    if (out_load_base != NULL) *out_load_base = (void *)(image->start - image->offset);
-
-    if (out_path != NULL) {
-      char *copy = strdup(image->path);
-
-      if (copy == NULL) {
-        LOGE("Failed to copy the path of the library at %p", (void *)base_addr);
-
-        break;
+        return false;
       }
 
-      /* INFO: A mapping of a file that was replaced while it was mapped
-                carries the suffix the kernel appends; the path a caller can
-                open is the one without it. */
-      copy[strip_deleted_suffix(copy, strlen(copy))] = '\0';
-      *out_path = copy;
+      exe_len = (size_t)got;
     }
 
-    found = true;
-  }
+    /* INFO: The image the mapping being looked at belongs to: the last
+               offset-zero entry with the same identity, because the maps are
+               listed by address and a file's first mapping is the one at offset
+               zero. It is carried along the walk rather than searched for in it,
+               which is what this did before - a second full scan of the table for
+               every candidate, so a quadratic pass over a table that runs to
+               hundreds of entries on a running system, to find something the walk
+               had already passed. */
+    const struct map_entry *head = NULL;
 
-  free_maps(maps);
+    for (size_t i = 0; i < maps->length && !found; i++) {
+      struct map_entry *entry = &maps->maps[i];
+
+      if (entry->inode == 0 || entry->path == NULL) continue;
+
+      head = entry->offset == 0
+                 ? entry
+                 : (head != NULL && head->dev == entry->dev && head->inode == entry->inode ? head : NULL);
+
+      if (base_addr == 0) {
+        const size_t path_len = strip_deleted_suffix(entry->path, strlen(entry->path));
+
+        if (entry->offset != 0 || path_len != exe_len || memcmp(entry->path, exe, exe_len) != 0) continue;
+      } else {
+        /* INFO: The module may pass the load base, the load bias or any address
+                  inside the library, so all three are accepted here. */
+        const uintptr_t load_base = entry->start - entry->offset;
+        const bool inside = (base_addr >= entry->start && base_addr < entry->end) ||
+                            base_addr == entry->start || base_addr == load_base;
+
+        if (!inside) continue;
+      }
+
+      /* INFO: Any address inside the library names it, but the identity LSPlt
+                wants is the image's own: the mapping at offset zero. A mapping
+                whose image is not in the table at all still answers, as itself -
+                which is what the scan this replaces did when it found nothing. */
+      const struct map_entry *image = head != NULL ? head : entry;
+
+      if (dev != NULL) *dev = image->dev;
+      if (inode != NULL) *inode = image->inode;
+      if (out_load_base != NULL) *out_load_base = (void *)(image->start - image->offset);
+
+      if (out_path != NULL) {
+        char *copy = strdup(image->path);
+
+        if (copy == NULL) {
+          LOGE("Failed to copy the path of the library at %p", (void *)base_addr);
+
+          break;
+        }
+
+        /* INFO: A mapping of a file that was replaced while it was mapped
+                  carries the suffix the kernel appends; the path a caller can
+                  open is the one without it. */
+        copy[strip_deleted_suffix(copy, strlen(copy))] = '\0';
+        *out_path = copy;
+      }
+
+      found = true;
+    }
+
+    if (!found) zn_forget_maps();
+  }
 
   if (!found) {
     LOGE("No library mapped at %p", (void *)base_addr);
@@ -189,24 +248,29 @@ static bool zn_path_matches_map(const char *want, const char *map_path) {
           and a path is what has to be read, and the mapping is where one
           becomes the other. */
 static char *zn_mapped_lib_path(const char *want) {
-  struct maps_info *maps = zn_own_maps("library", want);
-  if (maps == NULL) return NULL;
-
   char *found = NULL;
 
-  for (size_t i = 0; i < maps->length && found == NULL; i++) {
-    struct map_entry *entry = &maps->maps[i];
+  /* INFO: Twice at most, for the reason zn_map_for_base gives: a miss means the
+            table is behind, and the answer it gives in the meantime is the safe
+            one. */
+  for (int attempt = 0; attempt < 2 && found == NULL; attempt++) {
+    struct maps_info *maps = zn_maps_for_lookup();
+    if (maps == NULL) return NULL;
 
-    /* INFO: [heap], [stack] and the anonymous mappings are not files, and the
-              image has to be the one the library starts at. */
-    if (entry->inode == 0 || entry->offset != 0 || entry->path == NULL) continue;
-    if (entry->path[0] == '[') continue;
-    if (!zn_path_matches_map(want, entry->path)) continue;
+    for (size_t i = 0; i < maps->length && found == NULL; i++) {
+      struct map_entry *entry = &maps->maps[i];
 
-    found = strdup(entry->path);
+      /* INFO: [heap], [stack] and the anonymous mappings are not files, and the
+                image has to be the one the library starts at. */
+      if (entry->inode == 0 || entry->offset != 0 || entry->path == NULL) continue;
+      if (entry->path[0] == '[') continue;
+      if (!zn_path_matches_map(want, entry->path)) continue;
+
+      found = strdup(entry->path);
+    }
+
+    if (found == NULL) zn_forget_maps();
   }
-
-  free_maps(maps);
 
   return found;
 }
