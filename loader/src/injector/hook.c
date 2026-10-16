@@ -1387,6 +1387,25 @@ static void isolate_denylisted(struct zygisk_context *ctx, bool is_webview_zygot
   }
 }
 
+/* INFO: The Zygisk Next plan for the process being specialized.
+
+         Modules are resolved per process: the zygote only ever loaded the ones
+         targeting it, so an entry that names an application would stay dead
+         otherwise. Every path that specializes a process asks here, always after
+         the fd sanitizer - so the memfd and the companion sockets the load opens
+         are not treated as leaked fds and closed - and after the mount namespace
+         switch, so the daemon's handover is not lost to setns. Libraries
+         inherited from the zygote are skipped inside the loader.
+
+         Whether any Zygisk Next module exists is a daemon-wide fact, so the
+         first flags answer is remembered and every later fork skips the round
+         trip when there is nothing to resolve. */
+static void zn_load_plan_for_specializing(const char *process_name) {
+  if (zn_presence_known && !zn_modules_present) return;
+
+  zn_load_modules_for_process(process_name);
+}
+
 static void rz_app_specialize_pre(struct zygisk_context *ctx) {
   FLAG_SET(ctx, APP_SPECIALIZE);
 
@@ -1395,11 +1414,10 @@ static void rz_app_specialize_pre(struct zygisk_context *ctx) {
 
   ctx->info_flags = rezygiskd_get_process_flags(uid, ctx->process);
 
-  /* INFO: Whether any Zygisk Next module exists is a daemon-wide fact, so
-            the first flags answer is remembered and every later fork skips
-            the ReadZnModules round trip when there is nothing to resolve.
-            Unknown until an answer arrives (system_server is typically the
-            very first fork), in which case the query still runs. */
+  /* INFO: Whether any Zygisk Next module exists is a daemon-wide fact, and the
+            first flags answer is the only place it is learned. Unknown until
+            that answer arrives - system_server is typically the very first
+            fork - in which case the query still runs. */
   if (!zn_presence_known) {
     zn_modules_present = (ctx->info_flags & PROCESS_ZN_PRESENT) == PROCESS_ZN_PRESENT;
     zn_presence_known = true;
@@ -1487,8 +1505,7 @@ static void rz_nativeSpecializeAppProcess_pre(struct zygisk_context *ctx) {
   FLAG_SET(ctx, SPECIALIZE_IN_PLACE);
 
   rz_app_specialize_pre(ctx);
-
-  if (!zn_presence_known || zn_modules_present) zn_load_modules_for_process(ctx->process);
+  zn_load_plan_for_specializing(ctx->process);
 }
 
 static void rz_nativeSpecializeAppProcess_post(struct zygisk_context *ctx) {
@@ -1513,9 +1530,7 @@ static void rz_nativeForkSystemServer_pre(struct zygisk_context *ctx) {
 
   rz_sanitize_fds(ctx);
 
-  /* INFO: Served after the fd sanitizer so the memfd and companion sockets
-             the load opens are not treated as leaked fds and closed. */
-  if (!zn_presence_known || zn_modules_present) zn_load_modules_for_process("system_server");
+  zn_load_plan_for_specializing("system_server");
 }
 
 static void rz_nativeForkSystemServer_post(struct zygisk_context *ctx) {
@@ -1545,13 +1560,7 @@ static void rz_nativeForkAndSpecialize_pre(struct zygisk_context *ctx) {
   rz_app_specialize_pre(ctx);
   rz_sanitize_fds(ctx);
 
-  /* INFO: Zygisk Next modules are resolved per process: the zygote only ever
-             loaded the ones targeting it, so every app-targeted entry would
-             stay dead. Runs after the fd sanitizer for the same reason as in
-             the system server path, and after the mount namespace switch so
-             the daemon's handover is not lost to setns. Libraries inherited
-             from the zygote are skipped inside the loader. */
-  if (!zn_presence_known || zn_modules_present) zn_load_modules_for_process(ctx->process);
+  zn_load_plan_for_specializing(ctx->process);
 }
 
 static void rz_nativeForkAndSpecialize_post(struct zygisk_context *ctx) {
