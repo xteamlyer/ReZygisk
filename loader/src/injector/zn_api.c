@@ -37,13 +37,25 @@
           library is unloaded and another one is mapped where it was, and a
           pltHook then lands on the wrong file. Nothing here is shared between
           threads either, so no lock is needed. */
-static bool zn_map_for_base(uintptr_t base_addr, dev_t *dev, ino_t *inode, char **out_path, void **out_load_base) {
-  struct maps_info *maps = parse_maps_safe("self");
-  if (maps == NULL) {
-    LOGE("Failed to scan maps for the library at %p", (void *)base_addr);
+/* INFO: This process's own mapping table.
 
-    return false;
-  }
+         Both Zygisk Next entries that need it take it from here, and it is read
+         fresh for each of them rather than kept: the table is what says whether
+         a library is mapped, and a table held from an earlier moment answers
+         about a library that has since been unloaded - which is a base address
+         into freed memory handed to a module. parse_maps_safe is what makes the
+         read safe at all: it hands the file over from a child, so a maps read
+         can never deadlock against this process's own allocator. */
+static struct maps_info *zn_own_maps(const char *what, const void *at) {
+  struct maps_info *maps = parse_maps_safe("self");
+  if (maps == NULL) LOGE("Failed to scan maps for the %s at %p", what, at);
+
+  return maps;
+}
+
+static bool zn_map_for_base(uintptr_t base_addr, dev_t *dev, ino_t *inode, char **out_path, void **out_load_base) {
+  struct maps_info *maps = zn_own_maps("library", (void *)base_addr);
+  if (maps == NULL) return false;
 
   char exe[PATH_MAX] = { 0 };
   size_t exe_len = 0;
@@ -62,12 +74,25 @@ static bool zn_map_for_base(uintptr_t base_addr, dev_t *dev, ino_t *inode, char 
     exe_len = (size_t)got;
   }
 
+  /* INFO: The image the mapping being looked at belongs to: the last
+            offset-zero entry with the same identity, because the maps are
+            listed by address and a file's first mapping is the one at offset
+            zero. It is carried along the walk rather than searched for in it,
+            which is what this did before - a second full scan of the table for
+            every candidate, so a quadratic pass over a table that runs to
+            hundreds of entries on a running system, to find something the walk
+            had already passed. */
+  const struct map_entry *head = NULL;
   bool found = false;
 
   for (size_t i = 0; i < maps->length && !found; i++) {
     struct map_entry *entry = &maps->maps[i];
 
     if (entry->inode == 0 || entry->path == NULL) continue;
+
+    head = entry->offset == 0
+               ? entry
+               : (head != NULL && head->dev == entry->dev && head->inode == entry->inode ? head : NULL);
 
     if (base_addr == 0) {
       const size_t path_len = strip_deleted_suffix(entry->path, strlen(entry->path));
@@ -84,23 +109,17 @@ static bool zn_map_for_base(uintptr_t base_addr, dev_t *dev, ino_t *inode, char 
     }
 
     /* INFO: Any address inside the library names it, but the identity LSPlt
-              wants is the image's own: the mapping at offset zero. */
-    for (size_t j = 0; j < maps->length; j++) {
-      struct map_entry *head = &maps->maps[j];
+              wants is the image's own: the mapping at offset zero. A mapping
+              whose image is not in the table at all still answers, as itself -
+              which is what the scan this replaces did when it found nothing. */
+    const struct map_entry *image = head != NULL ? head : entry;
 
-      if (head->dev != entry->dev || head->inode != entry->inode || head->offset != 0) continue;
-
-      entry = head;
-
-      break;
-    }
-
-    if (dev != NULL) *dev = entry->dev;
-    if (inode != NULL) *inode = entry->inode;
-    if (out_load_base != NULL) *out_load_base = (void *)(entry->start - entry->offset);
+    if (dev != NULL) *dev = image->dev;
+    if (inode != NULL) *inode = image->inode;
+    if (out_load_base != NULL) *out_load_base = (void *)(image->start - image->offset);
 
     if (out_path != NULL) {
-      char *copy = strdup(entry->path);
+      char *copy = strdup(image->path);
 
       if (copy == NULL) {
         LOGE("Failed to copy the path of the library at %p", (void *)base_addr);
@@ -170,7 +189,7 @@ static bool zn_path_matches_map(const char *want, const char *map_path) {
           and a path is what has to be read, and the mapping is where one
           becomes the other. */
 static char *zn_mapped_lib_path(const char *want) {
-  struct maps_info *maps = parse_maps_safe("self");
+  struct maps_info *maps = zn_own_maps("library", want);
   if (maps == NULL) return NULL;
 
   char *found = NULL;
