@@ -761,6 +761,40 @@ static void free_plt_hook_list(void) {
   plt_hook_list_count = 0;
 }
 
+/* INFO: The mapping table the hook registrations of one batch share.
+
+         A module registers its hooks one after another and then commits, and
+         each registration used to read the maps afresh - a fork every time,
+         because the read has to stay invisible. Nothing changes between two
+         registrations of the same batch: the library being hooked is already
+         mapped, which is the only reason a register call can name it at all.
+
+         The commits are deliberately not served from here. api_plt_hook_commit
+         walks a table of its own, because a library mapped between the last
+         register and the commit has to be visible there; both of them drop
+         this one instead, so the next batch starts from the process as it is
+         then. */
+static struct maps_info *plt_hook_maps_cache = NULL;
+
+static struct maps_info *plt_hook_take_maps(bool refresh) {
+  if (refresh || plt_hook_maps_cache == NULL) {
+    struct maps_info *fresh = parse_maps_safe("self");
+    if (fresh == NULL) return NULL;
+
+    if (plt_hook_maps_cache != NULL) free_maps(plt_hook_maps_cache);
+    plt_hook_maps_cache = fresh;
+  }
+
+  return plt_hook_maps_cache;
+}
+
+static void plt_hook_forget_maps(void) {
+  if (plt_hook_maps_cache == NULL) return;
+
+  free_maps(plt_hook_maps_cache);
+  plt_hook_maps_cache = NULL;
+}
+
 static bool api_plt_hook_commit(void) {
   if (!g_ctx || g_ctx->register_info_count == 0) return false;
 
@@ -809,39 +843,51 @@ static bool api_plt_hook_commit(void) {
 
   pthread_mutex_unlock(&g_ctx->hook_info_lock);
 
+  /* INFO: The batch is over: what the registrations shared no longer describes the
+            process, because what they registered has just been mapped into it. */
+  plt_hook_forget_maps();
+
   return !any_failed;
 }
 
 static void api_plt_hook_register_v4(dev_t dev, ino_t inode, const char *symbol, void *fn, void **backup) {
   if (!g_ctx || !symbol || !fn) return;
 
-  struct maps_info *maps = parse_maps_safe("self");
-  if (!maps) {
-    LOGE("Failed to scan maps for plt_hook_register_v4");
-
-    return;
-  }
-
   uintptr_t lib_start = 0;
   const char *lib_path = NULL;
-  for (size_t i = 0; i < maps->length; i++) {
-    struct map_entry *entry = &maps->maps[i];
-    if (entry->dev != dev || entry->inode != inode) continue;
 
-    lib_start = entry->start;
-    lib_path = entry->path;
+  /* INFO: Twice at most. A library mapped after the table was taken is not in
+            it, and the answer in the meantime has to be the honest one: drop
+            the table and ask again with a current one. */
+  for (int attempt = 0; attempt < 2 && lib_path == NULL; attempt++) {
+    struct maps_info *maps = plt_hook_take_maps(attempt == 1);
+    if (maps == NULL) {
+      LOGE("Failed to scan maps for plt_hook_register_v4");
 
-    break;
+      return;
+    }
+
+    for (size_t k = 0; k < maps->length; k++) {
+      struct map_entry *entry = &maps->maps[k];
+      if (entry->dev != dev || entry->inode != inode) continue;
+
+      lib_start = entry->start;
+      lib_path = entry->path;
+
+      break;
+    }
+
+    if (lib_path == NULL) plt_hook_forget_maps();
   }
 
   if (!lib_path) {
     LOGE("Failed to find library with dev %zu and inode %zu for hook %s", (size_t)dev, (size_t)inode, symbol);
 
-    free_maps(maps);
-
     return;
   }
 
+  /* INFO: Copied while the table that named it is still held: the entry
+            belongs to the cache, and the copy is what outlives it. */
   char *lib_path_copy = strdup(lib_path);
   if (!lib_path_copy) {
     LOGE("Failed to duplicate library path for hook %s: %s", symbol, lib_path);
@@ -906,6 +952,7 @@ static bool api_plt_hook_commit_v4(void) {
   }
 
   free_plt_hook_list();
+  plt_hook_forget_maps();
 
   return !any_failed;
 }
@@ -1635,6 +1682,12 @@ static void rz_cleanup(struct zygisk_context *ctx) {
   clear_hook_info(ctx);
 
   free_plt_hook_list();
+
+  /* INFO: And the table the registrations shared goes with them: nothing will
+            ask for a hook again in this process, and holding a table that
+            describes a process that has since moved on is how a stale answer
+            gets handed to whoever asks next. */
+  plt_hook_forget_maps();
 
   /* INFO: Strip out all API function pointers */
   for (size_t i = 0; i < zygisk_module_length; i++) {
