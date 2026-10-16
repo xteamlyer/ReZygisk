@@ -2,6 +2,21 @@
 
 set -e
 
+# INFO: Stop the running session before taking the directory out from under it,
+#         in the same order the installer uses. The monitor holds the controller
+#         socket and the daemon it forked holds cp64.sock, so a process whose
+#         sockets have been removed cannot be told anything - it would keep
+#         tracing init and injecting into every target for as long as the device
+#         stays up, with the library it means to inject already gone. The daemon
+#         is named explicitly because killing the monitor does not take its
+#         child with it.
+tracer=${MODDIR:-/data/adb/modules/rezygisk}/bin/zygisk-ptrace64
+if [ -x "$tracer" ]; then
+  "$tracer" ctl exit >/dev/null 2>&1 || true
+fi
+killall -9 zygisk-ptrace64 >/dev/null 2>&1 || true
+killall -9 zygiskd64 >/dev/null 2>&1 || true
+
 export TMP_PATH=/data/adb/rezygisk
 rm -rf "$TMP_PATH"
 
