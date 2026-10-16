@@ -892,12 +892,8 @@ static void api_plt_hook_register_v4(dev_t dev, ino_t inode, const char *symbol,
   if (!lib_path_copy) {
     LOGE("Failed to duplicate library path for hook %s: %s", symbol, lib_path);
 
-    free_maps(maps);
-
     return;
   }
-
-  free_maps(maps);
 
   if (!plti_add_manual_lib(&plti_ctx, lib_path_copy, lib_start)) {
     LOGE("Failed to add manual library for hook %s: %s", symbol, lib_path_copy);
