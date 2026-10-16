@@ -6,29 +6,14 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
-/* INFO: The kernel may copy a struct cmsghdr into the control buffer, so the
-         buffer has to be aligned as one instead of being a plain byte array.
+/* INFO: The framing - the loops, the descriptor exchange, the length-prefixed
+         string - is shared with the daemon through socket_protocol.h, because
+         the two ends of the protocol have to agree byte for byte and one copy
+         of it is the only way to keep them agreeing.
 
-         The ZN companion protocol header carries an identical union and does
-         not include this one: the daemon compiles its own read_string with a
-         different signature - buffer and length instead of an allocation - so
-         pulling these declarations into that header would be a conflicting
-         declaration for its translation unit. The two unions are deliberately
-         separate, not a duplication that was missed. */
-union zygisk_cmsg_buffer {
-  struct cmsghdr header;
-  char control[CMSG_SPACE(sizeof(int))];
-};
-
-ssize_t write_loop(int fd, const void *buf, size_t count);
-
-ssize_t read_loop(int fd, void *buf, size_t len);
-
-ssize_t write_fd(int fd, int sendfd);
-
-int read_fd(int fd);
-
-ssize_t write_string(int fd, const char *str);
+         What is left here is this side's read_string, which is deliberately not
+         shared: it allocates, while the daemon's fills a caller's buffer. */
+#include "socket_protocol.h"
 
 char *read_string(int fd);
 

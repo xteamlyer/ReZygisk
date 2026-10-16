@@ -13,6 +13,8 @@
 #include "constants.h"
 #include "root_impl/common.h"
 
+#include "socket_protocol.h"
+
 /* INFO: Duplicated rather than pulled from the loader's shared header: reusing
          it would couple every file that includes utils.h to the loader's
          include tree, including the host tests, which build the daemon
@@ -109,16 +111,10 @@ int chcon(const char *path, const char *restrict context);
 
 int unix_listener_from_path(const char *path);
 
-ssize_t write_fd(int fd, int sendfd);
-int read_fd(int fd);
-
 /* INFO: *shared reports ownership: true means the fd is a daemon-cached,
          sealed copy that later requests reuse (never close it); false means
          a per-call copy the caller closes right after the handover. */
 int create_library_fd(const char *restrict path, bool *shared);
-
-ssize_t write_loop(int fd, const void *restrict buf, size_t count);
-ssize_t read_loop(int fd, void *restrict buf, size_t count);
 
 write_func_def(size_t);
 read_func_def(size_t);
@@ -128,8 +124,6 @@ read_func_def(uint32_t);
 
 write_func_def(uint8_t);
 read_func_def(uint8_t);
-
-ssize_t write_string(int fd, const char *restrict str);
 
 ssize_t read_string(int fd, char *restrict buf, size_t buf_size);
 
