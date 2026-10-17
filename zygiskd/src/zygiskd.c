@@ -2027,8 +2027,38 @@ static void serve_accepted(int client_fd, struct Context *restrict context, char
 static void serve_loop(int socket_fd, struct Context *restrict context, char *restrict argv[]) {
   bool first_process = true;
 
+  /* INFO: The set is rebuilt on every wakeup - the listener first, then one
+            entry per live control session - but the array itself is kept: it
+            grows to the high-water mark of the session and is rewritten in
+            place after that. Allocating it per wakeup made this the daemon's
+            most frequent allocation, and its failure the one that ended the
+            loop - a daemon that returns leaves every session without one until
+            the next zygote start. Sessions come and go; the peak is what the
+            array has to be sized for. */
+  struct pollfd *polled = NULL;
+  size_t polled_capacity = 0;
+
   while (1) {
     const size_t session_count = context->zn_sessions_len;
+    const size_t wanted = session_count + 1;
+
+    if (wanted > polled_capacity) {
+      size_t capacity = polled_capacity == 0 ? (size_t)16 : polled_capacity;
+
+      while (capacity < wanted) capacity *= 2;
+
+      struct pollfd *grown = realloc(polled, capacity * sizeof(struct pollfd));
+      if (grown == NULL) {
+        PLOGE("grow the poll set");
+
+        free(polled);
+
+        return;
+      }
+
+      polled = grown;
+      polled_capacity = capacity;
+    }
 
     /* INFO: The listener and every control session are waited on together. A
               spawner forks an application per launch and opens a session per
@@ -2036,17 +2066,6 @@ static void serve_loop(int socket_fd, struct Context *restrict context, char *re
               of them alone would leave the listener unserved for as long as that
               one is quiet - while the requests behind it are zygotes about to
               specialize, where a wait is felt by the user. */
-    struct pollfd *polled = malloc((session_count + 1) * sizeof(struct pollfd));
-    if (polled == NULL) {
-      /* INFO: Without room to watch the sessions, accepting more requests
-                would only fill their buffers with records nobody reads; that is
-                worse than returning here, where the monitor forks a new daemon
-                at the next zygote start. */
-      LOGE("Failed allocating the poll set");
-
-      return;
-    }
-
     polled[0].fd = socket_fd;
     polled[0].events = POLLIN;
     polled[0].revents = 0;
@@ -2057,14 +2076,14 @@ static void serve_loop(int socket_fd, struct Context *restrict context, char *re
       polled[i + 1].revents = 0;
     }
 
-    const int ready = poll(polled, (nfds_t)(session_count + 1), -1);
+    const int ready = poll(polled, (nfds_t)wanted, -1);
     if (ready == -1) {
-      free(polled);
-
       /* A signal (EINTR) only interrupts this one wait; keep serving. */
       if (errno == EINTR) continue;
 
       PLOGE("poll");
+
+      free(polled);
 
       return;
     }
@@ -2086,8 +2105,6 @@ static void serve_loop(int socket_fd, struct Context *restrict context, char *re
               (context->zn_sessions_len - i) * sizeof(int));
       context->zn_sessions_len--;
     }
-
-    free(polled);
 
     if (!listener_ready) continue;
 
@@ -2114,6 +2131,8 @@ static void serve_loop(int socket_fd, struct Context *restrict context, char *re
       }
 
       PLOGE("accept");
+
+      free(polled);
 
       return;
     }
