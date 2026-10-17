@@ -104,9 +104,38 @@ uint32_t rezygiskd_get_process_flags(uid_t uid, const char *const process) {
   int fd = rezygiskd_connect(1, REZYGISKD_RETRY_DELAY_US);
   if (fd == -1) return 0;
 
-  safe_write(write_uint8_t(fd, (uint8_t)GetProcessFlags), "GetProcessFlags action", return 0);
-  safe_write(write_uint32_t(fd, (uint32_t)uid), "uid", return 0);
-  safe_write(write_string(fd, process), "process name", return 0);
+  /* INFO: The action, the uid and the name leave in one writev instead of
+            three writes. This runs in a zygote child that is on its way to its
+            first frame, once per application launch, and the three are one
+            request: the daemon reads them back field by field, and a stream
+            socket carries no message boundaries, so how many calls the bytes
+            arrived in is not part of the protocol.
+
+            A short return is a failure and the connection is dropped, which is
+            what a failed write did before. The socket carries SO_SNDTIMEO, so
+            a short write here means the daemon stopped reading, and a request
+            against a daemon like that is worth less than the launch it would
+            delay. */
+  uint8_t action = (uint8_t)GetProcessFlags;
+  uint32_t uid_value = (uint32_t)uid;
+  size_t name_len = strlen(process);
+
+  struct iovec request[4] = {
+    { .iov_base = &action, .iov_len = sizeof(action) },
+    { .iov_base = &uid_value, .iov_len = sizeof(uid_value) },
+    { .iov_base = &name_len, .iov_len = sizeof(name_len) },
+    { .iov_base = (void *)process, .iov_len = name_len }
+  };
+
+  const size_t total = sizeof(action) + sizeof(uid_value) + sizeof(name_len) + name_len;
+
+  if (writev(fd, request, 4) != (ssize_t)total) {
+    LOGE("Failed to write GetProcessFlags with VexZygiskd");
+
+    close(fd);
+
+    return 0;
+  }
 
   uint32_t res = 0;
   safe_read(read_uint32_t(fd, &res), "process flags", return 0);
