@@ -74,6 +74,14 @@ struct Context {
            would only go stale. */
   int *zn_sessions;
   size_t zn_sessions_len;
+
+  /* INFO: The list grows by doubling and never shrinks, like the poll set
+           that reads it: on a HyperOS device a session is opened for every
+           application the spawner forks, so the entry count climbs for as long
+           as the daemon runs, and growing it one entry at a time copied the
+           whole list on each of those. The peak is what it has to be sized
+           for. */
+  size_t zn_sessions_capacity;
 };
 
 /* INFO: A Zygisk Next library resolved for one target: its path, whether the
@@ -1840,18 +1848,26 @@ static void handle_remove_module(struct Client *client) {
 static void handle_open_zn_control_session(struct Client *client) {
   struct Context *context = client->context;
 
-  int *grown = realloc(context->zn_sessions, (context->zn_sessions_len + 1) * sizeof(int));
-  if (grown == NULL) {
-    /* INFO: Nothing is confirmed and the connection is left to be closed: a
-              session the loop is not watching is worse than no session, because
-              the process that asked for it would keep writing records nobody
-              reads until one of them no longer fit the socket. */
-    LOGE("Failed growing the Zygisk Next control session list.");
+  if (context->zn_sessions_len == context->zn_sessions_capacity) {
+    const size_t capacity = context->zn_sessions_capacity == 0
+                              ? (size_t)8
+                              : context->zn_sessions_capacity * 2;
 
-    return;
+    int *grown = realloc(context->zn_sessions, capacity * sizeof(int));
+    if (grown == NULL) {
+      /* INFO: Nothing is confirmed and the connection is left to be closed: a
+                session the loop is not watching is worse than no session, because
+                the process that asked for it would keep writing records nobody
+                reads until one of them no longer fit the socket. */
+      LOGE("Failed growing the Zygisk Next control session list.");
+
+      return;
+    }
+
+    context->zn_sessions = grown;
+    context->zn_sessions_capacity = capacity;
   }
 
-  context->zn_sessions = grown;
   context->zn_sessions[context->zn_sessions_len] = client->fd;
   context->zn_sessions_len++;
 
@@ -2157,6 +2173,7 @@ static void free_zn_sessions(struct Context *restrict context) {
 
   context->zn_sessions = NULL;
   context->zn_sessions_len = 0;
+  context->zn_sessions_capacity = 0;
 }
 
 void zygiskd_start(char *restrict argv[]) {
