@@ -1201,15 +1201,26 @@ static void respawn_stale_targets(void) {
     long pid_value = strtol(entry->d_name, &endptr, 10);
     if (endptr == entry->d_name || *endptr != '\0' || pid_value <= 1) continue;
 
+    /* INFO: The parent is asked first, because it is the cheap question and the
+              one that excludes the most: the zygote and the spawner are init's
+              own services, so both are direct children of pid 1 - which no
+              application ever is - and the answer costs one read of
+              /proc/<pid>/stat.
+
+              Deciding by executable first is what made this scan expensive on
+              the device it exists for: every application runs app_process64,
+              so every one of them was handed to match_target(), which reads
+              that process's whole map table to rule out a HyperOS spawner
+              image. A late load runs this with a hundred applications up; the
+              maps of all of them were read to answer a question the parent id
+              had already answered. */
+    if (parent_of((int)pid_value) != 1) continue;
+
     char program[PATH_MAX];
     if (!program_matches((int)pid_value, program, sizeof(program))) continue;
 
     bool is_spawner = false;
     if (!match_target((pid_t)pid_value, program, NULL, &is_spawner)) continue;
-
-    /* INFO: The zygote and the spawner are init's own services, so both are
-             direct children of pid 1 - which no app process ever is. */
-    if (parent_of((int)pid_value) != 1) continue;
 
     pid_t *stale = is_spawner ? &stale_spawner : &stale_zygote;
     if (*stale == 0 || (pid_t)pid_value < *stale) *stale = (pid_t)pid_value;
@@ -1614,6 +1625,12 @@ void sigchld_listener_stop() {
 static char pre_section[1024];
 static char post_section[1024];
 static char module_text[2048];
+
+/* INFO: What a whole rewritten module.prop can hold: both sections, the module
+         list, and the status line with room for its brackets and the separator
+         that follows it. One size serves the text assembled for a write and the
+         read-back that decides whether that write has to happen at all. */
+#define PROP_TEXT_MAX (sizeof(pre_section) + sizeof(post_section) + sizeof(module_text) + 1024)
 
 /* INFO: A module that ships both a Zygisk library and a zn_modules.txt lands in
          both the plain and the Zygisk Next lists, so check for a Next twin
@@ -2133,8 +2150,57 @@ static bool write_state_json(void) {
   return true;
 }
 
+/* INFO: Whether the property file already holds exactly this text, read without
+         touching it: the answer is what keeps an unchanged card from being
+         rewritten. */
+static bool prop_holds(const char *text) {
+  FILE *prop = fopen(ZYGISK_MODULE_PROP, "r");
+  if (prop == NULL) return false;
+
+  char current[PROP_TEXT_MAX];
+  const size_t got = fread(current, 1, sizeof(current) - 1, prop);
+
+  /* INFO: A file longer than the buffer cannot be the text being compared, and
+            a full read alone would not say so. */
+  const bool longer = fgetc(prop) != EOF;
+
+  fclose(prop);
+
+  current[got] = '\0';
+
+  return !longer && got == strlen(text) && memcmp(current, text, got) == 0;
+}
+
 static bool update_status(const char *message) {
   build_module_text();
+
+  char status_text[512] = "Monitor: ";
+  if (message == NULL) append_status_text(status_text, sizeof(status_text));
+
+  /* INFO: The write replaces the file whole, so the comparison is against the
+            whole of it: the lines in front of the description, the generated
+            run, and whatever that description carried when this monitor
+            started. */
+  char wanted[PROP_TEXT_MAX];
+  const int written = snprintf(wanted, sizeof(wanted), "%s[%s] %s%s",
+                               pre_section, message ? message : status_text,
+                               module_text, post_section);
+
+  if (written < 0 || (size_t)written >= sizeof(wanted)) {
+    LOGE("status line does not fit the property buffer");
+
+    return false;
+  }
+
+  /* INFO: Written only when the file does not already say this. Opening it for
+            writing truncates it first, and the manager reads it to draw the
+            card: a write for a line that did not change is a reader that can
+            catch the card half-written, and the refresh timer fires thirty of
+            them per boot on behalf of a card that has not moved since the last
+            one. A file reset behind our back - the boot stages restore the
+            pristine copy - is a difference here, which is the other half of
+            what comparing buys. */
+  if (prop_holds(wanted)) return true;
 
   FILE *prop = fopen(ZYGISK_MODULE_PROP, "w");
   if (prop == NULL) {
@@ -2143,20 +2209,17 @@ static bool update_status(const char *message) {
     return false;
   }
 
-  /* INFO: A caller-supplied message replaces the generated line and ends the
-            update there: that path carries a transient note, not a status. */
-  if (message) {
-    fprintf(prop, "%s[%s] %s%s", pre_section, message, module_text, post_section);
-    fclose(prop);
+  fputs(wanted, prop);
 
-    return true;
+  if (fclose(prop) != 0) {
+    PLOGE("failed to close prop");
+
+    return false;
   }
 
-  char status_text[512] = "Monitor: ";
-  append_status_text(status_text, sizeof(status_text));
-
-  fprintf(prop, "%s[%s] %s%s", pre_section, status_text, module_text, post_section);
-  fclose(prop);
+  /* INFO: A caller-supplied message is a transient note and not a status, so it
+            leaves the state file describing what the last real update found. */
+  if (message != NULL) return true;
 
   if (!write_state_json()) return false;
 
