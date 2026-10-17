@@ -1195,15 +1195,11 @@ static void rz_sanitize_fds(struct zygisk_context *ctx) {
 static void rz_fork_post(struct zygisk_context *ctx) {
   sigmask(SIG_UNBLOCK, SIGCHLD);
 
-  /* INFO: The parent never runs post-specialize, where the child releases the
-            nice_name characters that were grabbed before the fork. Without a
-            release here the zygote leaks one allocation per spawned process;
-            the child's copy is freed on its own in post-specialize. */
-  if (ctx->pid > 0 && FLAG_GET(ctx, APP_FORK_AND_SPECIALIZE) && ctx->process != NULL) {
-    (*ctx->env)->ReleaseStringUTFChars(ctx->env, *ctx->args.app->nice_name, ctx->process);
-
-    ctx->process = NULL;
-  }
+  /* INFO: Nothing of the parent's to give back. The process name is taken after
+            the fork now, so only the child ever holds one and it hands it back
+            in post-specialize; the release that used to stand here existed for
+            an allocation the parent no longer makes. */
+  (void) ctx;
 
   g_ctx = NULL;
 }
@@ -1587,8 +1583,6 @@ static void rz_nativeForkSystemServer_post(struct zygisk_context *ctx) {
 }
 
 static void rz_nativeForkAndSpecialize_pre(struct zygisk_context *ctx) {
-  ctx->process = (*ctx->env)->GetStringUTFChars(ctx->env, *ctx->args.app->nice_name, NULL);
-  LOGV("pre forkAndSpecialize [%s]", ctx->process);
   FLAG_SET(ctx, APP_FORK_AND_SPECIALIZE);
 
   /* INFO: Deliberately no revert here. Stripping the mounts out of the zygote
@@ -1599,6 +1593,19 @@ static void rz_nativeForkAndSpecialize_pre(struct zygisk_context *ctx) {
            mount tree. */
   rz_fork_pre(ctx);
   if (!is_zygote_child(ctx)) return;
+
+  /* INFO: The name is read here, after the fork, and only here. Both halves
+            used to take it - the parent's copy existed only to be handed back
+            in rz_fork_post - so the zygote paid one JNI allocation, one pinned
+            string and one release per process it spawned, for a value only the
+            child ever reads: the daemon query, the webview check and the module
+            plan are all below this line. */
+  ctx->process = (*ctx->env)->GetStringUTFChars(ctx->env, *ctx->args.app->nice_name, NULL);
+  if (ctx->process == NULL) {
+    LOGW("Failed to read the process name, this process is specialized without us");
+
+    return;
+  }
 
   rz_app_specialize_pre(ctx);
   rz_sanitize_fds(ctx);
