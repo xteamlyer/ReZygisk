@@ -761,11 +761,13 @@ mod got_walk {
 
             // The program headers: the load maps the whole file, the dynamic
             // entry names its own table.
+            let file_len = self.bytes.len() as u64;
+
             put_u32(&mut self.bytes, EH_SIZE, PT_LOAD);
             put_u64(&mut self.bytes, EH_SIZE + 8, 0);
             put_u64(&mut self.bytes, EH_SIZE + 16, LOAD_VADDR);
-            put_u64(&mut self.bytes, EH_SIZE + 32, self.bytes.len() as u64); // p_filesz
-            put_u64(&mut self.bytes, EH_SIZE + 40, self.bytes.len() as u64); // p_memsz
+            put_u64(&mut self.bytes, EH_SIZE + 32, file_len); // p_filesz
+            put_u64(&mut self.bytes, EH_SIZE + 40, file_len); // p_memsz
 
             put_u32(&mut self.bytes, EH_SIZE + PH_SIZE, PT_DYNAMIC);
             let dyn_vaddr = LOAD_VADDR + dyn_at as u64;

@@ -24,11 +24,20 @@
 #define MOUNT_TYPE_MAX 128
 
 /* INFO: The sscanf widths below are these two limits minus one, spelled as
-         literals because the format string is a literal. The assert keeps the
-         pair honest: a width raised or lowered on one side alone would let the
-         scanf write past a buffer sized from the macro. */
-_Static_assert(MOUNT_FIELD_MAX == 4096, "the sscanf width %4095s must follow MOUNT_FIELD_MAX");
-_Static_assert(MOUNT_TYPE_MAX == 128, "the sscanf width %127s must follow MOUNT_TYPE_MAX");
+         literals because the format string is a literal. The check keeps the
+         pair honest: a width raised or lowered on one side alone would let
+         the scanf write past a buffer sized from the macro.
+
+         Both spellings, for the same reason vexcore.h carries both: the
+         loader is built as C18 and the daemon as C99, and _Static_assert
+         only exists in the latter from C11 on. */
+#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+_Static_assert(MOUNT_FIELD_MAX == 4096, "the scanf width %4095s must follow MOUNT_FIELD_MAX");
+_Static_assert(MOUNT_TYPE_MAX == 128, "the scanf width %127s must follow MOUNT_TYPE_MAX");
+#else
+typedef char mount_field_max_matches_scanf_width[(MOUNT_FIELD_MAX == 4096) ? 1 : -1];
+typedef char mount_type_max_matches_scanf_width[(MOUNT_TYPE_MAX == 128) ? 1 : -1];
+#endif
 
 /* INFO: One parsed mountinfo line. The mount id is carried whether or not the
          caller needs it - only the loader's revert orders by it, since nested

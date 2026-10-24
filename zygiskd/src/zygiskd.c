@@ -1502,7 +1502,7 @@ static void reload_modules(struct Context *restrict context) {
 
     struct Module *grown = realloc(context->modules, (context->len + 1) * sizeof(struct Module));
     if (grown == NULL) {
-      PLOGE("grow the module table for \"%s\"", names[s]);
+      LOGE("Failed growing the module table for \"%s\"", names[s]);
 
       close(lib_fds[s]);
       free(names[s]);
