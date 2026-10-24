@@ -33,6 +33,10 @@ typedef struct {
   uint32_t nbucket_;
   uint32_t *bucket_;
   uint32_t *chain_;
+  /* INFO: The chain length the section header vouches for (SysV `nchain`).
+          The lookups walk the chain with the symbol count as the index bound,
+          so the count has to fit the length the section actually holds. */
+  uint32_t chain_len_;
 
   uint32_t gnu_nbucket_;
   uint32_t gnu_symndx_;
@@ -41,6 +45,10 @@ typedef struct {
   uintptr_t *gnu_bloom_filter_;
   uint32_t *gnu_bucket_;
   uint32_t *gnu_chain_;
+  /* INFO: How many chain entries the section can hold, from its own extent:
+          the GNU chain's length is not written in the header, and the lookup
+          bounds its walk by the symbol count instead. */
+  uint32_t gnu_chain_len_;
 
   ElfW(Shdr) *symtab;
   ElfW(Off) symtab_offset;
@@ -48,6 +56,9 @@ typedef struct {
   size_t symtab_count;
   ElfW(Sym) *symtab_start;
   ElfW(Off) symstr_offset_for_symtab;
+  /* INFO: The size of that string table, so a symbol name offset can be
+          checked against the table it is read from. */
+  size_t symstr_size_for_symtab;
 
   /* INFO: Mini-debug info (.gnu_debugdata): an LZMA-compressed ELF holding a
             full .symtab for otherwise stripped system libraries. */

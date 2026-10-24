@@ -253,8 +253,12 @@ static bool dlopen_inject(int pid, struct user_regs_struct *regs, struct maps_in
 bool inject_on_main(int pid, const char *lib_path, uintptr_t libc_init_target, uintptr_t libc_init_got_slot) {
   LOGI("injecting %s to zygote %d via GOT hook", lib_path, pid);
 
-  /* INFO: The GOT slot is poisoned with a guaranteed-unmapped address so the
-            call to __libc_init faults and the tracer picks the process up. */
+  /* INFO: From here until the slot is restored, every failure path has to put
+            the resolved target back: leaving the poison in place means the
+            next indirect call through that GOT faults, and a target resumed
+            into that - detached or restarted - dies on the spot. The resolved
+            address is the right value even though nothing was injected; the
+            linker's lazy stub would work too, but this one is already known. */
   uintptr_t break_addr = (uintptr_t)-16;
   if (!ptrace_poke_uintptr(pid, libc_init_got_slot, break_addr)) {
     LOGE("Failed to patch GOT slot with break_addr");
@@ -264,6 +268,8 @@ bool inject_on_main(int pid, const char *lib_path, uintptr_t libc_init_target, u
 
   if (ptrace(PTRACE_CONT, pid, 0, 0) == -1) {
     PLOGE("Failed to continue to GOT break");
+
+    ptrace_poke_uintptr(pid, libc_init_got_slot, libc_init_target);
 
     return false;
   }
@@ -276,6 +282,8 @@ bool inject_on_main(int pid, const char *lib_path, uintptr_t libc_init_target, u
     parse_status(status, status_str, sizeof(status_str));
 
     LOGE("expected SIGSEGV on __libc_init GOT call, got: %s", status_str);
+
+    ptrace_poke_uintptr(pid, libc_init_got_slot, libc_init_target);
 
     return false;
   }
@@ -362,7 +370,7 @@ bool inject_on_main(int pid, const char *lib_path, uintptr_t libc_init_target, u
     return false;                             \
   }
 
-bool trace_zygote(int pid) {
+bool trace_zygote(int pid, bool exit_kill) {
   LOGI("start tracing %d (tracer %d)", pid, getpid());
 
   int status = 0;
@@ -370,9 +378,19 @@ bool trace_zygote(int pid) {
   struct kernel_version version = parse_kversion();
 
   /* INFO: EXITKILL keeps a tracer death from leaving a traced zygote behind,
-            and TRACESECCOMP lets wait_for_trace skip seccomp events. */
+            and TRACESECCOMP lets wait_for_trace skip seccomp events.
+
+            EXITKILL is the caller's decision: for a zygote it is the right
+            trade (a tracer that dies mid-injection leaves a half-poked target
+            the monitor restarts anyway), but for the HyperOS spawner it would
+            take down the one process every application comes from - so that
+            trace runs without it and a crashed tracer leaves the spawner
+            merely untraced. */
   long seize_options = 0;
-  if (version.major > 3 || (version.major == 3 && version.minor >= 8)) seize_options = PTRACE_O_EXITKILL | PTRACE_O_TRACESECCOMP;
+  if (version.major > 3 || (version.major == 3 && version.minor >= 8)) {
+    seize_options = PTRACE_O_TRACESECCOMP;
+    if (exit_kill) seize_options |= PTRACE_O_EXITKILL;
+  }
 
   if (ptrace(PTRACE_SEIZE, pid, 0, seize_options) == -1) {
     PLOGE("seize");
@@ -447,11 +465,20 @@ bool trace_zygote(int pid) {
       char status_str[64];
       parse_status(status, status_str, sizeof(status_str));
 
-      LOGE("Expected SIGTRAP or a direct SIGCONT, found: %s", status_str);
+      /* INFO: The injection is already complete, so this is a detach and not
+                a failure: reporting one would have the caller kill an
+                injected, working target. The stop's own signal is handed
+                over on detach when there is one to hand - a delivery stop
+                the target still owes - and nothing for a ptrace event,
+                which is a notification and not a signal. */
+      LOGW("Expected SIGTRAP or a direct SIGCONT after injection, found: %s; detaching", status_str);
 
-      ptrace(PTRACE_DETACH, pid, 0, 0);
+      int event = (int)((unsigned int)status >> 16);
+      int deliver = event == 0 && WIFSTOPPED(status) ? WSTOPSIG(status) : 0;
 
-      return false;
+      ptrace(PTRACE_DETACH, pid, 0, deliver);
+
+      return true;
     }
   } else {
     char status_str[64];

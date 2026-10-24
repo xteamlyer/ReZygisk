@@ -45,7 +45,10 @@ static int run_trace(int argc, char **argv) {
     return 1;
   }
 
-  if (!trace_zygote((int)pid)) {
+  /* INFO: EXITKILL only where the caller would kill the target on failure
+           anyway: a tracer death mid-injection of the spawner must leave it
+           alive and merely untraced, exactly like the detach path below. */
+  if (!trace_zygote((int)pid, do_restart)) {
     /* INFO: A failed zygote trace must not leave a broken zygote running, so
              it is killed. A failed hyos_spawner trace is only detached and
              resumed: the spawner is what starts every application, and killing

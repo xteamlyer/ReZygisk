@@ -236,7 +236,11 @@ int zn_companion_connect(void *handle) {
   header->cmsg_len = CMSG_LEN(sizeof(int));
   memcpy(CMSG_DATA(header), &sockets[1], sizeof(sockets[1]));
 
-  if (sendmsg(entry->companion_fd, &message, 0) < 0) {
+  /* INFO: MSG_NOSIGNAL: the daemon-side holder of this socket can go away
+          (a companion crash, a daemon restart), and SIGPIPE's default action
+          would take this application down with it - this runs inside the
+          module's connectCompanion(), mid-specialize. */
+  if (sendmsg(entry->companion_fd, &message, MSG_NOSIGNAL) < 0) {
     LOGE("Failed requesting a companion connection: %s", strerror(errno));
 
     close(sockets[0]);

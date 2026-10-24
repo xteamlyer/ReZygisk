@@ -68,7 +68,10 @@ struct monitor_status_view {
 
 void init_monitor();
 
-bool trace_zygote(int pid);
+/* INFO: `exit_kill` says whether a tracer death may take the target with it
+         (PTRACE_O_EXITKILL): yes for a zygote the monitor restarts anyway,
+         never for the HyperOS spawner, which every application comes from. */
+bool trace_zygote(int pid, bool exit_kill);
 
 /* INFO: The two questions the card's spawner scan asks of the monitor.
 
@@ -89,7 +92,14 @@ enum rezygiskd_command {
            they keep their numbers instead of being renumbered. */
   ZYGOTE64_INJECTED = 4,
   DAEMON64_SET_INFO = 6,
-  DAEMON64_SET_ERROR_INFO = 8
+  DAEMON64_SET_ERROR_INFO = 8,
+
+  /* INFO: One module record of the list a DAEMON64_SET_INFO announced. It is
+           its own datagram and not a field of the announcement, because a
+           datagram is the only unit this socket delivers whole: each record
+           is self-describing from its first byte, and a lost or stray
+           datagram can never be parsed as the middle of another. */
+  DAEMON64_MODULE_ENTRY = 9
 };
 
 int send_control_command(enum rezygiskd_command cmd);

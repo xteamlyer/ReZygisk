@@ -164,10 +164,16 @@ void companion_entry(int fd) {
     if (ret != sizeof(uint8_t)) {
       LOGE("Failed to send client_fd in ZygiskdCompanion: Expected %zu, got %zd", sizeof(uint8_t), ret);
 
+      /* INFO: One client that went away before its hand-off completed is
+                that client's failure: the control socket is still fine, and
+                ending the companion here would drop service for every other
+                client of this module until the daemon notices and respawns.
+                The daemon-side holder decides when the control socket is
+                done - the checks at the top of this loop. */
       free(args);
       close(client_fd);
 
-      break;
+      continue;
     }
 
     pthread_t thread;

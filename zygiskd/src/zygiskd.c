@@ -125,36 +125,131 @@ static void module_lib_path(char *out, size_t size, const char *name) {
   snprintf(out, size, "%s/%s/zygisk/%s.so", ZYGISK_MODULES_DIR, name, ARCH_STR);
 }
 
-/* INFO: A standard Zygisk module entry: the trailing zero byte tells the
-           monitor whether the module targets Zygisk Next. */
-static void send_module_info(const char *name) {
-  uint32_t module_name_len = (uint32_t)strlen(name);
-  uint8_t module_type = 0;
+/* INFO: One datagram's worth of the controller protocol, built field by
+         field and sent whole.
 
-  unix_datagram_sendto(ZYGISK_CONTROLLER_SOCKET, &module_name_len, sizeof(module_name_len));
-  unix_datagram_sendto(ZYGISK_CONTROLLER_SOCKET, name, module_name_len);
-  unix_datagram_sendto(ZYGISK_CONTROLLER_SOCKET, &module_type, sizeof(module_type));
+         The controller socket is a datagram socket, and a datagram is the
+         only unit it delivers indivisibly. The records this builds used to
+         be sent one field per sendto, which put the message's atomicity at
+         the mercy of the receiver's wakeup timing: a reader that woke
+         between two fields read a half-record and then parsed the next
+         datagram's first byte as a command. One datagram per record closes
+         that by construction. */
+#define CONTROLLER_DGRAM_MAX 4096
+
+struct controller_dgram {
+  uint8_t bytes[CONTROLLER_DGRAM_MAX];
+  size_t len;
+};
+
+static bool controller_dgram_put_u8(struct controller_dgram *restrict dgram, uint8_t value) {
+  if (dgram->len + sizeof(value) > sizeof(dgram->bytes)) return false;
+
+  dgram->bytes[dgram->len] = value;
+  dgram->len += sizeof(value);
+
+  return true;
 }
 
-/* INFO: Zygisk Next modules also carry the companion flag and every target of
-         their zn_modules.txt, so the monitor can show them. */
-static void send_zn_module_info(const struct ZnModule *module) {
-  uint32_t module_name_len = (uint32_t)strlen(module->name);
-  uint8_t module_type = 1;
-  uint8_t companion = module->companion ? 1 : 0;
-  uint32_t targets_len = (uint32_t)module->targets_len;
+static bool controller_dgram_put_u32(struct controller_dgram *restrict dgram, uint32_t value) {
+  if (dgram->len + sizeof(value) > sizeof(dgram->bytes)) return false;
 
-  unix_datagram_sendto(ZYGISK_CONTROLLER_SOCKET, &module_name_len, sizeof(module_name_len));
-  unix_datagram_sendto(ZYGISK_CONTROLLER_SOCKET, module->name, module_name_len);
-  unix_datagram_sendto(ZYGISK_CONTROLLER_SOCKET, &module_type, sizeof(module_type));
-  unix_datagram_sendto(ZYGISK_CONTROLLER_SOCKET, &companion, sizeof(companion));
-  unix_datagram_sendto(ZYGISK_CONTROLLER_SOCKET, &targets_len, sizeof(targets_len));
+  memcpy(&dgram->bytes[dgram->len], &value, sizeof(value));
+  dgram->len += sizeof(value);
 
-  for (size_t i = 0; i < module->targets_len; i++) {
-    uint32_t target_len = (uint32_t)strlen(module->targets[i]);
-    unix_datagram_sendto(ZYGISK_CONTROLLER_SOCKET, &target_len, sizeof(target_len));
-    unix_datagram_sendto(ZYGISK_CONTROLLER_SOCKET, module->targets[i], target_len);
+  return true;
+}
+
+static bool controller_dgram_put_bytes(struct controller_dgram *restrict dgram, const void *restrict data, size_t len) {
+  if (len > sizeof(dgram->bytes) || dgram->len + len > sizeof(dgram->bytes)) return false;
+
+  memcpy(&dgram->bytes[dgram->len], data, len);
+  dgram->len += len;
+
+  return true;
+}
+
+/* INFO: A length-prefixed string, the same framing the reader takes apart. */
+static bool controller_dgram_put_string(struct controller_dgram *restrict dgram, const char *restrict str) {
+  size_t len = strlen(str);
+
+  return controller_dgram_put_u32(dgram, (uint32_t)len) && controller_dgram_put_bytes(dgram, str, len);
+}
+
+static void controller_dgram_send(const struct controller_dgram *restrict dgram) {
+  unix_datagram_sendto(ZYGISK_CONTROLLER_SOCKET, dgram->bytes, dgram->len);
+}
+
+/* INFO: An entry that cannot be built whole is announced as an empty classic
+         entry instead: the count the SET_INFO record promised has to be met
+         with something the reader can walk, and a datagram that stops
+         mid-field is exactly the desync the one-record-one-datagram rule
+         exists to prevent. */
+static void send_minimal_module_entry(void) {
+  struct controller_dgram dgram = { .len = 0 };
+
+  controller_dgram_put_u8(&dgram, DAEMON_MODULE_ENTRY);
+  controller_dgram_put_string(&dgram, "");
+  controller_dgram_put_u8(&dgram, 0);
+
+  controller_dgram_send(&dgram);
+}
+
+/* INFO: A standard Zygisk module entry: the type byte tells the monitor the
+           module does not target Zygisk Next. */
+static void send_module_info(const char *name) {
+  struct controller_dgram dgram = { .len = 0 };
+
+  if (!controller_dgram_put_u8(&dgram, DAEMON_MODULE_ENTRY) ||
+      !controller_dgram_put_string(&dgram, name) ||
+      !controller_dgram_put_u8(&dgram, 0)) {
+    LOGE("The module entry for \"%s\" does not fit one datagram", name);
+
+    send_minimal_module_entry();
+
+    return;
   }
+
+  controller_dgram_send(&dgram);
+}
+
+/* INFO: Zygisk Next modules also carry the companion flag and every target
+         of their zn_modules.txt, so the monitor can show them. Targets past
+         the buffer are dropped with the count the record actually carries -
+         the entry stays parseable, which a truncated one would not be. */
+static void send_zn_module_info(const struct ZnModule *module) {
+  struct controller_dgram dgram = { .len = 0 };
+
+  if (!controller_dgram_put_u8(&dgram, DAEMON_MODULE_ENTRY) ||
+      !controller_dgram_put_string(&dgram, module->name) ||
+      !controller_dgram_put_u8(&dgram, 1) ||
+      !controller_dgram_put_u8(&dgram, module->companion ? 1 : 0) ||
+      !controller_dgram_put_u32(&dgram, 0)) {
+    LOGE("The Zygisk Next entry for \"%s\" does not fit one datagram", module->name);
+
+    send_minimal_module_entry();
+
+    return;
+  }
+
+  /* INFO: The count field was written as zero above; its position is where
+            the real count goes once the targets that fit are known. */
+  const size_t count_at = dgram.len - sizeof(uint32_t);
+
+  size_t targets_sent = 0;
+  for (size_t i = 0; i < module->targets_len; i++) {
+    struct controller_dgram probe = dgram;
+
+    if (!controller_dgram_put_string(&probe, module->targets[i])) break;
+
+    dgram = probe;
+    targets_sent++;
+  }
+
+  uint32_t sent = (uint32_t)targets_sent;
+  memcpy(&dgram.bytes[count_at], &sent, sizeof(sent));
+
+  controller_dgram_send(&dgram);
 }
 
 /* INFO: Reads zn_modules.txt and collects the targets, one per line ("name="
@@ -227,6 +322,12 @@ static bool add_zn_module(struct Context *restrict context, const char *name) {
   module->name = strdup(name);
   if (module->name == NULL) {
     LOGE("Failed to strdup for the Zygisk Next module \"%s\": %s", name, strerror(errno));
+
+    /* INFO: The name is freed here because free_modules only walks the
+              entries zn_len counts, and this one was never counted - leaving
+              it behind leaks one strdup per failure for the daemon's life. */
+    free(module->name);
+    module->name = NULL;
 
     return false;
   }
@@ -497,6 +598,13 @@ static bool zn_matches_target(const char *target, bool is_name, const char *proc
            and companion sockets alike: a stuck peer must never stall the
            zygote forks waiting behind it. */
 #define DAEMON_EXCHANGE_TIMEOUT_SECS 5
+
+/* INFO: The one exception: a HyperOS control session sits quiet between the
+           reports of the applications that inherited it, so it gets a
+           generous deadline instead of the exchange budget - generous, and
+           not infinite, because half a record written by any of those
+           applications must not block the daemon's poll loop forever. */
+#define ZN_SESSION_READ_TIMEOUT_SECS 30
 
 /* Forks a process that runs "zygiskd <mode> <fd>" and hands it the child end
    of a socket pair, so the companion keeps the daemon's SELinux domain.
@@ -1252,8 +1360,6 @@ static void send_daemon_info(const struct Context *restrict context) {
   char impl_name[LONGEST_ROOT_IMPL_NAME];
   stringify_root_impl_name(impl, impl_name);
 
-  uint32_t root_impl_len = (uint32_t)strlen(impl_name);
-
   /* INFO: The count has to match what is actually sent below: tombstoned
             slots carry no name and are not announced, so the live module
             entries are counted first. */
@@ -1262,10 +1368,20 @@ static void send_daemon_info(const struct Context *restrict context) {
     if (context->modules[i].name != NULL) modules_len++;
   }
 
-  unix_datagram_sendto(ZYGISK_CONTROLLER_SOCKET, &(uint8_t){ DAEMON_SET_INFO }, sizeof(uint8_t));
-  unix_datagram_sendto(ZYGISK_CONTROLLER_SOCKET, &root_impl_len, sizeof(root_impl_len));
-  unix_datagram_sendto(ZYGISK_CONTROLLER_SOCKET, impl_name, root_impl_len);
-  unix_datagram_sendto(ZYGISK_CONTROLLER_SOCKET, &modules_len, sizeof(modules_len));
+  /* INFO: The announcement is one datagram: header, root implementation,
+            module count. The entries follow as one datagram each, so the
+            reader never holds a record open across a wakeup. */
+  struct controller_dgram dgram = { .len = 0 };
+
+  if (!controller_dgram_put_u8(&dgram, DAEMON_SET_INFO) ||
+      !controller_dgram_put_string(&dgram, impl_name) ||
+      !controller_dgram_put_u32(&dgram, modules_len)) {
+    LOGE("The daemon info announcement does not fit one datagram");
+
+    return;
+  }
+
+  controller_dgram_send(&dgram);
 
   for (size_t i = 0; i < context->len; i++) {
     /* INFO: Tombstoned slots carry no name and are not announced. */
@@ -1279,11 +1395,172 @@ static void send_daemon_info(const struct Context *restrict context) {
   }
 }
 
-/* INFO: Re-reads the modules directory. load_modules assumes a zeroed context,
-         so the previous state is released first. */
+/* INFO: The ceiling of the reload snapshot: more modules than this are
+           beyond any install this serves, and the reload keeps what it has
+           rather than growing the stack further. */
+#define RELOAD_SNAPSHOT_MAX 512
+
+/* INFO: Re-reads the modules directory without moving a live index.
+
+         Zygotes and WebView hosts that already read the module list hold
+         indices into context->modules, and the RemoveModule tombstone exists
+         precisely to keep those stable. A rebuild-from-scratch threw that
+         away: after a zygote restart reordered the list, a companion or
+         module-dir request from a still-running process landed on whatever
+         module now sat at its index.
+
+         So the reload merges instead of replacing: slots for modules that
+         are gone are tombstoned where they sit, slots for modules that
+         stayed are refreshed in place (their library descriptor re-opened
+         from the new file), and modules that are new are appended. The
+         Zygisk Next list is rebuilt freely - it is keyed by name on both
+         sides of the protocol, never by position. */
 static void reload_modules(struct Context *restrict context) {
-  free_modules(context);
-  load_modules(context);
+  /* INFO: The directory is read into a snapshot first, so that "is this
+            module still on disk" is answered against one instant of it. */
+  char *names[RELOAD_SNAPSHOT_MAX];
+  int lib_fds[RELOAD_SNAPSHOT_MAX];
+  size_t snapshot_len = 0;
+
+  DIR *dir = opendir(ZYGISK_MODULES_DIR);
+  if (dir != NULL) {
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL && snapshot_len < RELOAD_SNAPSHOT_MAX) {
+      if (entry->d_type != DT_DIR && entry->d_type != DT_UNKNOWN) continue;
+      if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0 || strcmp(entry->d_name, "rezygisk") == 0) continue;
+
+      char disabled[PATH_MAX];
+      module_file_path(disabled, PATH_MAX, entry->d_name, "disable");
+      if (access(disabled, F_OK) == 0) continue;
+
+      char so_path[PATH_MAX];
+      module_lib_path(so_path, PATH_MAX, entry->d_name);
+
+      int lib_fd = open(so_path, O_RDONLY | O_CLOEXEC);
+      if (lib_fd == -1) continue;
+
+      names[snapshot_len] = strdup(entry->d_name);
+      if (names[snapshot_len] == NULL) {
+        close(lib_fd);
+
+        continue;
+      }
+
+      lib_fds[snapshot_len] = lib_fd;
+      snapshot_len++;
+    }
+
+    closedir(dir);
+  }
+
+  /* INFO: Existing slots: kept and refreshed when the module stayed,
+            tombstoned where RemoveModule would put it when it did not. */
+  for (size_t i = 0; i < context->len; i++) {
+    struct Module *module = &context->modules[i];
+    if (module->name == NULL) continue;
+
+    size_t at = snapshot_len;
+    for (size_t s = 0; s < snapshot_len; s++) {
+      if (names[s] != NULL && strcmp(names[s], module->name) == 0) {
+        at = s;
+
+        break;
+      }
+    }
+
+    if (at == snapshot_len) {
+      if (module->companion >= 0) {
+        close(module->companion);
+        module->companion = -1;
+      }
+
+      if (module->lib_fd >= 0) {
+        close(module->lib_fd);
+        module->lib_fd = -1;
+      }
+
+      free(module->name);
+      module->name = NULL;
+
+      continue;
+    }
+
+    /* INFO: The library descriptor is re-opened even for a module that did
+              not change: a rename update swaps the file under the old name,
+              and the descriptor is the only thing that names what is served. */
+    if (module->lib_fd >= 0) close(module->lib_fd);
+    module->lib_fd = lib_fds[at];
+
+    free(names[at]);
+    names[at] = NULL;
+  }
+
+  /* INFO: Whatever the snapshot still holds is new: appended after the last
+            slot, which is the only place an append cannot move anyone. */
+  for (size_t s = 0; s < snapshot_len; s++) {
+    if (names[s] == NULL) continue;
+
+    struct Module *grown = realloc(context->modules, (context->len + 1) * sizeof(struct Module));
+    if (grown == NULL) {
+      PLOGE("grow the module table for \"%s\"", names[s]);
+
+      close(lib_fds[s]);
+      free(names[s]);
+
+      continue;
+    }
+    context->modules = grown;
+
+    context->modules[context->len].name = names[s];
+    context->modules[context->len].lib_fd = lib_fds[s];
+    context->modules[context->len].companion = -1;
+    context->len++;
+  }
+
+  /* INFO: The Zygisk Next list is name-keyed on both sides of the protocol,
+            so it is rebuilt the plain way - out with the old, in with what
+            load_modules finds, companions released with it. */
+  for (size_t i = 0; i < context->zn_len; i++) {
+    free(context->zn_modules[i].name);
+
+    for (size_t j = 0; j < context->zn_modules[i].targets_len; j++) {
+      free(context->zn_modules[i].targets[j]);
+    }
+
+    free(context->zn_modules[i].targets);
+  }
+
+  free(context->zn_modules);
+  context->zn_modules = NULL;
+  context->zn_len = 0;
+
+  free_zn_companions(context);
+  zn_parse_cache_clear();
+
+  DIR *zn_dir = opendir(ZYGISK_MODULES_DIR);
+  if (zn_dir == NULL) {
+    LOGE("Failed opening modules directory: %s.", ZYGISK_MODULES_DIR);
+
+    send_daemon_info(context);
+
+    return;
+  }
+
+  struct dirent *entry;
+  while ((entry = readdir(zn_dir)) != NULL) {
+    if (entry->d_type != DT_DIR && entry->d_type != DT_UNKNOWN) continue;
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0 || strcmp(entry->d_name, "rezygisk") == 0) continue;
+
+    char zn_modules[PATH_MAX];
+    module_file_path(zn_modules, PATH_MAX, entry->d_name, "zn_modules.txt");
+    if (access(zn_modules, F_OK) != 0) continue;
+
+    if (!add_zn_module(context, entry->d_name)) {
+      LOGE("Failed to record the Zygisk Next module \"%s\"", entry->d_name);
+    }
+  }
+
+  closedir(zn_dir);
 
   send_daemon_info(context);
 }
@@ -1874,8 +2151,19 @@ static void handle_open_zn_control_session(struct Client *client) {
   /* INFO: A session is read while it is quiet and reports whenever the process
             behind it specializes, which can be minutes later. The exchange
             budget that bounds every request would end it at the first quiet
-            moment, so it is cleared for this descriptor. */
-  struct timeval timeout = { .tv_sec = 0, .tv_usec = 0 };
+            moment - but no deadline at all is worse than a generous one:
+            the descriptor is inherited by every application the spawner
+            forks, and any of them can write half a record and stop. A read
+            that can never time out then blocks the daemon's poll loop
+            forever, and every loader request behind it burns its own budget
+            against a daemon that stopped answering.
+
+            A real report is one sendmsg - the writer sends the record whole
+            or nothing - so the fields are already in the socket buffer when
+            poll wakes this side. Anything still split after this long is
+            not a report arriving slowly, and ending the session is the
+            right answer to it. */
+  struct timeval timeout = { .tv_sec = ZN_SESSION_READ_TIMEOUT_SECS, .tv_usec = 0 };
   setsockopt(client->fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
   setsockopt(client->fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 

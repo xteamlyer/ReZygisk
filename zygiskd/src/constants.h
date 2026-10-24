@@ -8,6 +8,9 @@
 
 #define ZYGOTE_INJECTED 4
 #define DAEMON_SET_INFO 6
+/* INFO: One module record of a DAEMON_SET_INFO announcement - a wire value
+         shared with the monitor's enum in loader/src/ptracer/monitor.h. */
+#define DAEMON_MODULE_ENTRY 9
 
 /* INFO: Plain macros rather than a typed enum: 1u << 31 does not fit an int,
          and a fixed underlying type is a C23 extension. */

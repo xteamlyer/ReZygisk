@@ -177,10 +177,12 @@ pub unsafe extern "C" fn vexcore_gnu_lookup(
             break;
         }
 
-        sym_index += 1;
-        if sym_index as usize >= syms.len() {
-            break;
-        }
+        // INFO: `checked_add` and a `usize` compare: an index that would wrap
+        //       is out of range for the table, in either width.
+        sym_index = match sym_index.checked_add(1) {
+            Some(next) if (next as usize) < syms.len() => next,
+            _ => break,
+        };
     }
 
     0
@@ -231,13 +233,20 @@ pub unsafe extern "C" fn vexcore_elf_lookup(
 
     let mut index = buckets[(hash % nbucket) as usize];
 
+    // INFO: A chain entry can name itself or a predecessor - the format has
+    //       no other progress guarantee - so the walk is capped at one entry
+    //       per symbol and a cyclic chain is a miss rather than a hang. The
+    //       GNU walk needs no such cap: its index only ever moves forward.
+    let mut steps = syms.len() as isize;
+
     while index != STN_UNDEF {
         // INFO: The chain has one entry per dynamic symbol, so the symbol count
         //       bounds both walks - the same check the C version made, in the
         //       same place.
-        if index as usize >= syms.len() {
+        if index as usize >= syms.len() || steps == 0 {
             break;
         }
+        steps -= 1;
 
         let sym = &syms[index as usize];
 

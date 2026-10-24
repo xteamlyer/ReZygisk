@@ -268,7 +268,7 @@ static bool update_mnt_ns(enum mount_namespace_state mns_state, bool dry_run) {
 
   if (dry_run) return true;
 
-  int updated_ns = open(ns_path, O_RDONLY);
+  int updated_ns = open(ns_path, O_RDONLY | O_CLOEXEC);
   if (updated_ns == -1) {
     PLOGE("Failed to open mount namespace [%s]", ns_path);
 
@@ -533,6 +533,7 @@ void hook_jni_methods(JNIEnv *env, const char *clz, JNINativeMethod *methods, in
 
   JNINativeMethod hooks[32];
   size_t hooks_count = 0;
+  bool overflow_logged = false;
 
   for (int i = 0; i < numMethods; i++) {
     bool is_static = false;
@@ -575,8 +576,18 @@ void hook_jni_methods(JNIEnv *env, const char *clz, JNINativeMethod *methods, in
     }
 
     void *art_method = amethod_from_reflected_method(env, method);
-    if (hooks_count < 32)
+    if (hooks_count < (sizeof(hooks) / sizeof(hooks[0]))) {
       hooks[hooks_count++] = *nm;
+    } else if (!overflow_logged) {
+      /* INFO: The registration table is fixed at 32 entries; a module that
+                hooks more than that loses the rest silently, while the loop
+                still rewrote its fnPtr as though every hook had gone in.
+                Said once, at the boundary. */
+      overflow_logged = true;
+
+      LOGE("more than %zu native methods for %s: the ones past the limit are not hooked",
+           sizeof(hooks) / sizeof(hooks[0]), clz);
+    }
 
     void *orig = amethod_get_data((uintptr_t)art_method);
     nm->fnPtr = orig;
@@ -655,13 +666,24 @@ static void initialize_jni_hook(void) {
   res = (*vm)->GetEnv(vm, (void **)&env, JNI_VERSION_1_6);
   if (res != JNI_OK || !env) return;
 
+  /* INFO: Every lookup below clears its own failure: this returns into the
+            strdup hook and from there into ART runtime code, and a pending
+            exception would abort the zygote on the next JNI call it makes. */
   jclass classMember = (*env)->FindClass(env, "java/lang/reflect/Member");
-  if (classMember) member_getModifiers = (*env)->GetMethodID(env, classMember, "getModifiers", "()I");
+  if (classMember) {
+    member_getModifiers = (*env)->GetMethodID(env, classMember, "getModifiers", "()I");
+    if (!member_getModifiers) (*env)->ExceptionClear(env);
+  } else {
+    (*env)->ExceptionClear(env);
+  }
 
   jclass classModifier = (*env)->FindClass(env, "java/lang/reflect/Modifier");
   if (classModifier) {
     jfieldID fieldId = (*env)->GetStaticFieldID(env, classModifier, "NATIVE", "I");
     if (fieldId) MODIFIER_NATIVE = (*env)->GetStaticIntField(env, classModifier, fieldId);
+    else (*env)->ExceptionClear(env);
+  } else {
+    (*env)->ExceptionClear(env);
   }
 
   (*env)->DeleteLocalRef(env, classMember);
@@ -1138,8 +1160,26 @@ static void rz_sanitize_fds(struct zygisk_context *ctx) {
     jint len = mark_fds_allowed(ctx, ctx->env, fdsToIgnore);
 
     if (ctx->exempted_fds_count > 0) {
+      /* INFO: What is ours to keep is decided here, whatever happens to the
+                framework's array below: the fds were exempted by a module,
+                and our own close-walk must not take them even when the array
+                they were meant to ride could not be built. */
+      for (size_t i = 0; i < ctx->exempted_fds_count; i++) {
+        int fd = ctx->exempted_fds[i];
+        if (fd >= 0 && fd < MAX_FD_SIZE) ctx->allowed_fds[fd] = 1;
+      }
+
+      FLAG_SET(ctx, SKIP_FD_SANITIZATION);
+
       jintArray newArray = (*ctx->env)->NewIntArray(ctx->env, (jsize)(len + ctx->exempted_fds_count));
       if (newArray) {
+        /* INFO: The original entries only stop being the answer once the
+                  whole copy is known good: a failed read of the old array
+                  would leave the zero-filled new one installed, and the
+                  framework's sanitizer would then close fds it was told to
+                  keep. */
+        bool copied = true;
+
         if (fdsToIgnore && len > 0) {
           jint *arr = (*ctx->env)->GetIntArrayElements(ctx->env, fdsToIgnore, NULL);
 
@@ -1151,19 +1191,31 @@ static void rz_sanitize_fds(struct zygisk_context *ctx) {
             (*ctx->env)->ReleaseIntArrayElements(ctx->env, fdsToIgnore, arr, JNI_ABORT);
           } else {
             (*ctx->env)->ExceptionClear(ctx->env);
-          }
 
-          (*ctx->env)->DeleteLocalRef(ctx->env, fdsToIgnore);
+            copied = false;
+          }
         }
 
         (*ctx->env)->SetIntArrayRegion(ctx->env, newArray, len, (jsize)ctx->exempted_fds_count, ctx->exempted_fds);
-        for (size_t i = 0; i < ctx->exempted_fds_count; i++) {
-          int fd = ctx->exempted_fds[i];
-          if (fd >= 0 && fd < MAX_FD_SIZE) ctx->allowed_fds[fd] = 1;
-        }
 
-        *ctx->args.app->fds_to_ignore = newArray;
-        FLAG_SET(ctx, SKIP_FD_SANITIZATION);
+        /* INFO: The pre-O argument variants have no fds_to_ignore to
+                  replace - the pointer is NULL there - and writing through
+                  it is a crash in the middle of specialize. The flags and
+                  the allowed set above are the whole exemption on those
+                  builds. */
+        if (copied && ctx->args.app->fds_to_ignore != NULL) {
+          *ctx->args.app->fds_to_ignore = newArray;
+
+          (*ctx->env)->DeleteLocalRef(ctx->env, fdsToIgnore);
+        } else if (!copied) {
+          (*ctx->env)->DeleteLocalRef(ctx->env, newArray);
+
+          LOGW("the framework's fd ignore list is kept: its copy could not be read");
+        }
+      } else {
+        (*ctx->env)->ExceptionClear(ctx->env);
+
+        LOGW("the exempted fds are only marked for our own walk: no array could be built for the framework's");
       }
     }
   }
@@ -1533,6 +1585,18 @@ static void rz_app_specialize_post(struct zygisk_context *ctx) {
 
 static void rz_nativeSpecializeAppProcess_pre(struct zygisk_context *ctx) {
   ctx->process = (*ctx->env)->GetStringUTFChars(ctx->env, *ctx->args.app->nice_name, NULL);
+  if (ctx->process == NULL) {
+    /* INFO: The same bail-out the fork path takes: continuing with a NULL
+              name would reach strlen() in the daemon query, and the post
+              below would release a pointer that was never handed out. The
+              pending exception is ours to clear - it would abort the next
+              JNI call in the specialize path otherwise. */
+    (*ctx->env)->ExceptionClear(ctx->env);
+    LOGW("Failed to read the process name, this process is specialized without us");
+
+    return;
+  }
+
   LOGV("pre specialize [%s]", ctx->process);
 
   FLAG_SET(ctx, SKIP_FD_SANITIZATION);
@@ -1548,6 +1612,15 @@ static void rz_nativeSpecializeAppProcess_pre(struct zygisk_context *ctx) {
 }
 
 static void rz_nativeSpecializeAppProcess_post(struct zygisk_context *ctx) {
+  /* INFO: Gated on the name: a pre that bailed out above never ran the
+            module callbacks, so the post must not run them either - and the
+            release inside would hand ART a NULL it is not required to take. */
+  if (ctx->process == NULL) {
+    g_ctx = NULL;
+
+    return;
+  }
+
   LOGV("post specialize [%s]", ctx->process);
   rz_app_specialize_post(ctx);
 }
@@ -1614,9 +1687,16 @@ static void rz_nativeForkAndSpecialize_pre(struct zygisk_context *ctx) {
 }
 
 static void rz_nativeForkAndSpecialize_post(struct zygisk_context *ctx) {
-  if (ctx->pid == 0) {
+  /* INFO: Gated on the name and not the pid: a first fork that failed parks
+            pid at -1 and the pre returns before the name is read, but the
+            framework's own fork then succeeds through the new_fork hook and
+            sets pid to 0 - a post that keyed on that alone would run module
+            post-callbacks whose pre never ran, and release a NULL name. */
+  if (ctx->pid == 0 && ctx->process != NULL) {
     LOGV("post forkAndSpecialize [%s]", ctx->process);
     rz_app_specialize_post(ctx);
+  } else if (ctx->pid == 0) {
+    g_ctx = NULL;
   }
 
   rz_fork_post(ctx);
@@ -1660,7 +1740,12 @@ static void rz_cleanup(struct zygisk_context *ctx) {
 
   hooks_removed = true;
 
-  /* INFO: Unhook JNI methods */
+  /* INFO: Unhook JNI methods. A class whose originals could not be
+            re-registered is logged and left hooked - the hook stubs live in
+            this library, which stays mapped (hidden, not gone) - because the
+            alternative was worse: recording the failure used to stop the
+            whole teardown below, leaving the library named in the maps and
+            the PLT hooks in place for the lifetime of the process. */
   for (size_t i = 0; i < jni_hook_list_count; i++) {
     struct jni_hook_entry *entry = &jni_hook_list[i];
     jclass jc = (*ctx->env)->FindClass(ctx->env, entry->class_name);
@@ -1668,7 +1753,7 @@ static void rz_cleanup(struct zygisk_context *ctx) {
       if (entry->methods_count > 0 && (*ctx->env)->RegisterNatives(ctx->env, jc, entry->methods, (jint)entry->methods_count) != 0) {
         LOGE("Failed to restore JNI hook of class [%s]", entry->class_name);
 
-        hooks_removed = false;
+        (*ctx->env)->ExceptionClear(ctx->env);
       }
 
       (*ctx->env)->DeleteLocalRef(ctx->env, jc);
@@ -1756,10 +1841,17 @@ void hook_functions(void) {
     return;
   }
 
-  PLT_HOOK_REGISTER("libandroid_runtime.so", fork, false);
-  PLT_HOOK_REGISTER("libandroid_runtime.so", strdup, false);
-  PLT_HOOK_REGISTER("libandroid_runtime.so", property_get, false);
-  PLT_HOOK_REGISTER_SYM("libandroid_runtime.so", "_ZNK18FileDescriptorInfo14ReopenOrDetach", _ZNK18FileDescriptorInfo14ReopenOrDetach, true);
+  /* INFO: Each result is logged rather than checked, because nothing here
+            can undo a partial setup: the four are one batch, and the loader
+            still has to run with whichever ones took. */
+  if (!PLT_HOOK_REGISTER("libandroid_runtime.so", fork, false))
+    LOGE("Failed to hook fork in libandroid_runtime.so");
+  if (!PLT_HOOK_REGISTER("libandroid_runtime.so", strdup, false))
+    LOGE("Failed to hook strdup in libandroid_runtime.so");
+  if (!PLT_HOOK_REGISTER("libandroid_runtime.so", property_get, false))
+    LOGE("Failed to hook property_get in libandroid_runtime.so");
+  if (!PLT_HOOK_REGISTER_SYM("libandroid_runtime.so", "_ZNK18FileDescriptorInfo14ReopenOrDetach", _ZNK18FileDescriptorInfo14ReopenOrDetach, true))
+    LOGE("Failed to hook FileDescriptorInfo::ReopenOrDetach in libandroid_runtime.so");
 }
 
 static void hook_unloader(void) {
@@ -1780,7 +1872,16 @@ static void hook_unloader(void) {
     return;
   }
 
-  PLT_HOOK_REGISTER("libart.so", pthread_attr_setstacksize, false);
+  /* INFO: A registration that did not take is not a reason to tear the
+            property_get trigger down: unhooking it here would leave no later
+            call to retry on, and the unloader would never fire for the rest
+            of this zygote's life. property_get stays hooked until the
+            registration succeeds. */
+  if (!PLT_HOOK_REGISTER("libart.so", pthread_attr_setstacksize, false)) {
+    LOGE("Failed to hook pthread_attr_setstacksize, retrying on a later property_get");
+
+    return;
+  }
 
   PLT_HOOK_UNREGISTER("libandroid_runtime.so", property_get, false);
 

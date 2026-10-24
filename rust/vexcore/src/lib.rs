@@ -18,13 +18,12 @@
 #![cfg_attr(not(test), no_std)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
-// INFO: Not built under `cfg(test)`: it reaches `pread64`, and this suite also
-//       has to link on a workstation whose libc does not have that symbol. The
-//       host suite covers what the ELF reader does with tables a file supplies;
-//       what this one does is a walk over an ELF image, and the image it is
-//       meant to walk is the device's - the build for that target is where it
-//       gets compiled and checked.
-#[cfg(not(test))]
+// INFO: `got` is compiled under `cfg(test)` too: its parsing logic reads
+//       through the `Image` trait, and only the descriptor wrapper and the
+//       exported entry point - the pieces that reach `pread64` - are kept to
+//       the device build. The host suite walks a synthetic image through the
+//       same code, which is where a relocation-stride bug would otherwise
+//       live unseen.
 mod got;
 mod hash;
 mod lookup;

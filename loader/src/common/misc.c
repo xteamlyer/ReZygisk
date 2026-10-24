@@ -21,6 +21,11 @@
 int parse_int(const char *str) {
   int val = 0;
 
+  /* INFO: An empty string is a refusal and not zero: the callers use the
+            answer as an array subscript, and "" is never a number anyone
+            asked for. */
+  if (*str == '\0') return -1;
+
   const char *c = str;
   while (*c) {
     if (*c > '9' || *c < '0')
@@ -105,6 +110,12 @@ static bool walk_maps_stream(FILE *fp, maps_visitor visit, void *userdata) {
   char *line = NULL;
   size_t line_capacity = 0;
 
+  /* INFO: getline reports an allocation failure as -1 with ENOMEM and without
+            touching the stream's error flag, so errno is the only witness: a
+            partial listing handed back as complete is worse than none at all,
+            and ferror() alone cannot tell this case from a clean end. */
+  errno = 0;
+
   while (getline(&line, &line_capacity, fp) != -1) {
     struct map_entry entry;
 
@@ -113,10 +124,7 @@ static bool walk_maps_stream(FILE *fp, maps_visitor visit, void *userdata) {
     if (!visit(&entry, userdata)) break;
   }
 
-  /* INFO: A stream that ends early leaves a partial listing behind, which is
-            worse than none at all: the caller would take it for the whole
-            map. */
-  bool complete = !ferror(fp);
+  bool complete = !ferror(fp) && errno != ENOMEM;
   if (!complete) PLOGE("read a maps stream");
 
   free(line);

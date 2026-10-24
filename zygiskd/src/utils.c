@@ -393,6 +393,20 @@ int create_library_fd(const char *restrict path, bool *shared) {
     return -1;
   }
 
+  /* INFO: The identity the cache records is the one the bytes actually came
+            from, not the one the path had a moment earlier: a module update
+            by rename can swap the file between the stat above and this open,
+            and a cache keyed on the old identity would keep serving the new
+            bytes as the old version forever - the next stat still matches,
+            so nothing would ever restage. */
+  if (fstat(file_fd, &st) == -1) {
+    LOGE("Failed stating the opened \"%s\": %s", path, strerror(errno));
+
+    close(file_fd);
+
+    return -1;
+  }
+
   int mem_fd = stage_library_bytes(file_fd, path, true);
   close(file_fd);
 

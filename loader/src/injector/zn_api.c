@@ -74,7 +74,18 @@ static struct maps_info *zn_maps_for_lookup(void) {
     if (fresh == NULL) {
       LOGE("Failed to scan this process's maps");
 
-      return zn_maps_cache;
+      /* INFO: No stale answer for an injected target, which is the one case
+                the invariant above exists for: this process's own modules are
+                mapping and unmapping under it, and a table from an earlier
+                moment is exactly the freed-memory base the file refuses to
+                hand out. The callers take NULL as "try again or fail", never
+                as "here is where it was". */
+      if (zn_maps_cache != NULL) {
+        free_maps(zn_maps_cache);
+        zn_maps_cache = NULL;
+      }
+
+      return NULL;
     }
 
     if (zn_maps_cache != NULL) free_maps(zn_maps_cache);

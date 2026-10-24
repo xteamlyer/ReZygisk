@@ -57,7 +57,11 @@ static inline ssize_t read_exe_path(int pid, char *buf, size_t size) {
   ssize_t len = readlink(path, buf, size);
   if (len <= 0) return -1;
 
-  if ((size_t)len >= size) len = (ssize_t)size - 1;
+  /* INFO: A buffer filled to its last byte means the target did not fit, and
+            a clamped copy would be a different, shorter path that full-path
+            compares then answer wrongly. Refuse it: the callers match whole
+            paths, and a mismatch is worth more than a wrong match. */
+  if ((size_t)len >= size) return -1;
 
   len = (ssize_t)strip_deleted_suffix(buf, (size_t)len);
   buf[len] = '\0';

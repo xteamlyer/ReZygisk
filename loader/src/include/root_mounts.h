@@ -23,6 +23,13 @@
 #define MOUNT_FIELD_MAX 4096
 #define MOUNT_TYPE_MAX 128
 
+/* INFO: The sscanf widths below are these two limits minus one, spelled as
+         literals because the format string is a literal. The assert keeps the
+         pair honest: a width raised or lowered on one side alone would let the
+         scanf write past a buffer sized from the macro. */
+_Static_assert(MOUNT_FIELD_MAX == 4096, "the sscanf width %4095s must follow MOUNT_FIELD_MAX");
+_Static_assert(MOUNT_TYPE_MAX == 128, "the sscanf width %127s must follow MOUNT_TYPE_MAX");
+
 /* INFO: One parsed mountinfo line. The mount id is carried whether or not the
          caller needs it - only the loader's revert orders by it, since nested
          mounts come down in the reverse order of their ids - and paying the

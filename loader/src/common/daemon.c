@@ -26,6 +26,14 @@
          may legitimately block far longer than this budget. */
 #define REZYGISKD_IO_TIMEOUT_SEC 3
 
+/* INFO: The ceiling on any list length read off the wire. No real install
+         carries more modules than this, and a count beyond it is either a
+         corrupt length field or something pretending to be one - both are
+         refused before a single entry is read, because reading thousands of
+         strings against the 3 s budget below would stall a fork for no
+         reason a real daemon would give it. */
+#define REZYGISKD_MODULES_MAX 4096
+
 static void set_socket_timeout(int fd, long seconds) {
   struct timeval tv = {
     .tv_sec = seconds,
@@ -47,7 +55,10 @@ static int rezygiskd_connect(uint8_t retry, uint32_t retry_delay_us) {
     Sources:
      - https://pubs.opengroup.org/onlinepubs/009696699/basedefs/sys/un.h.html
   */
-  strcpy(addr.sun_path, ZYGISK_CP_SOCKET);
+  _Static_assert(sizeof(ZYGISK_CP_SOCKET) <= sizeof(addr.sun_path),
+                 "the daemon socket path no longer fits sun_path");
+
+  snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", ZYGISK_CP_SOCKET);
 
   for (uint8_t attempt = 0; attempt <= retry; attempt++) {
     int fd = socket(PF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -196,7 +207,9 @@ static char *read_module_prop_name(const char *module_name) {
     break;
   }
 
-  if (name == NULL) PLOGE("failed to read module name from %s", module_path);
+  /* INFO: LOGE and not PLOGE: this is the routine answer for a prop file
+            with no name= line, and errno says nothing about it. */
+  if (name == NULL) LOGE("failed to read module name from %s", module_path);
 
   fclose(module_prop);
 
@@ -204,22 +217,25 @@ static char *read_module_prop_name(const char *module_name) {
 }
 
 void rezygiskd_get_info(struct rezygisk_info *info) {
-  int fd = rezygiskd_connect(1, REZYGISKD_RETRY_DELAY_US);
-  if (fd == -1) {
-    info->running = false;
+  /* INFO: The whole struct is zeroed before anything touches it: an exchange
+            that fails halfway used to leave the caller's `modules` pointer
+            uninitialized next to a live `running` flag, and freeing that is
+            how a routine timeout turned into a crash. Zeroed, a failure is
+            "not running", with nothing dangling behind it. */
+  memset(info, 0, sizeof(*info));
 
-    return;
-  }
+  int fd = rezygiskd_connect(1, REZYGISKD_RETRY_DELAY_US);
+  if (fd == -1) return;
 
   info->running = true;
 
-  safe_write(write_uint8_t(fd, (uint8_t)GetInfo), "GetInfo action", return);
+  safe_write(write_uint8_t(fd, (uint8_t)GetInfo), "GetInfo action", goto fail);
 
   /* INFO: The flags word is consumed to stay in step with the protocol; the
             daemon always sets the bit of the root solution it was built for,
             which this flavour is built to match. */
   uint32_t flags = 0;
-  safe_read(read_uint32_t(fd, &flags), "info flags", return);
+  safe_read(read_uint32_t(fd, &flags), "info flags", goto fail);
 
 #ifdef ROOT_IMPL_APATCH
   info->root_impl = ROOT_APATCH;
@@ -228,33 +244,39 @@ void rezygiskd_get_info(struct rezygisk_info *info) {
 #endif
 
   uint32_t daemon_pid = 0;
-  safe_read(read_uint32_t(fd, &daemon_pid), "pid", return);
+  safe_read(read_uint32_t(fd, &daemon_pid), "pid", goto fail);
 
   info->pid = (pid_t)daemon_pid;
 
-  safe_read(read_size_t(fd, &info->modules.modules_count), "modules count", return);
-  if (info->modules.modules_count == 0) {
-    info->modules.modules = NULL;
+  size_t modules_count = 0;
+  safe_read(read_size_t(fd, &modules_count), "modules count", goto fail);
 
+  if (modules_count == 0) {
     close(fd);
 
     return;
   }
 
-  /* INFO: calloc validates the multiplication for us. The count arrives over
-            the socket, so a corrupted or hostile value could wrap
-            count * sizeof(char *) into a small block that the loop below would
-            then write straight past; calloc refuses that and returns NULL. */
-  info->modules.modules = (char **)calloc(info->modules.modules_count, sizeof(char *));
+  /* INFO: The count arrives over the socket, so it is bounded before it is
+            believed: an absurd one cannot be allocated, but it could still be
+            read one string at a time against this socket's 3 s budget, which
+            stalls a zygote child mid-specialize for no reason a real daemon
+            would ever give it. */
+  if (modules_count > REZYGISKD_MODULES_MAX) {
+    LOGE("module count %zu exceeds the protocol bound", modules_count);
+
+    goto fail;
+  }
+
+  /* INFO: calloc validates the multiplication for us; calloc refuses a
+            wrapped count * sizeof(char *) and returns NULL. */
+  info->modules.modules = (char **)calloc(modules_count, sizeof(char *));
   if (!info->modules.modules) {
     PLOGE("allocating modules name memory");
 
-    info->modules.modules_count = 0;
-
-    close(fd);
-
-    return;
+    goto fail;
   }
+  info->modules.modules_count = modules_count;
 
   /* INFO: The list is handed back as far as it was read on every failure
             below: the count says how many entries exist, and the ones that were
@@ -284,6 +306,13 @@ void rezygiskd_get_info(struct rezygisk_info *info) {
   }
 
   close(fd);
+
+  return;
+
+  fail:
+    info->running = false;
+
+    close(fd);
 }
 
 void free_rezygisk_info(struct rezygisk_info *info) {
@@ -298,6 +327,14 @@ bool rezygiskd_read_modules(struct zygisk_modules *modules) {
 
   size_t len = 0;
   safe_read(read_size_t(fd, &len), "modules count", return false);
+
+  if (len > REZYGISKD_MODULES_MAX) {
+    LOGE("modules count %zu exceeds the protocol bound", len);
+
+    close(fd);
+
+    return false;
+  }
 
   /* INFO: calloc also validates the multiplication, so a corrupt count from
             the socket cannot overflow into an undersized allocation. */
@@ -366,6 +403,14 @@ bool rezygiskd_read_zn_modules(const char *process_name, const char *process_pat
 
   size_t len = 0;
   safe_read(read_size_t(fd, &len), "Zygisk Next modules count", return false);
+
+  if (len > REZYGISKD_MODULES_MAX) {
+    LOGE("Zygisk Next modules count %zu exceeds the protocol bound", len);
+
+    close(fd);
+
+    return false;
+  }
 
   if (len == 0) {
     close(fd);
@@ -643,7 +688,10 @@ bool rezygiskd_update_mns(enum mount_namespace_state nms_state, char *buf, size_
   if (fd == -1) return false;
 
   safe_write(write_uint8_t(fd, (uint8_t)UpdateMountNamespace), "UpdateMountNamespace action", return false);
-  safe_write(write_uint32_t(fd, (uint32_t)getpid()), "pid", return false);
+  /* INFO: The raw syscall, for the same reason the runtime report uses it:
+            the caller may be a raw fork of the spawner whose bionic pid cache
+            still describes the parent. */
+  safe_write(write_uint32_t(fd, (uint32_t)syscall(__NR_getpid)), "pid", return false);
   safe_write(write_uint8_t(fd, (uint8_t)nms_state), "mount namespace state", return false);
 
   uint32_t target_pid = 0;
@@ -660,7 +708,14 @@ bool rezygiskd_update_mns(enum mount_namespace_state nms_state, char *buf, size_
     return false;
   }
 
-  snprintf(buf, buf_size, "/proc/%u/fd/%u", target_pid, target_fd);
+  int written = snprintf(buf, buf_size, "/proc/%u/fd/%u", target_pid, target_fd);
+  if (written < 0 || (size_t)written >= buf_size) {
+    LOGE("the target fd path does not fit the caller's buffer");
+
+    close(fd);
+
+    return false;
+  }
 
   close(fd);
 

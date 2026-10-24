@@ -20,9 +20,11 @@ static inline bool zn_target_is_zygote_class(const char *target) {
          classic ones, and artd is where Android 15 moved the application
          runtime host: a target that means "the process applications come from"
          has to reach it there, or the module is never loaded into the process
-         every application of this boot is forked from. It is matched exactly
-         rather than by substring because "artd" is short enough that a
-         substring would start naming other processes. */
+         every application of this boot is forked from. The first three are
+         matched by substring on purpose - the platform spells them with
+         suffixes (zygote64, app_process64) that vary by build - while artd is
+         matched exactly, because it is short enough that a substring would
+         start naming other processes. */
 static inline bool zn_process_is_zygote_class(const char *process_name) {
   return strstr(process_name, "zygote") != NULL ||
          strstr(process_name, "app_process") != NULL ||

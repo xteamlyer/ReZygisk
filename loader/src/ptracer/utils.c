@@ -269,7 +269,15 @@ uintptr_t remote_call(int pid, struct user_regs_struct *regs, uintptr_t func_add
     long remain = (args_size - 8) * sizeof(long);
     align_stack(regs, remain);
 
-    write_proc(pid, (uintptr_t)regs->REG_SP, &args[8], remain);
+    /* INFO: Checked, like every other write into the target: a short or
+              failed copy would have the callee read its stack arguments from
+              whatever the target's stack already held, and answer a question
+              nobody asked with a pointer nobody wrote. */
+    if (write_proc(pid, (uintptr_t)regs->REG_SP, &args[8], remain) != remain) {
+      LOGE("failed to write the stack arguments of the remote call");
+
+      return 0;
+    }
   }
 
   regs->regs[30] = return_addr;
@@ -596,12 +604,17 @@ void wait_for_trace(int pid, int *status, int flags) {
       return;
     }
 
-    /* INFO: We'll fork there. This will signal SIGCHLD. We just ignore and continue
-               to avoid blocking/not continuing. */
+    /* INFO: We'll fork there. This will signal SIGCHLD. The delivery stop is
+               re-injected rather than swallowed - continuing with signal 0
+               would drop it, and the target's own SIGCHLD handling (a waiter,
+               a handler) never sees a child it was owed - while a group-stop
+               variant is continued plain, the same way any other group-stop
+               is. */
     if (WIFSTOPPED(*status) && WSTOPSIG(*status) == SIGCHLD) {
-      LOGI("process %d stopped by SIGCHLD, continue", pid);
+      bool group_stop = (*status >> 16) == PTRACE_EVENT_STOP;
+      LOGI("process %d stopped by SIGCHLD%s, continue", pid, group_stop ? " (group-stop)" : "");
 
-      ptrace(PTRACE_CONT, pid, 0, 0);
+      ptrace(PTRACE_CONT, pid, 0, group_stop ? 0 : SIGCHLD);
 
       continue;
     } else if (*status >> 8 == (SIGTRAP | (PTRACE_EVENT_SECCOMP << 8))) {

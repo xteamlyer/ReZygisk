@@ -90,8 +90,9 @@ static bool xz_decompress(const uint8_t *in, size_t in_size, uint8_t **out_buf, 
     }
 
     /* INFO: XZ_DEC_ANY_CHECK accepts every integrity check, so this should
-             not surface; keeping it mirrors the reference decoder. */
-    if (result == XZ_UNSUPPORTED_CHECK) continue;
+             not surface; the stream is undecodable either way, and looping
+             without consuming input would only spin. */
+    if (result == XZ_UNSUPPORTED_CHECK) break;
     if (result != XZ_OK) break;
 
     if (buffer.out_pos == buffer.out_size) {
@@ -123,10 +124,30 @@ static bool xz_decompress(const uint8_t *in, size_t in_size, uint8_t **out_buf, 
     return false;
   }
 
+  /* INFO: The growth doubling leaves a 64 MiB allocation for what is
+           usually a few hundred KiB of symbols; give the excess back. */
+  if (buffer.out_pos < capacity) {
+    uint8_t *shrunk = (uint8_t *)realloc(out, buffer.out_pos);
+
+    /* INFO: realloc to a smaller size does not move on any allocator this
+             runs over; a refusal keeps the larger block, which is only
+             memory held a little longer, never a wrong answer. */
+    if (shrunk != NULL) out = shrunk;
+  }
+
   *out_buf = out;
   *out_size = buffer.out_pos;
 
   return true;
+}
+
+/* INFO: A string table is only safe to `strcmp` through when its last byte
+         is the NUL every name inside it relies on: the tables come out of a
+         file this code did not produce, and one that ends mid-name would
+         have every read after it walk past the mapping. An empty table is
+         not one either. */
+static bool strtable_terminated(const char *table, size_t size) {
+  return table != NULL && size > 0 && table[size - 1] == '\0';
 }
 
 static bool parse_gnu_debugdata(ElfImg *img, const uint8_t *data, size_t size) {
@@ -148,8 +169,15 @@ static bool parse_gnu_debugdata(ElfImg *img, const uint8_t *data, size_t size) {
     }
 
     ElfW(Ehdr) *deh = (ElfW(Ehdr) *)out;
-    if (deh->e_shoff == 0 || deh->e_shnum == 0 || deh->e_shentsize == 0 ||
-        (size_t)deh->e_shoff + (size_t)deh->e_shnum * deh->e_shentsize > out_size) {
+    /* INFO: The extent checks are written as subtraction because the fields
+              are file values: an addition can wrap past `out_size` and pass,
+              and a wrapped section table pointer is then dereferenced. The
+              entry size has to be the structure's own for the same reason
+              the outer walks require it. */
+    if (deh->e_shoff == 0 || deh->e_shnum == 0 ||
+        deh->e_shentsize != sizeof(ElfW(Shdr)) ||
+        deh->e_shoff > out_size ||
+        deh->e_shnum > (out_size - deh->e_shoff) / sizeof(ElfW(Shdr))) {
       free(out);
 
       continue;
@@ -162,11 +190,15 @@ static bool parse_gnu_debugdata(ElfImg *img, const uint8_t *data, size_t size) {
       if (sh->sh_type != SHT_SYMTAB || sh->sh_link >= deh->e_shnum) continue;
 
       ElfW(Shdr) *str_sh = &dshdrs[sh->sh_link];
-      if ((size_t)sh->sh_offset + sh->sh_size > out_size) continue;
-      if ((size_t)str_sh->sh_offset + str_sh->sh_size > out_size) continue;
+      if (sh->sh_offset > out_size || sh->sh_size > out_size - sh->sh_offset) continue;
+      if (str_sh->sh_offset > out_size || str_sh->sh_size > out_size - str_sh->sh_offset) continue;
+      /* INFO: A stride other than the symbol structure's own would count
+                more entries than the table holds and walk past its end. */
+      if (sh->sh_entsize != sizeof(ElfW(Sym))) continue;
+      if (!strtable_terminated((const char *)(out + str_sh->sh_offset), str_sh->sh_size)) continue;
 
       img->dd_symtab_start = (ElfW(Sym) *)(out + sh->sh_offset);
-      img->dd_symtab_count = sh->sh_entsize ? sh->sh_size / sh->sh_entsize : 0;
+      img->dd_symtab_count = sh->sh_size / sh->sh_entsize;
       img->dd_strtab = (const char *)(out + str_sh->sh_offset);
       img->dd_strtab_size = str_sh->sh_size;
 
@@ -251,7 +283,8 @@ static bool _find_module_base(ElfImg *img) {
   /* INFO: The size of the whole file, used to recognise the plain file view
             this process may already hold of the same library: it spans the file
             and nothing else, where a loaded image has a header map first and
-            segments after it. */
+            segments after it. It is never zero - the caller has already
+            rejected files that do not hold a header. */
   size_t whole_size = img->size;
 
   bool found = false;
@@ -270,10 +303,8 @@ static bool _find_module_base(ElfImg *img) {
 
     /* INFO: Skipped for the reason above: a file-sized mapping of the same path
               is data, not the image the linker loaded. */
-    if (whole_size != 0) {
-      uintptr_t span = entry->end - entry->start;
-      if (span >= whole_size && span - whole_size < 4096) continue;
-    }
+    uintptr_t span = entry->end - entry->start;
+    if (span >= whole_size && span - whole_size < 4096) continue;
 
     /* INFO: Every file offset in a dynamic image is relative to the load bias,
               so this yields it from any segment - the header mapping does not
@@ -312,9 +343,10 @@ static size_t calculate_valid_symtabs_amount(ElfImg *img) {
   /* INFO: .dynsym is counted next to .symtab and the mini-debug table, which is
             what lets a prefix lookup or a forEach walk reach the exported
             symbols of a stripped library at all - those keep .dynsym after
-            .symtab is gone. */
-  bool has_file_symtab = img->symtab_start != NULL && img->symstr_offset_for_symtab != 0;
-  bool has_dynsym = img->dynsym_start != NULL && img->strtab_start != NULL && img->strtab != NULL && img->strtab->sh_size > 0;
+            .symtab is gone. The flags are the same ones _load_symtabs fills by,
+            so the two passes cannot disagree on which symbols exist. */
+  bool has_file_symtab = img->symtab_start != NULL && img->symstr_offset_for_symtab != 0 && img->symtab_count > 0;
+  bool has_dynsym = img->dynsym_start != NULL && img->dynsym_count > 0 && img->strtab_start != NULL && img->strtab != NULL;
   if (!has_file_symtab && !has_dynsym && img->dd_symtab_start == NULL) {
     LOGE("No .symtab, no .dynsym and no mini-debug symbols available, cannot count valid symbols");
 
@@ -325,13 +357,11 @@ static size_t calculate_valid_symtabs_amount(ElfImg *img) {
   if (has_file_symtab && img->symtab && img->section_header && img->symtab->sh_link < img->header->e_shnum)
     symtab_str_shdr = img->section_header + img->symtab->sh_link;
 
+  /* INFO: zn_collectable_symbol is the one predicate - it bounds the name
+            offset against the string table's own size, so no separate check
+            is written out here (and a broken table does not log a warning
+            per symbol, which a large one could spin for minutes). */
   if (has_file_symtab) for (ElfW(Off) i = 0; i < img->symtab_count; i++) {
-    if (symtab_str_shdr && img->symtab_start[i].st_name >= symtab_str_shdr->sh_size) {
-      LOGW("Symbol %zu has invalid name offset %u (>= %zu), skipping", (size_t)i, img->symtab_start[i].st_name, symtab_str_shdr->sh_size);
-
-      continue;
-    }
-
     if (zn_collectable_symbol(&img->symtab_start[i], symtab_str_shdr != NULL ? symtab_str_shdr->sh_size : SIZE_MAX))
       count++;
   }
@@ -460,6 +490,17 @@ static bool elf_map_file(ElfImg *img, const char *elf, bool base_provided) {
     return false;
   }
 
+  /* INFO: The byte order has to be this target's own for the same reason: a
+            big-endian image passes the magic and class checks and then hands
+            back offsets that are every field's bytes reversed. */
+  if (img->header->e_ident[EI_DATA] != ELFDATA2LSB) {
+    LOGE("Unsupported ELF data encoding in %s", elf);
+
+    ElfImg_destroy(img);
+
+    return false;
+  }
+
   return true;
 }
 
@@ -496,6 +537,11 @@ static void elf_compute_bias(ElfImg *img, const char *elf, bool base_provided) {
     if (!bias_calculated) for (int i = 0; i < img->header->e_phnum; ++i) {
       if (phdr[i].p_type != PT_LOAD) continue;
 
+      /* INFO: A segment that asks to sit below its own file offset would make
+                the subtraction below wrap; such an image has no bias worth
+                computing and the fallback keeps looking. */
+      if (phdr[i].p_vaddr < phdr[i].p_offset) continue;
+
       img->bias = phdr[i].p_vaddr - phdr[i].p_offset;
       bias_calculated = true;
 
@@ -530,6 +576,11 @@ static void parse_sysv_hash_section(ElfImg *img, ElfW(Shdr) *section_h, const ch
   if (img->nbucket_ > 0 && section_h->sh_size >= (2 + img->nbucket_ + d_un[1]) * sizeof(ElfW(Word))) {
     img->bucket_ = d_un + 2;
     img->chain_ = img->bucket_ + img->nbucket_;
+    /* INFO: The header's own chain count, which the lookup's index bound has
+              to fit: the walk is bounded by the symbol count, and a section
+              holding fewer chain entries than that would be read past its
+              end on the last links. */
+    img->chain_len_ = d_un[1];
 
     return;
   }
@@ -537,6 +588,7 @@ static void parse_sysv_hash_section(ElfImg *img, ElfW(Shdr) *section_h, const ch
   LOGW("Invalid SHT_HASH size or nbucket count in section %s", sname);
 
   img->nbucket_ = 0;
+  img->chain_len_ = 0;
 }
 
 /* INFO: The GNU hash table. Same rule as above: the section has to hold the
@@ -579,7 +631,17 @@ static void parse_gnu_hash_section(ElfImg *img, ElfW(Shdr) *section_h, const cha
     LOGW("Calculated GNU hash chain seems out of bounds for section %s", sname);
 
     img->gnu_nbucket_ = 0;
+    img->gnu_chain_len_ = 0;
+
+    return;
   }
+
+  /* INFO: The chain's length is not written anywhere in the header; what the
+            section can vouch for is the bytes that follow its start. The
+            lookup walks chain[dynsym_count - gnu_symndx], so the count it
+            walks by has to fit this. */
+  size_t chain_bytes = (section_h->sh_offset + section_h->sh_size) - (size_t)chain_start_offset;
+  img->gnu_chain_len_ = (uint32_t)(chain_bytes / sizeof(uint32_t));
 }
 
 /* INFO: Walks the section table once and records where each table it needs
@@ -622,13 +684,15 @@ static void elf_walk_sections(ElfImg *img, const char *elf,
                 string table has to be inside the map before it is used as one.
                 Its size is kept alongside it: each name is an offset into this
                 table, and an offset that leaves it would be read as a string
-                from whatever follows. */
+                from whatever follows. The last byte has to be the NUL every
+                name relies on, or the whole table is left unbound. */
       if (shstrtab_hdr->sh_offset <= img->size &&
-          shstrtab_hdr->sh_size <= img->size - shstrtab_hdr->sh_offset) {
+          shstrtab_hdr->sh_size <= img->size - shstrtab_hdr->sh_offset &&
+          strtable_terminated((const char *)offsetOf_char(img->header, shstrtab_hdr->sh_offset), shstrtab_hdr->sh_size)) {
         section_str = offsetOf_char(img->header, shstrtab_hdr->sh_offset);
         section_str_size = shstrtab_hdr->sh_size;
       } else {
-        LOGW("Section header string table lies outside the file in %s", elf);
+        LOGW("Section header string table lies outside the file or is unterminated in %s", elf);
       }
     } else {
       LOGW("Section header string table index (%u) out of bounds (%u)", img->header->e_shstrndx, img->header->e_shnum);
@@ -663,16 +727,22 @@ static void elf_walk_sections(ElfImg *img, const char *elf,
       if (section_str != NULL && section_h->sh_name < section_str_size) {
         sname = section_str + section_h->sh_name;
       }
-      size_t entsize = section_h->sh_entsize;
 
       switch (section_h->sh_type) {
         case SHT_DYNSYM: {
           *out_dynsym_shdr = section_h;
           img->dynsym_offset = section_h->sh_offset;
           img->dynsym_start = offsetOf_Sym(img->header, img->dynsym_offset);
-          /* INFO: A zero sh_entsize would divide by zero below; such a section
-                    cannot be walked, so it counts as absent. */
-          img->dynsym_count = section_h->sh_entsize == 0 ? 0 : section_h->sh_size / section_h->sh_entsize;
+          /* INFO: The stride has to be the symbol structure's own size: any
+                    other value would count more entries than the table holds
+                    and walk past the mapped section on the last ones. */
+          if (section_h->sh_entsize == sizeof(ElfW(Sym))) {
+            img->dynsym_count = section_h->sh_size / section_h->sh_entsize;
+          } else {
+            LOGW("Section %s has sh_entsize %zu (!= %zu), .dynsym is unusable", sname, (size_t)section_h->sh_entsize, sizeof(ElfW(Sym)));
+
+            img->dynsym_count = 0;
+          }
 
           break;
         }
@@ -682,9 +752,12 @@ static void elf_walk_sections(ElfImg *img, const char *elf,
             img->symtab_offset = section_h->sh_offset;
             img->symtab_size = section_h->sh_size;
 
-            if (entsize > 0) img->symtab_count = img->symtab_size / entsize;
-            else {
-              LOGW("Section %s has zero sh_entsize", sname);
+            /* INFO: Same rule as .dynsym, for the same reason. */
+            if (section_h->sh_entsize == sizeof(ElfW(Sym))) {
+              img->symtab_count = img->symtab_size / section_h->sh_entsize;
+            } else {
+              LOGW("Section %s has sh_entsize %zu (!= %zu)", sname, (size_t)section_h->sh_entsize, sizeof(ElfW(Sym)));
+
               img->symtab_count = 0;
             }
 
@@ -696,7 +769,8 @@ static void elf_walk_sections(ElfImg *img, const char *elf,
         case SHT_STRTAB: break;
         case SHT_PROGBITS: {
           if (section_str && strcmp(sname, ".gnu_debugdata") == 0 &&
-              (size_t)section_h->sh_offset + section_h->sh_size <= img->size) {
+              section_h->sh_offset <= img->size &&
+              section_h->sh_size <= img->size - section_h->sh_offset) {
             parse_gnu_debugdata(img, (const uint8_t *)offsetOf_char(img->header, section_h->sh_offset), section_h->sh_size);
           }
 
@@ -718,8 +792,20 @@ static void elf_walk_sections(ElfImg *img, const char *elf,
 }
 
 /* INFO: Each symbol table names its string table by section index, and that
-         index is only valid once the whole section table has been seen - which
-         is why this runs after the walk rather than inside it. */
+          index is only valid once the whole section table has been seen - which
+          is why this runs after the walk rather than inside it.
+
+          The linked table is validated like any other the walk binds: the
+          section walk skips a section whose extent leaves the file, but the
+          header it leaves behind still names it, so the extent and the NUL
+          termination are checked here too before the table is used as one. */
+static bool linked_strtable_ok(ElfImg *img, ElfW(Shdr) *strtab_hdr) {
+  if (strtab_hdr->sh_type != SHT_STRTAB) return false;
+  if (strtab_hdr->sh_offset > img->size || strtab_hdr->sh_size > img->size - strtab_hdr->sh_offset) return false;
+
+  return strtable_terminated((const char *)offsetOf_char(img->header, strtab_hdr->sh_offset), strtab_hdr->sh_size);
+}
+
 static void elf_link_string_tables(ElfImg *img, ElfW(Shdr) *dynsym_shdr, ElfW(Shdr) *symtab_shdr) {
   ElfW(Shdr) *shdr_base = img->section_header;
 
@@ -729,12 +815,12 @@ static void elf_link_string_tables(ElfImg *img, ElfW(Shdr) *dynsym_shdr, ElfW(Sh
     if (dynsym_shdr->sh_link < img->header->e_shnum) {
       ElfW(Shdr) *linked_strtab = shdr_base + dynsym_shdr->sh_link;
 
-      if (linked_strtab->sh_type == SHT_STRTAB) {
+      if (linked_strtable_ok(img, linked_strtab)) {
         img->strtab = linked_strtab;
         img->symstr_offset = linked_strtab->sh_offset;
         img->strtab_start = (void *)offsetOf_char(img->header, img->symstr_offset);
       } else {
-        LOGW("Section %u linked by .dynsym is not SHT_STRTAB (type %u)", dynsym_shdr->sh_link, linked_strtab->sh_type);
+        LOGW("Section %u linked by .dynsym is not a usable string table (type %u)", dynsym_shdr->sh_link, linked_strtab->sh_type);
       }
     } else {
       LOGE(".dynsym sh_link (%u) is out of bounds (%u)", dynsym_shdr->sh_link, img->header->e_shnum);
@@ -747,23 +833,28 @@ static void elf_link_string_tables(ElfImg *img, ElfW(Shdr) *dynsym_shdr, ElfW(Sh
     if (symtab_shdr->sh_link < img->header->e_shnum) {
       ElfW(Shdr) *linked_strtab = shdr_base + symtab_shdr->sh_link;
 
-      if (linked_strtab->sh_type == SHT_STRTAB) {
-        /* INFO: For linear lookup */
+      if (linked_strtable_ok(img, linked_strtab)) {
+        /* INFO: For linear lookup; the size rides along so a name offset can
+                  be checked against the table it is read from. */
         img->symstr_offset_for_symtab = linked_strtab->sh_offset;
+        img->symstr_size_for_symtab = linked_strtab->sh_size;
       } else {
-        LOGW("Section %u linked by .symtab is not SHT_STRTAB (type %u)", symtab_shdr->sh_link, linked_strtab->sh_type);
+        LOGW("Section %u linked by .symtab is not a usable string table (type %u)", symtab_shdr->sh_link, linked_strtab->sh_type);
 
         img->symstr_offset_for_symtab = 0;
+        img->symstr_size_for_symtab = 0;
       }
     } else {
       LOGE(".symtab sh_link (%u) is out of bounds (%u)", symtab_shdr->sh_link, img->header->e_shnum);
 
       img->symstr_offset_for_symtab = 0;
+      img->symstr_size_for_symtab = 0;
     }
   } else {
     img->symtab_start = NULL;
     img->symtab_count = 0;
     img->symstr_offset_for_symtab = 0;
+    img->symstr_size_for_symtab = 0;
   }
 }
 
@@ -852,7 +943,7 @@ const char *getSymbName(ElfImg *img, ElfW(Sym) *sym) {
     return (const char *)img->strtab_start + sym->st_name;
   }
 
-  if (img->symstr_offset_for_symtab == 0) return NULL;
+  if (img->symstr_offset_for_symtab == 0 || sym->st_name >= img->symstr_size_for_symtab) return NULL;
 
   return (const char *)(offsetOf_char(img->header, img->symstr_offset_for_symtab) + sym->st_name);
 }
@@ -890,6 +981,11 @@ static bool _load_symtabs(ElfImg *img) {
                                   : NULL;
 
     for (ElfW(Off) pos = 0; pos < img->symtab_count; pos++) {
+      /* INFO: The bound is checked before the store, the way both sibling
+                loops below do it: a predicate that drifts from the counting
+                pass then fills short instead of writing past the array. */
+      if (current_valid_index >= img->symtabs_count_) break;
+
       ElfW(Sym) *current_sym = &img->symtab_start[pos];
 
       if (!zn_collectable_symbol(current_sym, symtab_str_shdr != NULL ? symtab_str_shdr->sh_size : SIZE_MAX)) continue;
@@ -897,7 +993,6 @@ static bool _load_symtabs(ElfImg *img) {
       img->symtabs_[current_valid_index] = current_sym;
 
       current_valid_index++;
-      if (current_valid_index == img->symtabs_count_) break;
     }
   }
 
@@ -958,6 +1053,15 @@ ElfW(Addr) GnuLookup(ElfImg *restrict img, const char *name, uint32_t hash, unsi
     return 0;
   }
 
+  /* INFO: The chain walk indexes chain[dynsym_count - gnu_symndx], and the
+          chain's length is only what its section holds: a hashed range that
+          does not fit it is a malformed table, answered as a miss so the
+          linear fallback can take over. */
+  if (img->gnu_symndx_ > img->dynsym_count ||
+      img->dynsym_count - img->gnu_symndx_ > img->gnu_chain_len_) {
+    return 0;
+  }
+
   return (ElfW(Addr))vexcore_gnu_lookup(
     (const struct vexcore_symbol *)img->dynsym_start, img->dynsym_count,
     (const char *)img->strtab_start, img->strtab->sh_size,
@@ -978,6 +1082,13 @@ ElfW(Addr) ElfLookup(ElfImg *restrict img, const char *restrict name, uint32_t h
     return 0;
   }
 
+  /* INFO: The chain is indexed by symbol index, so the symbol count has to
+          fit the chain length the section header vouches for - the same
+          rule the GNU guard above states for its own chain. */
+  if (img->dynsym_count > img->chain_len_) {
+    return 0;
+  }
+
   return (ElfW(Addr))vexcore_elf_lookup(
     (const struct vexcore_symbol *)img->dynsym_start, img->dynsym_count,
     (const char *)img->strtab_start, img->strtab->sh_size,
@@ -991,9 +1102,10 @@ ElfW(Addr) LinearLookup(ElfImg *img, const char *restrict name, unsigned char *s
   for (size_t i = 0; i < img->symtabs_count_; i++) {
     ElfW(Sym) *sym = img->symtabs_[i];
 
+    /* INFO: Every entry here already passed zn_collectable_symbol, which is
+              the one place SHN_UNDEF and the name-offset bound are decided. */
     const char *sym_name = getSymbName(img, sym);
-    if (sym_name == NULL || sym->st_shndx == SHN_UNDEF || strcmp(name, sym_name) != 0)
-      continue;
+    if (sym_name == NULL || strcmp(name, sym_name) != 0) continue;
 
     unsigned int type = ELF_ST_TYPE(sym->st_info);
     if (sym_type) *sym_type = type;

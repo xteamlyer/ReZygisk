@@ -55,8 +55,6 @@ extern "C" uint8_t yz_patch_text_checked(uintptr_t addr, const void *expected,
   const size_t size = len;
   if (size == 0 || size > 64 || addr > UINTPTR_MAX - size) return 0;
 
-  if (memcmp(reinterpret_cast<const void *>(addr), expected, size) != 0) return 0;
-
   const int fd = open("/proc/self/mem", O_RDWR | O_CLOEXEC);
   if (fd == -1) {
     /* INFO: Nothing has been written and nothing has been changed, so the
@@ -66,6 +64,27 @@ extern "C" uint8_t yz_patch_text_checked(uintptr_t addr, const void *expected,
               state. A denied /proc/self/mem would then kill every process that
               tried to place a hook, instead of failing the hook. */
     LOGE("inline hook: cannot open /proc/self/mem for the patch at %p", reinterpret_cast<void *>(addr));
+
+    return 0;
+  }
+
+  /* INFO: The bytes at the target are read through the descriptor and not
+            through the mapping: the address is a module's word for where a
+            function is, and one that is unmapped or unreadable would turn a
+            direct memcmp into the SIGSEGV this protocol exists to answer with
+            "rejected". A pread on /proc/self/mem fails cleanly instead. */
+  uint8_t current[64];
+  ssize_t got = pread(fd, current, size, static_cast<off_t>(addr));
+  if (got != static_cast<ssize_t>(size)) {
+    close(fd);
+
+    LOGE("inline hook: the target at %p cannot be read", reinterpret_cast<void *>(addr));
+
+    return 0;
+  }
+
+  if (memcmp(current, expected, size) != 0) {
+    close(fd);
 
     return 0;
   }
@@ -92,9 +111,18 @@ extern "C" uint8_t yz_patch_text_checked(uintptr_t addr, const void *expected,
     written += static_cast<size_t>(step);
   }
 
+  /* INFO: Verified through the descriptor as well, for the same reason the
+            comparison above was: the state of the mapping is the module's to
+            change, and the answer has to come from a read that cannot fault.
+            A read that fails here is the indeterminate case - the write
+            reported success and the check could not see the result. */
+  got = pread(fd, current, size, static_cast<off_t>(addr));
+
   close(fd);
 
-  return memcmp(reinterpret_cast<const void *>(addr), replacement, size) == 0 ? 1 : 2;
+  if (got != static_cast<ssize_t>(size)) return 2;
+
+  return memcmp(current, replacement, size) == 0 ? 1 : 2;
 }
 
 namespace {

@@ -114,7 +114,10 @@ static inline ssize_t write_fd(int fd, int sendfd) {
 
   memcpy(CMSG_DATA(cmsg), &sendfd, sizeof(int));
 
-  return sendmsg(fd, &msg, 0);
+  /* INFO: MSG_NOSIGNAL, because a peer that closed its end turns this into
+          SIGPIPE otherwise, and several callers of this exchange run inside
+          app processes that do not ignore it. */
+  return sendmsg(fd, &msg, MSG_NOSIGNAL);
 }
 
 static inline int read_fd(int fd) {
@@ -140,6 +143,12 @@ static inline int read_fd(int fd) {
 
   if (ret == -1) return -1;
 
+  /* INFO: Truncated control data means the descriptor (or part of the header
+          the walk below reads) did not fit the buffer; the kernel closes any
+          descriptor it could not deliver, so the only safe answer is an
+          error and not a walk over a half-written buffer. */
+  if (msg.msg_flags & MSG_CTRUNC) return -1;
+
   struct cmsghdr *cmsg;
   int sendfd = -1;
 
@@ -160,11 +169,17 @@ static inline int read_fd(int fd) {
             not including a terminator, and the receiver is the one that decides
             where it goes - the two ends read and write it differently on
             purpose, the loader allocating and the daemon filling a caller's
-            buffer, so only the framing is shared. */
+            buffer, so only the framing is shared.
+
+            A NULL string is written as empty: one call site passes an
+            optional path, and the framing has to stay aligned with whatever
+            the other end reads either way. */
 static inline ssize_t write_string(int fd, const char *str) {
-  size_t str_len = strlen(str);
+  size_t str_len = str != NULL ? strlen(str) : 0;
 
   if (write_loop(fd, &str_len, sizeof(size_t)) != (ssize_t)sizeof(size_t)) return -1;
+
+  if (str_len == 0) return 0;
 
   return write_loop(fd, str, str_len) == (ssize_t)str_len ? (ssize_t)str_len : -1;
 }

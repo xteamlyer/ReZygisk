@@ -8,6 +8,7 @@
 #include <signal.h>
 
 #include <unistd.h>
+#include <poll.h>
 #include <sys/epoll.h>
 #include <sys/mman.h>
 #include <sys/signalfd.h>
@@ -276,11 +277,17 @@ void monitor_events_loop() {
 
     for (int i = 0; i < nfds; i++) {
       if (events[i].events & (EPOLLERR | EPOLLHUP)) {
-        LOGE("Failed event (mask %u)", events[i].events);
+        /* INFO: One bad descriptor is that descriptor's problem: the epoll
+                  fd itself is not in the set it watches, so an error on a
+                  member costs the member and not the loop. Stopping here
+                  would end tracing for the whole boot because one socket
+                  hung up. The callback list is kept - the registrations are
+                  rebuilt on demand by the daemon restart path - and the
+                  offending fd is left for its own teardown path; the data
+                  pointer is only dropped, never called on a dead fd. */
+        LOGE("Failed event (mask %u) on a watched fd, skipping its callback", events[i].events);
 
-        monitor_events_running = false;
-
-        break;
+        continue;
       }
 
       ((monitor_event_callback_t)events[i].data.ptr)();
@@ -351,24 +358,72 @@ bool rezygiskd_listener_init() {
          magnitude while still keeping a corrupted length from being trusted. */
 #define MONITOR_STRING_MAX (64u * 1024u)
 
-/* INFO: Reads one length-prefixed string off the daemon socket, or NULL.
+/* INFO: One datagram of the controller protocol, with a cursor.
 
-          The length is validated before use: a uint32_t of 0xffffffff wraps to
-          zero in `length + 1`, so the allocation would hand back a minimal block
-          that read_loop then fills with four gigabytes of datagram. On NULL the
-          caller abandons the datagram - the stream is already out of step with
-          the daemon, so dispatching on what follows would act on garbage. */
-static char *read_socket_string(const char *what) {
+         The socket is a datagram socket, and one datagram is the only unit
+         it delivers whole - so one datagram is also the unit this side
+         parses. A record is never read across two wakeups of the loop, and a
+         datagram that arrives without its record's first byte can never be
+         mistaken for the middle of another.
+
+         The buffer is larger than the sender's builder on purpose: a datagram
+         bigger than the buffer would be silently truncated by the kernel, and
+         the slack keeps even a future larger record parseable as a refusal
+         rather than cut. */
+#define MONITOR_DGRAM_MAX (8u * 1024u)
+
+struct monitor_dgram {
+  uint8_t bytes[MONITOR_DGRAM_MAX];
+  ssize_t len;
+  size_t pos;
+};
+
+/* INFO: Reads one whole datagram, or answers -1 for "nothing to read right
+         now" (EAGAIN) and other errors, which the caller distinguishes by
+         errno only for the log line. MSG_TRUNC makes the return value the
+         datagram's real length, so a datagram too big for the buffer is
+         detectable instead of silently cut. */
+static ssize_t monitor_recv_dgram(struct monitor_dgram *dgram) {
+  dgram->pos = 0;
+
+  ssize_t got = recv(monitor_sock_fd, dgram->bytes, sizeof(dgram->bytes), MSG_DONTWAIT | MSG_TRUNC);
+  if (got > (ssize_t)sizeof(dgram->bytes)) return -1;
+
+  return got;
+}
+
+static bool dgram_take_u8(struct monitor_dgram *dgram, uint8_t *out) {
+  if (dgram->len < (ssize_t)0 || dgram->pos + sizeof(*out) > (size_t)dgram->len) return false;
+
+  *out = dgram->bytes[dgram->pos];
+  dgram->pos += sizeof(*out);
+
+  return true;
+}
+
+static bool dgram_take_u32(struct monitor_dgram *dgram, uint32_t *out) {
+  if (dgram->len < (ssize_t)0 || dgram->pos + sizeof(*out) > (size_t)dgram->len) return false;
+
+  memcpy(out, &dgram->bytes[dgram->pos], sizeof(*out));
+  dgram->pos += sizeof(*out);
+
+  return true;
+}
+
+/* INFO: One length-prefixed string out of the datagram, freshly allocated,
+         or NULL when the datagram is too short for the length it announces -
+         the refusal that keeps a truncated datagram from being walked past
+         its end. */
+static char *dgram_take_string(struct monitor_dgram *dgram, const char *what) {
   uint32_t length = 0;
-
-  if (read_uint32_t(monitor_sock_fd, &length) != sizeof(length)) {
-    LOGE("read VexZygiskd%s %s len", MONITOR_ABI, what);
+  if (!dgram_take_u32(dgram, &length)) {
+    LOGE("VexZygiskd%s %s len is not in the datagram", MONITOR_ABI, what);
 
     return NULL;
   }
 
-  if (length > MONITOR_STRING_MAX) {
-    LOGE("VexZygiskd%s %s length %u is out of range", MONITOR_ABI, what, length);
+  if (length > MONITOR_STRING_MAX || dgram->pos + length > (size_t)dgram->len) {
+    LOGE("VexZygiskd%s %s length %u is out of range for the datagram", MONITOR_ABI, what, length);
 
     return NULL;
   }
@@ -380,22 +435,20 @@ static char *read_socket_string(const char *what) {
     return NULL;
   }
 
-  if (read_loop(monitor_sock_fd, value, length) != (ssize_t)length) {
-    LOGE("read VexZygiskd%s %s", MONITOR_ABI, what);
-
-    free(value);
-
-    return NULL;
-  }
-
+  memcpy(value, &dgram->bytes[dgram->pos], length);
+  dgram->pos += length;
   value[length] = '\0';
 
   return value;
 }
 
-/* INFO: The module list the daemon sends, one entry at a time: the name, a
-         type byte, and for a Zygisk Next module a companion flag and the
-         targets it was registered for.
+/* INFO: One command from the daemon, dispatched with the datagram it arrived
+         in. Declared here because the module list reader hands a command
+         datagram that arrives between two module entries to it rather than
+         treating the interleave as a broken list. */
+static void dispatch_daemon_command(uint8_t cmd, struct monitor_dgram *dgram);
+
+/* INFO: The module list the daemon sends, one entry per datagram.
 
          Every slot is allocated before anything is read into it, so the cleanup
          path can walk the full lists - which is what the label at the end is
@@ -403,20 +456,7 @@ static char *read_socket_string(const char *what) {
          hand. A read that fails partway leaves the lists empty rather than half
          filled: the status line says so instead of naming modules that were
          never delivered. */
-static void read_daemon_modules(void) {
-  /* INFO: Read into a local first: the old list is freed through the length it
-            was allocated with, so the stored length must not be overwritten
-            before that. */
-  uint32_t modules_len;
-  if (read_uint32_t(monitor_sock_fd, &modules_len) != sizeof(modules_len)) {
-    LOGE("read VexZygiskd%s modules len", MONITOR_ABI);
-
-    free(environment_information.root_impl);
-    environment_information.root_impl = NULL;
-
-    return;
-  }
-
+static void read_daemon_modules(uint32_t modules_len) {
   free_environment_information();
 
   environment_information.modules_len = modules_len;
@@ -426,6 +466,11 @@ static void read_daemon_modules(void) {
   if (environment_information.modules == NULL) {
     PLOGE("malloc VexZygiskd%s module list", MONITOR_ABI);
 
+    /* INFO: The length is reset with the allocation it describes: a non-zero
+              length next to a NULL array is one refactor away from an
+              over-read, and every consumer pairs the two. */
+    environment_information.modules_len = 0;
+
     free(environment_information.root_impl);
     environment_information.root_impl = NULL;
 
@@ -434,14 +479,68 @@ static void read_daemon_modules(void) {
     return;
   }
 
-  for (size_t i = 0; i < environment_information.modules_len; i++) {
+  /* INFO: The index only moves when an entry was read: a control command
+            that arrives between two entries (this socket also carries the
+            user's ctl commands) is dispatched on the spot and the expected
+            entry still follows. */
+  for (size_t i = 0; i < environment_information.modules_len; ) {
     struct daemon_module *module = &environment_information.modules[i];
 
-    module->name = read_socket_string("module name");
+    /* INFO: One datagram per entry. The wait is bounded because the entries
+              follow the announcement synchronously: an empty socket here
+              means a datagram was lost, and waiting forever would stall the
+              monitor on a list that is never coming. */
+    struct monitor_dgram dgram;
+    ssize_t got = monitor_recv_dgram(&dgram);
+
+    if (got == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      struct pollfd waiting = { .fd = monitor_sock_fd, .events = POLLIN };
+
+      int ready;
+      do {
+        ready = poll(&waiting, 1, 500);
+      } while (ready == -1 && errno == EINTR);
+
+      if (ready > 0) got = monitor_recv_dgram(&dgram);
+    }
+
+    if (got <= 0) {
+      LOGE("VexZygiskd%s module %zu never arrived", MONITOR_ABI, i);
+
+      goto set_info_modules_cleanup;
+    }
+
+    dgram.len = got;
+
+    uint8_t entry_cmd = 0;
+    if (!dgram_take_u8(&dgram, &entry_cmd)) {
+      LOGE("An empty datagram where module entry %zu was announced", i);
+
+      goto set_info_modules_cleanup;
+    }
+
+    /* INFO: The daemon's own commands are the interleave that can legitimately
+              arrive here - a user ctl raced the list. A module entry outside
+              a list is handled one level up; anything else is a protocol
+              break and the list is refused rather than guessed at. */
+    if (entry_cmd == (uint8_t)START || entry_cmd == (uint8_t)STOP || entry_cmd == (uint8_t)EXIT ||
+        entry_cmd == (uint8_t)CMD_ZYGOTE_INJECTED || entry_cmd == (uint8_t)CMD_DAEMON_SET_ERROR_INFO) {
+      dispatch_daemon_command(entry_cmd, &dgram);
+
+      continue;
+    }
+
+    if (entry_cmd != (uint8_t)DAEMON64_MODULE_ENTRY) {
+      LOGE("Expected a module entry datagram, found command %u instead", (unsigned)entry_cmd);
+
+      goto set_info_modules_cleanup;
+    }
+
+    module->name = dgram_take_string(&dgram, "module name");
     if (module->name == NULL) goto set_info_modules_cleanup;
 
-    uint8_t module_type;
-    if (read_uint8_t(monitor_sock_fd, &module_type) != sizeof(module_type)) {
+    uint8_t module_type = 0;
+    if (!dgram_take_u8(&dgram, &module_type)) {
       LOGE("read VexZygiskd%s module type", MONITOR_ABI);
 
       goto set_info_modules_cleanup;
@@ -451,36 +550,39 @@ static void read_daemon_modules(void) {
     if (module->is_zn) environment_information.zn_len++;
 
     if (module->is_zn) {
-      uint8_t companion;
-      if (read_uint8_t(monitor_sock_fd, &companion) != sizeof(companion)) {
+      uint8_t companion = 0;
+      if (!dgram_take_u8(&dgram, &companion)) {
         LOGE("read VexZygiskd%s module companion", MONITOR_ABI);
 
         goto set_info_modules_cleanup;
       }
       module->companion = companion == 1;
 
-      if (read_uint32_t(monitor_sock_fd, &module->targets_len) != sizeof(module->targets_len)) {
+      uint32_t targets_len = 0;
+      if (!dgram_take_u32(&dgram, &targets_len)) {
         LOGE("read VexZygiskd%s module targets len", MONITOR_ABI);
 
         goto set_info_modules_cleanup;
       }
 
-      if (module->targets_len > 0) {
-        module->targets = calloc(module->targets_len, sizeof(char *));
+      if (targets_len > 0) {
+        module->targets = calloc(targets_len, sizeof(char *));
         if (module->targets == NULL) {
           PLOGE("malloc VexZygiskd%s module targets", MONITOR_ABI);
 
           goto set_info_modules_cleanup;
         }
 
-        for (uint32_t t = 0; t < module->targets_len; t++) {
-          module->targets[t] = read_socket_string("module target");
+        for (uint32_t t = 0; t < targets_len; t++) {
+          module->targets[t] = dgram_take_string(&dgram, "module target");
           if (module->targets[t] == NULL) goto set_info_modules_cleanup;
         }
       }
     }
 
     LOGD("VexZygiskd%s module %zu: %s (%s)", MONITOR_ABI, i, module->name, module->is_zn ? "next" : "zygisk");
+
+    i++;
   }
 
   update_status(NULL);
@@ -501,14 +603,12 @@ static void read_daemon_modules(void) {
 }
 
 
-/* INFO: One command from the daemon, dispatched. The caller owns the socket
-         and the read loop around it; everything below is about what the
-         command means.
-
-         Reads that fail are answered with an early return rather than by
-         unwinding the caller: the stream is already out of step with the
-         daemon, so acting on what follows would act on garbage. */
-static void dispatch_daemon_command(uint8_t cmd) {
+/* INFO: One command from the daemon, dispatched with the datagram it arrived
+         in. The cursor sits past the command byte; every field the command
+         carries is taken from the same datagram, and a command whose fields
+         do not fit is refused rather than read from whatever the next
+         datagram holds. */
+static void dispatch_daemon_command(uint8_t cmd, struct monitor_dgram *dgram) {
   switch (cmd) {
     case START: {
       if (tracing_state == STOPPING) {
@@ -596,15 +696,24 @@ static void dispatch_daemon_command(uint8_t cmd) {
 
       /* INFO: Read into a local first: a failed read then leaves the previous
                 value in place instead of dropping it. */
-      char *root_impl = read_socket_string("root impl");
+      char *root_impl = dgram_take_string(dgram, "root impl");
       if (root_impl == NULL) break;
+
+      uint32_t modules_len = 0;
+      if (!dgram_take_u32(dgram, &modules_len)) {
+        LOGE("VexZygiskd%s modules len is not in the datagram", MONITOR_ABI);
+
+        free(root_impl);
+
+        break;
+      }
 
       free(environment_information.root_impl);
       environment_information.root_impl = root_impl;
 
       LOGD("VexZygiskd%s root impl: %s", MONITOR_ABI, environment_information.root_impl);
 
-      read_daemon_modules();
+      read_daemon_modules(modules_len);
 
       break;
     }
@@ -613,7 +722,7 @@ static void dispatch_daemon_command(uint8_t cmd) {
 
       /* INFO: Same ordering as the info case above: the old text survives a
                 failed read. */
-      char *error_info = read_socket_string("error info");
+      char *error_info = dgram_take_string(dgram, "error info");
       if (error_info == NULL) break;
 
       free(status.daemon_error_info);
@@ -630,9 +739,9 @@ static void dispatch_daemon_command(uint8_t cmd) {
 
 void rezygiskd_listener_callback() {
   while (1) {
-    uint8_t cmd = 0;
-    ssize_t nread = TEMP_FAILURE_RETRY(read(monitor_sock_fd, &cmd, sizeof(cmd)));
-    if (nread == -1) {
+    struct monitor_dgram dgram;
+    ssize_t got = monitor_recv_dgram(&dgram);
+    if (got == -1) {
       if (errno == EINTR || errno == EWOULDBLOCK) break;
 
       /* INFO: Any other error is permanent for this socket - continuing
@@ -645,9 +754,23 @@ void rezygiskd_listener_callback() {
 
     /* INFO: A zero-length datagram carries no command; skip it and keep
               draining instead of dispatching on stale state. */
-    if (nread == 0) continue;
+    if (got == 0) continue;
 
-    dispatch_daemon_command(cmd);
+    dgram.len = got;
+
+    uint8_t cmd = 0;
+    if (!dgram_take_u8(&dgram, &cmd)) continue;
+
+    /* INFO: A module entry outside the list it belongs to is a stray record,
+              not a command: nothing is mid-list here, so it is dropped
+              rather than dispatched. */
+    if (cmd == (uint8_t)DAEMON64_MODULE_ENTRY) {
+      LOGW("A module entry datagram arrived outside a module list, dropping it");
+
+      continue;
+    }
+
+    dispatch_daemon_command(cmd, &dgram);
   }
 }
 
@@ -793,7 +916,11 @@ static bool ensure_daemon_created() {
 
     PLOGE("exec VexZygiskd%s failed", MONITOR_ABI);
 
-    exit(1);
+    /* INFO: _exit, not exit: this child still carries the monitor's stdio
+              buffers, and flushing them here would duplicate the output the
+              parent is about to produce; the atexit handlers of the monitor
+              image do not belong in a process that never became the daemon. */
+    _exit(1);
   }
 
   if (stale_pid != -1) {
@@ -1227,6 +1354,23 @@ static void respawn_stale_targets(void) {
          Every return in here means this child is done with, which is what the
          loop this was lifted out of did with a continue. */
 static void handle_init_event(int pid, long sigchld_status) {
+  /* INFO: init going away is the end of the session this monitor was tracing
+            for - the system is rebooting its userspace and no fork will be
+            reported again. Neither branch below matches an exit, so without
+            this the monitor would sit in TRACING while tracing nothing. */
+  if (WIFEXITED(sigchld_status) || WIFSIGNALED(sigchld_status)) {
+    char status_str[64];
+    parse_status((int)sigchld_status, status_str, sizeof(status_str));
+
+    LOGW("init %s, stopping the trace", status_str);
+
+    tracing_state = STOPPED;
+    monitor_stop_reason = "init exited";
+    update_status(NULL);
+
+    return;
+  }
+
   if (STOPPED_WITH(sigchld_status, SIGTRAP, PTRACE_EVENT_FORK)) {
     /* INFO: Initialised and checked: the call fills this in only on
               success, and the line below would otherwise print whatever
@@ -1327,7 +1471,7 @@ static bool child_is_tracked(pid_t pid) {
          Detaching loses track of one process, which the failed allocation has
          already cost, but the process survives and the fork it was making
          completes. */
-static void track_child(pid_t pid) {
+static void track_child(pid_t pid, int wstatus) {
   size_t slot = sigchld_process_count;
 
   for (size_t i = sigchld_process_free; i < sigchld_process_count; i++) {
@@ -1364,7 +1508,19 @@ static void track_child(pid_t pid) {
   }
 
   ptrace(PTRACE_SETOPTIONS, pid, 0, PTRACE_O_TRACEEXEC);
-  ptrace(PTRACE_CONT, pid, 0, 0);
+
+  /* INFO: The stop a newborn arrives in is the fork SIGTRAP almost always,
+          but the kernel can hand over a genuine signal-delivery stop
+          instead, and continuing with signal 0 eats a signal the process
+          was owed. The fork trap and the job-control stops are the only
+          ones swallowed; anything else is passed on. */
+  int deliver = 0;
+  if (WIFSTOPPED(wstatus) && WPTEVENT(wstatus) == 0) {
+    int sig = WSTOPSIG(wstatus);
+    if (sig != SIGTRAP && sig != SIGSTOP) deliver = sig;
+  }
+
+  ptrace(PTRACE_CONT, pid, 0, deliver);
 }
 
 /* INFO: The exec of a tracked child: read what the process became, decide
@@ -1513,7 +1669,14 @@ static void handle_tracked_stop(pid_t pid, int wstatus) {
   if (!handed_over && WIFSTOPPED(wstatus)) {
     LOGV("detach process %d", pid);
 
-    ptrace(PTRACE_DETACH, pid, 0, 0);
+    /* INFO: SIGCONT, and not 0: the exec hand-off stops its target with
+              SIGSTOP before it has a tracer, and every failure path after
+              that point lands here with the stop still pending. A plain
+              detach leaves the process job-control-stopped forever - a
+              zygote hung there stalls the whole boot. SIGCONT undoes the
+              stop on the way out, and is a no-op for a process that was
+              stopped by anything else. */
+    ptrace(PTRACE_DETACH, pid, 0, SIGCONT);
   }
 }
 
@@ -1560,7 +1723,14 @@ void sigchld_listener_callback() {
       }
 
       if (status.supported && pid == status.daemon_pid) {
-        if (!handle_daemon_exit(pid, sigchld_status)) return;
+        /* INFO: break and not return: this fd is registered edge-triggered,
+                  so a return that leaves queued siginfo unread is not
+                  re-armed by another signal - the children of that pass
+                  (a tracer's exit among them) would stay unreaped until the
+                  next unrelated signal. Breaking abandons the rest of this
+                  waitpid pass, which is what the failure means, and keeps
+                  draining the fd. */
+        if (!handle_daemon_exit(pid, sigchld_status)) break;
 
         continue;
       }
@@ -1583,7 +1753,7 @@ void sigchld_listener_callback() {
 
       LOGV("New process %d attached", pid);
 
-      track_child(pid);
+      track_child(pid, sigchld_status);
     }
   }
 }

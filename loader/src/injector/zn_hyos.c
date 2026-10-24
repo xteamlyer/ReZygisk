@@ -464,30 +464,45 @@ const char *zn_hyos_image_path(void) {
 
 /* INFO: Puts the hooks back the way they were found. Both are registered again
          with their own original address as the handler, which is how LSPlt
-         undoes a hook, and the commit is what applies it. Returns false only
-         when a rollback that was needed could not be applied - and then the
-         originals are kept, because the module list is still ours and a later
-         attempt may still succeed. */
+         undoes a hook, and the commit is what applies it.
+
+         The result is tracked per hook: a re-registration that could not be
+         staged leaves that hook installed, and only the ones the commit
+         applied are gone. Answering true with nothing restored - or clearing
+         both originals when only one was restored - would leave a replacement
+         live with a NULL original, and it answers -1 for every call: fork()
+         and selinux_android_setcontext() would then fail for every
+         application this spawner makes, until reboot. */
 static bool zn_hyos_rollback_hooks(void) {
-  bool pending = false;
+  if (zn_hyos_original_fork == NULL && zn_hyos_original_setcontext == NULL) return true;
+
+  bool fork_staged = false;
+  bool setcontext_staged = false;
 
   if (zn_hyos_original_fork != NULL) {
-    if (zn_lsplt_register_hook(zn_hyos_target_dev, zn_hyos_target_inode, "fork",
-                               (void *)(uintptr_t)zn_hyos_original_fork, NULL) == 0) {
-      pending = true;
-    }
+    fork_staged = zn_lsplt_register_hook(zn_hyos_target_dev, zn_hyos_target_inode, "fork",
+                                         (void *)(uintptr_t)zn_hyos_original_fork, NULL) == 0;
   }
 
   if (zn_hyos_original_setcontext != NULL) {
-    if (zn_lsplt_register_hook(zn_hyos_target_dev, zn_hyos_target_inode, "selinux_android_setcontext",
-                               (void *)(uintptr_t)zn_hyos_original_setcontext, NULL) == 0) {
-      pending = true;
-    }
+    setcontext_staged = zn_lsplt_register_hook(zn_hyos_target_dev, zn_hyos_target_inode, "selinux_android_setcontext",
+                                               (void *)(uintptr_t)zn_hyos_original_setcontext, NULL) == 0;
   }
 
-  if (!pending) return true;
+  /* INFO: A rollback was needed and could not even be staged: the originals
+            are kept and answered false, so the caller knows the replacements
+            are still live and chaining through them stays the only path. */
+  if (!fork_staged && !setcontext_staged) return false;
 
-  return zn_lsplt_commit_hook() == 0;
+  if (zn_lsplt_commit_hook() != 0) return false;
+
+  /* INFO: Only now is a hook really gone, and only the one that was staged:
+          the replacements whose rollback did not take keep chaining to their
+          originals, which stay in place for exactly that. */
+  if (fork_staged) zn_hyos_original_fork = NULL;
+  if (setcontext_staged) zn_hyos_original_setcontext = NULL;
+
+  return zn_hyos_original_fork == NULL && zn_hyos_original_setcontext == NULL;
 }
 
 bool zn_hyos_install_hooks(void) {
