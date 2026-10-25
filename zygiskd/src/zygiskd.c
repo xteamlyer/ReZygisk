@@ -596,8 +596,13 @@ static bool zn_matches_target(const char *target, bool is_name, const char *proc
 
 /* INFO: Every exchange the daemon takes part in is bound by this, client
            and companion sockets alike: a stuck peer must never stall the
-           zygote forks waiting behind it. */
-#define DAEMON_EXCHANGE_TIMEOUT_SECS 5
+           zygote forks waiting behind it.
+
+           Three, because three is the whole budget the loader side gives any
+           request it makes (REZYGISKD_IO_TIMEOUT_SEC in the loader's
+           daemon.c): serving a client for longer than that only delays every
+           fork queued behind it, for a caller that has already given up. */
+#define DAEMON_EXCHANGE_TIMEOUT_SECS 3
 
 /* INFO: The one exception: a HyperOS control session sits quiet between the
            reports of the applications that inherited it, so it gets a

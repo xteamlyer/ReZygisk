@@ -904,8 +904,13 @@ int save_mns_fd(int pid) {
   /* INFO: The handshake runs inside a request handler; a helper wedged on a
             strange /proc entry must not block the daemon for good. On a
             timeout the socket is closed, which makes the child's next write
-            fail and lets it exit for the reap below. */
-  struct timeval timeout = { .tv_sec = 5, .tv_usec = 0 };
+            fail and lets it exit for the reap below.
+
+            Two seconds rather than the exchange budget of three: the helper
+            opens one descriptor and writes it back, which is milliseconds,
+            and every denylisted process that has to wait behind it is a
+            fork mid-specialize. */
+  struct timeval timeout = { .tv_sec = 2, .tv_usec = 0 };
   setsockopt(socket_parent, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
   setsockopt(socket_parent, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 

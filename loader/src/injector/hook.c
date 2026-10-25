@@ -1864,20 +1864,37 @@ void hook_functions(void) {
 
 static void hook_unloader(void) {
   /* INFO: Run the expensive setup (PLT unregister + module load) at most once,
-           but keep retrying until libart.so is actually mapped: the first
+           but keep retrying until every piece of it has taken: the first
            property_get calls can land before the runtime is loaded, in which
-           case plti_add_lib fails and we must try again on a later call.
-           The flag is set only after a successful setup, so the one-shot
-           guarantee no longer depends solely on the plti unregister side-effect
-           and is safe under re-entrancy (e.g. the HyperOS spawner forking in
-           parallel). */
+           case plti_add_lib fails and a later call tries again.
+
+           The module load retries on the same trigger. A load that fails
+           against a busy daemon during a boot burst used to be final, and
+           classic modules then never loaded in this zygote or in any process
+           it forked, for the whole boot - which read, from the outside, as
+           "Zygisk randomly does not work today". load_modules_only answers
+           false only before it has loaded anything, so a retry starts clean.
+
+           The in-progress flag keeps the retries single-threaded: a module
+           that calls property_get while it is loading would otherwise re-
+           enter this setup around itself. */
   static bool installed = false;
-  if (installed) return;
+  static bool in_progress = false;
+  static bool libart_added = false;
+  if (installed || in_progress) return;
 
-  if (!plti_add_lib(&plti_ctx, "libart.so")) {
-    LOGE("Failed to add libart.so to PLTI");
+  in_progress = true;
 
-    return;
+  if (!libart_added) {
+    if (!plti_add_lib(&plti_ctx, "libart.so")) {
+      LOGE("Failed to add libart.so to PLTI, retrying on a later property_get");
+
+      in_progress = false;
+
+      return;
+    }
+
+    libart_added = true;
   }
 
   /* INFO: A registration that did not take is not a reason to tear the
@@ -1888,17 +1905,27 @@ static void hook_unloader(void) {
   if (!PLT_HOOK_REGISTER("libart.so", pthread_attr_setstacksize, false)) {
     LOGE("Failed to hook pthread_attr_setstacksize, retrying on a later property_get");
 
+    in_progress = false;
+
+    return;
+  }
+
+  /* INFO: Loaded before the trigger is unhooked, for the same reason: a
+            failed load needs a later call to retry on, and this is the only
+            trigger there is. */
+  if (!load_modules_only()) {
+    LOGE("Failed to load modules, retrying on a later property_get");
+
+    in_progress = false;
+
     return;
   }
 
   PLT_HOOK_UNREGISTER("libandroid_runtime.so", property_get, false);
 
-  /* INFO: Load modules early on (before system server fork) to spread through all Zygotes */
-  if (!load_modules_only()) {
-    LOGE("Failed to load modules in hook_unloader");
-  }
-
   installed = true;
+  in_progress = false;
+
   LOGD("VexZygisk unloader hooked successfully");
 }
 

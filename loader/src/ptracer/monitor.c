@@ -835,15 +835,6 @@ static bool should_stop_inject() {
          mistaken for a stale one and killed. */
 #define DAEMON_SETTLE_SECONDS 5
 
-/* INFO: How long the spawner waits for a daemon this monitor could not fork,
-         before it is injected without one. The loader on the other side of that
-         injection waits seconds for the same daemon, so a spawner injected here
-         is not a spawner lost - which is the whole point: the alternative was to
-         skip it, and a skipped spawner means no HyperOS runtime and no Zygisk
-         Next module in that boot. */
-#define SPAWNER_DAEMON_ATTEMPTS 4
-#define SPAWNER_DAEMON_RETRY_US 250000
-
 /* INFO: When the current daemon was forked, on the monotonic clock. */
 static struct timespec daemon_forked_at = {};
 
@@ -1523,25 +1514,186 @@ static void track_child(pid_t pid, int wstatus) {
   ptrace(PTRACE_CONT, pid, 0, deliver);
 }
 
-/* INFO: The exec of a tracked child: read what the process became, decide
-         whether this monitor is the one that owns it, and hand it to a tracer
-         when it is.
+/* INFO: Gives a tracked slot back. The table only ever holds live processes,
+         so a pid with no slot is a double release, and the walk simply finds
+         nothing. */
+static void tracked_slot_release(pid_t pid) {
+  for (size_t i = 0; i < sigchld_process_count; i++) {
+    if (sigchld_process[i] != pid) continue;
 
-         True means the process has been handed over and was deliberately left
-         stopped for its tracer, so the caller must not detach it again. Every
-         false means the opposite - this was not the monitor's process to take,
-         or the hand-off could not be prepared - and that the process has to be
-         let run. */
-static bool hand_over_on_exec(pid_t pid) {
-  char program[PATH_MAX];
-  if (get_program(pid, program, sizeof(program)) == -1) {
-    LOGW("failed to get program %d", pid);
+    sigchld_process[i] = 0;
+    if (i < sigchld_process_free) sigchld_process_free = i;
+
+    break;
+  }
+}
+
+/* INFO: One hand-off in progress.
+
+         The hand-off used to be a single blocking function: it asked the
+         target for a SIGSTOP and then sat in waitpid until the stop arrived -
+         inside the monitor's one and only event loop, where every daemon
+         command, every other child's stop and the status timer queued behind
+         it. A target that never reported its stop, or a spawner whose freshly
+         forked daemon needed a moment, stalled the whole monitor for as long
+         as that wait and the retry sleeps around it took.
+
+         It is two halves now. The first runs where the exec was seen: it
+         validates the target and either asks for the stop right away or, for
+         a spawner waiting on its daemon, arms a retry timer. The second runs
+         when the SIGCHLD drain delivers the stop, and launches the tracer.
+         Between the two, the loop is free.
+
+         The entry keeps the child's tracked slot alive - the drain routes by
+         that table, and the stop that completes the hand-off is one of the
+         child's own events. */
+struct pending_handover {
+  /* INFO: Zero means the slot is free; pids are never 0. */
+  pid_t pid;
+  /* INFO: A static string - match_target hands out literals. */
+  const char *tracer;
+  bool is_spawner;
+  /* INFO: True while the spawner waits for the daemon that was just forked
+           for it: the stop has not been asked for yet, and the retry timer
+           is what moves it to the stopping half. */
+  bool await_daemon;
+  int daemon_attempts;
+};
+
+#define PENDING_HANDOVERS_MAX 8
+
+static struct pending_handover pending_handovers[PENDING_HANDOVERS_MAX];
+
+/* INFO: The one-shot timer that re-checks the daemon for the spawners
+         waiting on it, or -1 when the machinery could not start. */
+static int handover_retry_fd = -1;
+
+#define HANDOVER_DAEMON_ATTEMPTS 4
+#define HANDOVER_DAEMON_RETRY_MS 250
+
+static struct pending_handover *pending_handover_find(pid_t pid) {
+  for (size_t i = 0; i < PENDING_HANDOVERS_MAX; i++) {
+    if (pending_handovers[i].pid == pid) return &pending_handovers[i];
+  }
+
+  return NULL;
+}
+
+static void pending_handover_drop(struct pending_handover *entry) {
+  entry->pid = 0;
+  entry->tracer = NULL;
+  entry->await_daemon = false;
+  entry->daemon_attempts = 0;
+}
+
+/* INFO: The stopping half of the request: the target gets its SIGSTOP and is
+         continued, so the stop is on its way while the loop gets back to
+         work. */
+static void hand_over_request_stop(struct pending_handover *entry) {
+  LOGD("Stopping %d for its tracer (spawner: %s)", entry->pid, entry->is_spawner ? "yes" : "no");
+
+  entry->await_daemon = false;
+
+  kill(entry->pid, SIGSTOP);
+  ptrace(PTRACE_CONT, entry->pid, 0, 0);
+}
+
+static void handover_retry_arm(void) {
+  if (handover_retry_fd == -1) return;
+
+  const struct itimerspec once = {
+    .it_value = {
+      .tv_nsec = (long)HANDOVER_DAEMON_RETRY_MS * 1000000L
+    }
+  };
+
+  if (timerfd_settime(handover_retry_fd, 0, &once, NULL) == -1) PLOGE("timerfd_settime");
+}
+
+static void handover_retry_callback() {
+  uint64_t expirations = 0;
+
+  /* INFO: Read to disarm it; a timerfd nobody reads stays readable. */
+  while (read(handover_retry_fd, &expirations, sizeof(expirations)) == -1 && errno == EINTR) {
+  }
+
+  bool any_waiting = false;
+
+  for (size_t i = 0; i < PENDING_HANDOVERS_MAX; i++) {
+    struct pending_handover *entry = &pending_handovers[i];
+    if (entry->pid == 0 || !entry->await_daemon) continue;
+
+    entry->daemon_attempts++;
+
+    /* INFO: The daemon settled, or the budget ran out and the spawner goes
+              in anyway - the rule the blocking loop had, on the same budget
+              of about a second, minus the sleep in the caller. */
+    if (ensure_daemon_created()) {
+      hand_over_request_stop(entry);
+    } else if (entry->daemon_attempts >= HANDOVER_DAEMON_ATTEMPTS) {
+      /* INFO: The spawner goes in anyway. Skipping it loses the whole boot's
+                runtime rather than the one thing the skip was protecting:
+                the loader waits for the daemon on its side, and the spawner
+                is the target whose window is measured in seconds exactly
+                because its daemon may have been forked in the same breath as
+                its own exec. */
+      LOGW("VexZygiskd%s not running, injecting hyos_spawner %d anyway for its loader to wait out", MONITOR_ABI, entry->pid);
+
+      hand_over_request_stop(entry);
+    } else {
+      any_waiting = true;
+    }
+  }
+
+  if (any_waiting) handover_retry_arm();
+}
+
+static bool handover_retry_init() {
+  handover_retry_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+  if (handover_retry_fd == -1) {
+    PLOGE("timerfd_create");
 
     return false;
   }
 
-  LOGV("%d program %s", pid, program);
+  /* INFO: Registered even though it starts disarmed: an unfired timerfd
+            never reports, and the registration outlives the first hand-off
+            the way the loop does. */
+  return monitor_events_register_event(handover_retry_callback, handover_retry_fd, EPOLLIN);
+}
 
+/* INFO: The loop is ending - an EXIT command or a fatal epoll wait. A target
+         asked to stop for a tracer that will never come has to be resumed, or
+         it stays job-control-stopped for the rest of the boot. */
+static void pending_handovers_abandon(void) {
+  for (size_t i = 0; i < PENDING_HANDOVERS_MAX; i++) {
+    struct pending_handover *entry = &pending_handovers[i];
+    if (entry->pid == 0) continue;
+
+    LOGW("hand-off of %d abandoned, resuming it", entry->pid);
+
+    ptrace(PTRACE_DETACH, entry->pid, 0, SIGCONT);
+    kill(entry->pid, SIGCONT);
+
+    pending_handover_drop(entry);
+  }
+
+  if (handover_retry_fd >= 0) {
+    close(handover_retry_fd);
+    handover_retry_fd = -1;
+  }
+}
+
+/* INFO: The first half of the hand-off, run where the exec was seen: decide
+         whether this monitor owns the process, and either start the stop or
+         park the spawner on the daemon retry timer.
+
+         True means a hand-off is pending for the pid - the caller must keep
+         the child's tracked slot, because the stop that completes the
+         hand-off arrives as one of its events. False means the process is
+         nobody's to take or the hand-off could not be started, and the caller
+         lets it run. */
+static bool hand_over_begin(pid_t pid, const char *program) {
   if (tracing_state != TRACING) {
     LOGD("Stopped injecting %d because status is not set to tracing", pid);
 
@@ -1557,8 +1709,8 @@ static bool hand_over_on_exec(pid_t pid) {
 
   /* INFO: The crash-loop counter is about the zygote restarting. The spawner
            has its own lifecycle and execs on its own schedule, so counting
-           those execs the same way would trip the crash-loop stop after a burst
-           of app launches. */
+           those execs the same way would trip the crash-loop stop after a
+           burst of app launches. */
   if (counts_as_zygote_restart(program) && should_stop_inject()) {
     LOGW("Zygote" MONITOR_ABI " restart too many times, stop injecting");
 
@@ -1569,110 +1721,159 @@ static bool hand_over_on_exec(pid_t pid) {
     return false;
   }
 
+  struct pending_handover *entry = pending_handover_find(0);
+  if (entry == NULL) {
+    LOGW("no hand-off slot left, %d continues untraced", pid);
+
+    return false;
+  }
+
+  entry->pid = pid;
+  entry->tracer = tracer;
+  entry->is_spawner = is_spawner;
+  entry->await_daemon = false;
+  entry->daemon_attempts = 0;
+
   /* INFO: Both targets need the daemon, and the spawner can exec before the
            zygote ever does, so creating it cannot be left to the zygote
-           injection. A spawner with no daemon is injected anyway rather than
-           skipped: this monitor's job is the zygote, and stopping here would
-           take a healthy zygote down with it, while a skipped spawner loses the
-           whole boot's runtime. */
-  bool daemon_ready = ensure_daemon_created();
+           injection. */
+  if (!ensure_daemon_created()) {
+    /* INFO: The retry timer is the spawner's parking place, and only when
+              there is one: an entry parked without it would never be moved
+              again, and the child would sit in its exec stop for the rest
+              of the boot. No timer means the spawner starts its hand-off
+              immediately - the loader on its side waits out the daemon
+              anyway. */
+    if (is_spawner && handover_retry_fd != -1) {
+      /* INFO: The one way that answers false is a fork that failed - the
+                device was out of memory at the instant the spawner exec'd.
+                It is retried by the timer and not by sleeping here: the
+                retry used to hold the whole event loop, and nothing comes
+                after the spawner anyway - the runtime this injection sets up
+                is what every app of this boot registers against. */
+      entry->await_daemon = true;
 
-  /* INFO: The one way that answers false is a fork that failed - the device was
-           out of memory at the instant the spawner exec'd. It is retried for the
-           spawner and not for the zygote because nothing comes after the
-           spawner: the runtime this injection sets up is what every app of this
-           boot registers against, and the next chance to install it is the next
-           boot. */
-  for (int attempt = 0; !daemon_ready && is_spawner && attempt < SPAWNER_DAEMON_ATTEMPTS; attempt++) {
-    usleep(SPAWNER_DAEMON_RETRY_US);
+      handover_retry_arm();
 
-    daemon_ready = ensure_daemon_created();
-  }
-
-  if (!daemon_ready) {
-    if (!is_spawner) {
-      LOGW("VexZygiskd%s not running, stop injecting", MONITOR_ABI);
-
-      tracing_state = STOPPING;
-      monitor_stop_reason = "VexZygiskd not running";
-      ptrace(PTRACE_INTERRUPT, 1, 0, 0);
-
-      return false;
+      return true;
     }
 
-    /* INFO: The spawner goes in anyway. Skipping it - which is what this used
-             to do - loses the whole boot's runtime rather than the one thing the
-             skip was protecting: the loader waits for the daemon on its side,
-             and the spawner is the target whose window is measured in seconds
-             exactly because its daemon may have been forked in the same breath
-             as its own exec. The cost of being wrong is that wait; the cost of
-             the skip was a boot with no HyperOS runtime and no Zygisk Next
-             module in it. */
-    LOGW("VexZygiskd%s not running, injecting hyos_spawner %d anyway for its loader to wait out", MONITOR_ABI, pid);
-  }
+    if (is_spawner) {
+      /* INFO: The spawner goes in anyway. Skipping it loses the whole boot's
+                runtime rather than the one thing the skip was protecting:
+                the loader waits for the daemon on its side, and the spawner
+                is the target whose window is measured in seconds exactly
+                because its daemon may have been forked in the same breath
+                as its own exec. */
+      LOGW("VexZygiskd%s not running, injecting hyos_spawner %d anyway for its loader to wait out", MONITOR_ABI, pid);
 
-  LOGD("Stopping %d (program: %s, tracer: %s)", pid, program, tracer);
+      hand_over_request_stop(entry);
 
-  /* INFO: The stop is taken here, before the tracer exists, and its status is
-           a local: it describes this hand-off and not the child that was just
-           reaped. Writing it over the loop's own variable is what made a later
-           pass read this stop as the one it was handling. */
-  kill(pid, SIGSTOP);
-  ptrace(PTRACE_CONT, pid, 0, 0);
+      return true;
+    }
 
-  int wstatus = 0;
-  if (waitpid(pid, &wstatus, __WALL) == -1) {
-    PLOGE("waitpid");
+    LOGW("VexZygiskd%s not running, stop injecting", MONITOR_ABI);
+
+    tracing_state = STOPPING;
+    monitor_stop_reason = "VexZygiskd not running";
+    ptrace(PTRACE_INTERRUPT, 1, 0, 0);
+
+    pending_handover_drop(entry);
 
     return false;
   }
 
-  if (!STOPPED_WITH(wstatus, SIGSTOP, 0)) {
-    LOGE("Failed to stop process %d", pid);
-
-    return false;
-  }
-
-  launch_tracer(pid, tracer, is_spawner);
+  hand_over_request_stop(entry);
 
   return true;
 }
 
-/* INFO: The stop of a child the monitor already owns.
+/* INFO: The stop of a child the monitor already owns: the completion half of
+         a pending hand-off when there is one, the start of one on an exec,
+         and a plain let-it-run for anything else.
 
-         The slot goes back and a process that is still stopped is let run, and
-         both happen on every path - including the ones that only log a
+         The slot goes back and a process that is still stopped is let run,
+         and both happen on every path - including the ones that only log a
          problem. The single exception is a process the tracer has taken:
          launch_tracer leaves it stopped for the tracer on purpose, and
          detaching it here would take it back. */
 static void handle_tracked_stop(pid_t pid, int wstatus) {
-  bool handed_over = false;
+  struct pending_handover *pending = pending_handover_find(pid);
 
-  if (STOPPED_WITH(wstatus, SIGTRAP, PTRACE_EVENT_EXEC)) {
-    handed_over = hand_over_on_exec(pid);
-  } else {
+  if (pending != NULL) {
+    /* INFO: The stop completes the hand-off. Both event spellings are taken:
+             a plain SIGSTOP stop for an attached child, PTRACE_EVENT_STOP
+             for one the kernel seized. */
+    if (WIFSTOPPED(wstatus) && WSTOPSIG(wstatus) == SIGSTOP &&
+        (WPTEVENT(wstatus) == 0 || WPTEVENT(wstatus) == PTRACE_EVENT_STOP)) {
+      LOGD("hand-off of %d complete", pid);
+
+      launch_tracer(pid, pending->tracer, pending->is_spawner);
+
+      pending_handover_drop(pending);
+      tracked_slot_release(pid);
+
+      return;
+    }
+
+    /* INFO: Anything else the child reported cancels the hand-off: an exit
+              needs no detach, another signal is handed over with it, and a
+              stop signal is resumed rather than left pending. */
     char status_str[64];
     parse_status(wstatus, status_str, sizeof(status_str));
 
-    LOGW("process %d received unknown sigchld_status %s", pid, status_str);
+    LOGW("hand-off of %d cancelled by %s", pid, status_str);
+
+    pending_handover_drop(pending);
+    tracked_slot_release(pid);
+
+    if (WIFSTOPPED(wstatus)) {
+      int deliver = WPTEVENT(wstatus) == 0 ? WSTOPSIG(wstatus) : 0;
+      if (deliver == SIGSTOP) deliver = SIGCONT;
+
+      ptrace(PTRACE_DETACH, pid, 0, deliver);
+    }
+
+    return;
   }
 
-  for (size_t i = 0; i < sigchld_process_count; i++) {
-    if (sigchld_process[i] != pid) continue;
+  if (STOPPED_WITH(wstatus, SIGTRAP, PTRACE_EVENT_EXEC)) {
+    char program[PATH_MAX];
+    if (get_program(pid, program, sizeof(program)) == -1) {
+      LOGW("failed to get program %d", pid);
 
-    sigchld_process[i] = 0;
-    if (i < sigchld_process_free) sigchld_process_free = i;
+      tracked_slot_release(pid);
+      ptrace(PTRACE_DETACH, pid, 0, SIGCONT);
 
-    break;
+      return;
+    }
+
+    LOGV("%d program %s", pid, program);
+
+    if (hand_over_begin(pid, program)) {
+      /* INFO: The hand-off is pending; the tracked slot stays until the stop
+                that completes it, which is one of this child's own events. */
+      return;
+    }
+
+    tracked_slot_release(pid);
+    ptrace(PTRACE_DETACH, pid, 0, SIGCONT);
+
+    return;
   }
 
-  if (!handed_over && WIFSTOPPED(wstatus)) {
+  char status_str[64];
+  parse_status(wstatus, status_str, sizeof(status_str));
+
+  LOGW("process %d received unknown sigchld_status %s", pid, status_str);
+
+  tracked_slot_release(pid);
+
+  if (WIFSTOPPED(wstatus)) {
     LOGV("detach process %d", pid);
 
-    /* INFO: SIGCONT, and not 0: the exec hand-off stops its target with
-              SIGSTOP before it has a tracer, and every failure path after
-              that point lands here with the stop still pending. A plain
-              detach leaves the process job-control-stopped forever - a
+    /* INFO: SIGCONT, and not 0: a plain detach leaves a process that was
+              stopped by anything job-control-shaped stopped forever - a
               zygote hung there stalls the whole boot. SIGCONT undoes the
               stop on the way out, and is a no-op for a process that was
               stopped by anything else. */
@@ -1845,12 +2046,23 @@ void init_monitor() {
             which is what it did before the timer existed. */
   if (!status_refresh_init()) LOGE("failed to start the status refresh timer");
 
+  /* INFO: Same tolerance: a hand-off whose daemon is still settling waits on
+            this timer, and without it that hand-off starts immediately
+            instead - the spawner's own loader waits out its daemon either
+            way. */
+  if (!handover_retry_init()) LOGE("failed to start the hand-off retry timer");
+
   monitor_events_loop();
 
   /* INFO: Once it stops the loop, we cannot access the epoll data, so we
              either manually call the stops or save to a structure. */
   rezygiskd_listener_stop();
   sigchld_listener_stop();
+
+  /* INFO: A target stopped for a tracer that never came must be resumed
+            before this process ends, or it stays stopped for the rest of the
+            boot with nobody left to notice. */
+  pending_handovers_abandon();
 
   if (status.daemon_error_info) free(status.daemon_error_info);
 
