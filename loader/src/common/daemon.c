@@ -129,7 +129,9 @@ uint32_t rezygiskd_get_process_flags(uid_t uid, const char *const process) {
             delay. */
   uint8_t action = (uint8_t)GetProcessFlags;
   uint32_t uid_value = (uint32_t)uid;
-  size_t name_len = strlen(process);
+  /* INFO: The length rides the wire as uint32_t like every other length in
+            the protocol - see write_string in socket_protocol.h. */
+  uint32_t name_len = (uint32_t)strlen(process);
 
   struct iovec request[4] = {
     { .iov_base = &action, .iov_len = sizeof(action) },

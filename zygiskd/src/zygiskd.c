@@ -1696,7 +1696,7 @@ static void handle_get_info(struct Client *client) {
   }
 
   ret = write_size_t(client->fd, modules_count);
-  ASSURE_SIZE_WRITE("GetInfo", "modules_count", ret, sizeof(modules_count), return);
+  ASSURE_SIZE_WRITE("GetInfo", "modules_count", ret, sizeof(uint32_t), return);
 
   for (size_t i = 0; i < client->context->len; i++) {
     if (client->context->modules[i].name == NULL) continue;
@@ -1717,7 +1717,7 @@ static void handle_read_modules(struct Client *client) {
             RequestCompanionSocket and GetModuleDir are addressed with. */
   size_t clen = client->context->len;
   ssize_t ret = write_size_t(client->fd, clen);
-  ASSURE_SIZE_WRITE("ReadModules", "len", ret, sizeof(clen), return);
+  ASSURE_SIZE_WRITE("ReadModules", "len", ret, sizeof(uint32_t), return);
 
   for (size_t i = 0; i < clen; i++) {
     if (client->context->modules[i].name == NULL) {
@@ -1888,13 +1888,13 @@ static void handle_read_zn_modules(struct Client *client) {
 
   if (!collect_zn_modules(process_name, process_path, image_path, &files, &files_len)) {
     ret = write_size_t(client->fd, 0);
-    ASSURE_SIZE_WRITE("ReadZnModules", "len", ret, sizeof(size_t), return);
+    ASSURE_SIZE_WRITE("ReadZnModules", "len", ret, sizeof(uint32_t), return);
 
     return;
   }
 
   ret = write_size_t(client->fd, files_len);
-  if (ret != (ssize_t)sizeof(size_t)) {
+  if (ret != (ssize_t)sizeof(uint32_t)) {
     LOGE("Failed writing the Zygisk Next module count.");
 
     free_zn_module_files(files, files_len);
@@ -1940,7 +1940,7 @@ static void handle_read_zn_modules(struct Client *client) {
 static void handle_request_companion_socket(struct Client *client) {
   size_t index = 0;
   ssize_t ret = read_size_t(client->fd, &index);
-  ASSURE_SIZE_READ("RequestCompanionSocket", "index", ret, sizeof(index), return);
+  ASSURE_SIZE_READ("RequestCompanionSocket", "index", ret, sizeof(uint32_t), return);
 
   if (index >= client->context->len || client->context->modules[index].name == NULL) {
     LOGE("Invalid module index: %zu", index);
@@ -2001,7 +2001,7 @@ static void handle_request_companion_socket(struct Client *client) {
 static void handle_get_module_dir(struct Client *client) {
   size_t index = 0;
   ssize_t ret = read_size_t(client->fd, &index);
-  ASSURE_SIZE_READ("GetModuleDir", "index", ret, sizeof(index), return);
+  ASSURE_SIZE_READ("GetModuleDir", "index", ret, sizeof(uint32_t), return);
 
   if (index >= client->context->len || client->context->modules[index].name == NULL) {
     LOGE("Invalid module index: %zu", index);
@@ -2074,7 +2074,7 @@ static void handle_update_mount_namespace(struct Client *client) {
 static void handle_remove_module(struct Client *client) {
   size_t index = 0;
   ssize_t ret = read_size_t(client->fd, &index);
-  ASSURE_SIZE_READ("RemoveModule", "index", ret, sizeof(index), return);
+  ASSURE_SIZE_READ("RemoveModule", "index", ret, sizeof(uint32_t), return);
 
   if (index >= client->context->len) {
     LOGE("Invalid module index: %zu", index);

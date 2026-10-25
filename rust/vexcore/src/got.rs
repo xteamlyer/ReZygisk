@@ -32,6 +32,11 @@
 
 use core::mem::size_of;
 
+/* INFO: The symbol shape is lookup.rs's: it is #[repr(C)] over bytes a file
+         supplied and re-exported for the C ABI, and a second private copy
+         here would only be a chance for the two to drift apart. */
+use crate::lookup::Elf64Sym;
+
 /// `PT_LOAD`, a segment that is mapped from the file.
 const PT_LOAD: u32 = 1;
 
@@ -106,19 +111,8 @@ struct Elf64Phdr {
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct Elf64Dyn {
-    d_tag: i64,
-    d_un: u64,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct Elf64Sym {
-    st_name: u32,
-    st_info: u8,
-    st_other: u8,
-    st_shndx: u16,
-    st_value: u64,
-    st_size: u64,
+  d_tag: i64,
+  d_un: u64,
 }
 
 /// A pair of `u64`, which is what both `Elf64_Rel` and the head of
@@ -145,11 +139,16 @@ const REL_ENTRY_SIZE: u64 = 16;
 /// the parsing logic is compiled and exercised on a workstation instead of
 /// only on the device target.
 pub(crate) trait Image {
-    /// Fills `len` bytes at `buf` from `offset`, or answers false: a short
-    /// read is a failure and not a partial answer. The buffer may be
-    /// uninitialized memory the caller intends to fill - nothing here may
-    /// read it, only the image's own bytes may be written into it.
-    fn pread_exact(&self, offset: i64, buf: *mut u8, len: usize) -> bool;
+    /// Reads up to `len` bytes into `buf` at `offset` and answers how many:
+    /// a short read is the end of the file and not an error - the name window
+    /// below reads a fixed 255 bytes wherever the name sits, and a name near
+    /// the end of a real library's string table legitimately runs past it.
+    /// Zero means nothing was read: past the end, or a read that failed.
+    ///
+    /// The buffer may be uninitialized memory the caller intends to fill -
+    /// nothing here may read it, only the image's own bytes may be written
+    /// into it.
+    fn pread_max(&self, offset: i64, buf: *mut u8, len: usize) -> usize;
 
     /// The length of the image; offsets are validated against it before they
     /// are used, so a header field pointing past the end is refused up front.
@@ -212,12 +211,16 @@ mod sys {
     }
 
     impl Image for FileImage {
-        fn pread_exact(&self, offset: i64, buf: *mut u8, len: usize) -> bool {
+        fn pread_max(&self, offset: i64, buf: *mut u8, len: usize) -> usize {
             // SAFETY: the buffer is the caller's, writable for `len` bytes,
-            //         and untouched when the read comes back short.
+            //         and untouched beyond whatever the read reports.
             let got = unsafe { pread64(self.fd, buf as *mut c_void, len, offset) };
 
-            got == len as isize
+            if got < 0 {
+                0
+            } else {
+                got as usize
+            }
         }
 
         fn len(&self) -> i64 {
@@ -234,28 +237,31 @@ mod host {
     pub(crate) struct MemImage(pub Vec<u8>);
 
     impl Image for MemImage {
-        fn pread_exact(&self, offset: i64, buf: *mut u8, len: usize) -> bool {
+        fn pread_max(&self, offset: i64, buf: *mut u8, len: usize) -> usize {
             if offset < 0 {
-                return false;
+                return 0;
             }
 
             let Ok(start) = usize::try_from(offset) else {
-                return false;
+                return 0;
             };
-            let Some(end) = start.checked_add(len) else {
-                return false;
+            let Some(available) = self.0.len().checked_sub(start) else {
+                return 0;
             };
 
-            match self.0.get(start..end) {
-                Some(window) => {
-                    // SAFETY: `buf` is writable for `len` bytes, which is the
-                    //         window's length.
-                    unsafe { core::ptr::copy_nonoverlapping(window.as_ptr(), buf, len) };
-
-                    true
-                }
-                None => false,
+            // INFO: A short answer is the end of the image and not an error,
+            //       the same way a pread on a file answers fewer bytes than
+            //       were asked for at its end.
+            let n = available.min(len);
+            if n == 0 {
+                return 0;
             }
+
+            // SAFETY: `buf` is writable for `len` bytes and `n` is at most
+            //         that; the source is `n` bytes of the image.
+            unsafe { core::ptr::copy_nonoverlapping(self.0.as_ptr().add(start), buf, n) };
+
+            n
         }
 
         fn len(&self) -> i64 {
@@ -295,10 +301,10 @@ fn offset_within(img: &dyn Image, base: i64, delta: u64) -> Option<i64> {
 fn read_at<T: Copy>(img: &dyn Image, offset: i64) -> Option<T> {
     let mut value = core::mem::MaybeUninit::<T>::uninit();
 
-    // SAFETY: the buffer is exactly the size of `T`, so a full read fills it
-    //         and a short one is rejected before `assume_init`.
-    let ok = img.pread_exact(offset, value.as_mut_ptr() as *mut u8, size_of::<T>());
-    if !ok {
+    // SAFETY: the buffer is exactly the size of `T`, so only a read that
+    //         fills it entirely may go on to `assume_init`.
+    let got = img.pread_max(offset, value.as_mut_ptr() as *mut u8, size_of::<T>());
+    if got != size_of::<T>() {
         return None;
     }
 
@@ -363,6 +369,12 @@ fn vaddr_to_offset(img: &dyn Image, ehdr: &Elf64Ehdr, vaddr: u64) -> Option<i64>
 
 /// The name at `st_name` in the string table at `strtab`, or nothing when the
 /// offset is past the end of the file.
+///
+/// The window is a fixed 255 bytes wherever the name sits, and a name near
+/// the end of a real library's string table legitimately runs past the end of
+/// the file: a short read is the normal answer there, and the bytes past it
+/// stay the zeros the buffer began as - which is exactly the terminator the
+/// comparison relies on.
 fn symbol_name(img: &dyn Image, strtab_off: i64, st_name: u32) -> Option<[u8; NAME_MAX]> {
     let mut name = [0u8; NAME_MAX];
 
@@ -370,11 +382,8 @@ fn symbol_name(img: &dyn Image, strtab_off: i64, st_name: u32) -> Option<[u8; NA
         return None;
     };
 
-    // SAFETY: the buffer is `name`, and one byte less than its length is
-    //         asked for - so the terminator the comparison relies on is
-    //         always a real zero even when the read fills the rest.
-    let ok = img.pread_exact(offset, name.as_mut_ptr(), NAME_MAX - 1);
-    if !ok {
+    let got = img.pread_max(offset, name.as_mut_ptr(), NAME_MAX - 1);
+    if got == 0 {
         return None;
     }
 

@@ -949,7 +949,15 @@ static void api_exempt_fd(int fd) {
 
   if (FLAG_GET(g_ctx, POST_SPECIALIZE) || FLAG_GET(g_ctx, SKIP_FD_SANITIZATION)) return;
   if (!FLAG_GET(g_ctx, APP_FORK_AND_SPECIALIZE)) return;
-  if (g_ctx->exempted_fds_count >= MAX_EXEMPTED_FDS) return;
+
+  /* INFO: Said rather than swallowed: a module that asks after the limit, or
+            outside the one path the exemption can act on, loses the fd with
+            no other signal than the fd closing later. */
+  if (g_ctx->exempted_fds_count >= MAX_EXEMPTED_FDS) {
+    LOGW("exempt_fd(%d) refused: the exemption table is full", fd);
+
+    return;
+  }
 
   g_ctx->exempted_fds[g_ctx->exempted_fds_count++] = fd;
 

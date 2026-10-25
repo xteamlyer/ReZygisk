@@ -49,7 +49,21 @@ const STN_UNDEF: u32 = 0;
 /// `ELF_ST_TYPE`, which is the low nibble of `st_info`.
 #[inline]
 fn symbol_type(st_info: u8) -> u8 {
-    st_info & 0xf
+  st_info & 0xf
+}
+
+/// The tail both lookups share once their walk has found its symbol: the
+/// type byte is written when the caller asked for one, and the value is the
+/// answer. It exists because the two walks used to spell this out each, and
+/// a fix applied to one of them is a behaviour change in the other.
+#[inline]
+fn report_found(sym: &Elf64Sym, sym_type: *mut u8) -> u64 {
+  if !sym_type.is_null() {
+    // SAFETY: the caller passes a pointer to one byte or null.
+    unsafe { *sym_type = symbol_type(sym.st_info) };
+  }
+
+  sym.st_value
 }
 
 /// Whether this symbol defines `name`.
@@ -164,12 +178,7 @@ pub unsafe extern "C" fn vexcore_gnu_lookup(
         // INFO: The hash is the cheap half of the comparison and comes first,
         //       so a bucket collision does not pay for the name walk.
         if ((chain_value ^ hash) >> 1) == 0 && defines(sym, strings, name) {
-            if !sym_type.is_null() {
-                // SAFETY: the caller passes a pointer to one byte or null.
-                unsafe { *sym_type = symbol_type(sym.st_info) };
-            }
-
-            return sym.st_value;
+            return report_found(sym, sym_type);
         }
 
         // INFO: The low bit says whether this was the last entry of the chain.
@@ -251,12 +260,7 @@ pub unsafe extern "C" fn vexcore_elf_lookup(
         let sym = &syms[index as usize];
 
         if defines(sym, strings, name) {
-            if !sym_type.is_null() {
-                // SAFETY: the caller passes a pointer to one byte or null.
-                unsafe { *sym_type = symbol_type(sym.st_info) };
-            }
-
-            return sym.st_value;
+            return report_found(sym, sym_type);
         }
 
         // SAFETY: as above - the value is an index into the same chain.

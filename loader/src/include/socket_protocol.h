@@ -2,6 +2,7 @@
 #define ZN_SOCKET_PROTOCOL_H
 
 #include <errno.h>
+#include <stdint.h>
 #include <string.h>
 
 #include <unistd.h>
@@ -166,10 +167,13 @@ static inline int read_fd(int fd) {
 }
 
 /* INFO: A length-prefixed string. The length is the byte count that follows,
-            not including a terminator, and the receiver is the one that decides
-            where it goes - the two ends read and write it differently on
-            purpose, the loader allocating and the daemon filling a caller's
-            buffer, so only the framing is shared.
+            not including a terminator, and is a fixed uint32_t on the wire -
+            a size_t here would make the framing depend on the ABI of whoever
+            compiled it, and the two ends only share the architecture by
+            convention. The receiver is the one that decides where it goes -
+            the two ends read and write it differently on purpose, the loader
+            allocating and the daemon filling a caller's buffer, so only the
+            framing is shared.
 
             A NULL string is written as empty: one call site passes an
             optional path, and the framing has to stay aligned with whatever
@@ -177,7 +181,11 @@ static inline int read_fd(int fd) {
 static inline ssize_t write_string(int fd, const char *str) {
   size_t str_len = str != NULL ? strlen(str) : 0;
 
-  if (write_loop(fd, &str_len, sizeof(size_t)) != (ssize_t)sizeof(size_t)) return -1;
+  if (str_len > UINT32_MAX) return -1;
+
+  uint32_t wire_len = (uint32_t)str_len;
+
+  if (write_loop(fd, &wire_len, sizeof(wire_len)) != (ssize_t)sizeof(wire_len)) return -1;
 
   if (str_len == 0) return 0;
 

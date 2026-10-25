@@ -176,7 +176,15 @@ struct rezygisk_module {
           specialize callbacks. Magisk's Zygisk dereferences them without a NULL
           check, so each wrapper below skips the module rather than calling into
           a missing entry point.
+
+          The name the skip warnings print goes through module_name(): a slot
+          that never finished loading has no image to name, and a warning that
+          crashed the process it was warning about would defeat itself.
 */
+static inline const char *module_name(struct rezygisk_module *m) {
+  return m->lib.img != NULL && m->lib.img->elf != NULL ? m->lib.img->elf : "<unloaded module>";
+}
+
 static inline void rz_module_call_on_load(struct rezygisk_module *m, void *env) {
   m->zygisk_module_entry((void *)&m->api, env);
 }
@@ -184,7 +192,7 @@ static inline void rz_module_call_on_load(struct rezygisk_module *m, void *env) 
 static inline void rz_module_call_pre_app_specialize(struct rezygisk_module *m, struct app_specialize_args_v5 *args) {
   if (!m->abi.pre_app_specialize) {
     /* NOTE: See the header block above on Magisk's missing callback check. */
-    LOGW("Module [%s] doesn't have pre_app_specialize. Skipping it.", m->lib.img->elf);
+    LOGW("Module [%s] doesn't have pre_app_specialize. Skipping it.", module_name(m));
 
     return;
   }
@@ -234,7 +242,7 @@ static inline void rz_module_call_pre_app_specialize(struct rezygisk_module *m, 
 static inline void rz_module_call_post_app_specialize(struct rezygisk_module *m, const struct app_specialize_args_v5 *args) {
   if (!m->abi.post_app_specialize) {
     /* NOTE: See the header block above on Magisk's missing callback check. */
-    LOGW("Module [%s] doesn't have post_app_specialize. Skipping it.", m->lib.img->elf);
+    LOGW("Module [%s] doesn't have post_app_specialize. Skipping it.", module_name(m));
 
     return;
   }
@@ -284,7 +292,7 @@ static inline void rz_module_call_post_app_specialize(struct rezygisk_module *m,
 static inline void rz_module_call_pre_server_specialize(struct rezygisk_module *m, struct server_specialize_args_v1 *args) {
   if (!m->abi.pre_server_specialize) {
     /* NOTE: See the header block above on Magisk's missing callback check. */
-    LOGW("Module [%s] doesn't have pre_server_specialize. Skipping it.", m->lib.img->elf);
+    LOGW("Module [%s] doesn't have pre_server_specialize. Skipping it.", module_name(m));
 
     return;
   }
@@ -295,7 +303,7 @@ static inline void rz_module_call_pre_server_specialize(struct rezygisk_module *
 static inline void rz_module_call_post_server_specialize(struct rezygisk_module *m, const struct server_specialize_args_v1 *args) {
   if (!m->abi.post_server_specialize) {
     /* NOTE: See the header block above on Magisk's missing callback check. */
-    LOGW("Module [%s] doesn't have post_server_specialize. Skipping it.", m->lib.img->elf);
+    LOGW("Module [%s] doesn't have post_server_specialize. Skipping it.", module_name(m));
 
     return;
   }

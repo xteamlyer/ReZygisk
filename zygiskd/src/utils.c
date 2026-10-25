@@ -451,8 +451,29 @@ int create_library_fd(const char *restrict path, bool *shared) {
     return read_loop(fd, val, sizeof(type));             \
   }
 
-write_func(size_t)
-read_func(size_t)
+/* INFO: The count fields ride the wire as uint32_t for the same reason the
+         string lengths do (socket_protocol.h): a size_t would make the
+         protocol's shape depend on the ABI of whichever side compiled it. */
+ssize_t write_size_t(int fd, size_t val) {
+  if (val > UINT32_MAX) {
+    LOGE("Value %zu does not fit the protocol's 32-bit count field.", val);
+
+    return -1;
+  }
+
+  uint32_t wire = (uint32_t)val;
+
+  return write_loop(fd, &wire, sizeof(wire));
+}
+
+ssize_t read_size_t(int fd, size_t *val) {
+  uint32_t wire = 0;
+  ssize_t read_bytes = read_loop(fd, &wire, sizeof(wire));
+
+  if (read_bytes == (ssize_t)sizeof(wire) && val != NULL) *val = wire;
+
+  return read_bytes;
+}
 
 write_func(uint32_t)
 read_func(uint32_t)
@@ -462,23 +483,25 @@ read_func(uint8_t)
 
 
 ssize_t read_string(int fd, char *restrict buf, size_t buf_size) {
-  size_t str_len = 0;
-  ssize_t read_bytes = read_loop(fd, &str_len, sizeof(size_t));
-  if (read_bytes != (ssize_t)sizeof(size_t)) {
-    LOGE("Failed to read string length: Not all bytes were read (%zd != %zu).", read_bytes, sizeof(size_t));
+  /* INFO: The length is a fixed uint32_t on the wire - see write_string in
+            socket_protocol.h for why it is not this side's size_t. */
+  uint32_t str_len = 0;
+  ssize_t read_bytes = read_loop(fd, &str_len, sizeof(str_len));
+  if (read_bytes != (ssize_t)sizeof(str_len)) {
+    LOGE("Failed to read string length: Not all bytes were read (%zd != %zu).", read_bytes, sizeof(str_len));
 
     return -1;
   }
 
   if (buf_size == 0 || str_len > buf_size - 1) {
-    LOGE("Failed to read string: Buffer is too small (%zu > %zu - 1).", str_len, buf_size);
+    LOGE("Failed to read string: Buffer is too small (%u > %zu - 1).", str_len, buf_size);
 
     return -1;
   }
 
   read_bytes = read_loop(fd, buf, str_len);
   if (read_bytes != (ssize_t)str_len) {
-    LOGE("Failed to read string: Promised bytes doesn't exist (%zd != %zu).", read_bytes, str_len);
+    LOGE("Failed to read string: Promised bytes doesn't exist (%zd != %u).", read_bytes, str_len);
 
     return -1;
   }
